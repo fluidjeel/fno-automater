@@ -13,8 +13,12 @@ venv/
 .coverage
 htmlcov/
 
+# Editor / agent transient output
+.cursor/*.log
+*.log
+
 # Local data: raw and canonical market data are never committed
-data/
+/data/
 *.duckdb
 *.parquet
 
@@ -25,11 +29,15 @@ audit/
 *.sqlite-wal
 *.sqlite-shm
 
-# Secrets
+# Secrets and broker tokens (never commit)
 .env
 .env.*
 !.env.example
+.fyers_token
 secrets/
+keys/
+*.key
+*.pem
 
 # OS
 .DS_Store

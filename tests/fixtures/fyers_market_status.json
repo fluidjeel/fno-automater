@@ -1,0 +1,19 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "marketStatus": [
+    {
+      "exchange": "NSE",
+      "segment": "FO",
+      "market_type": "NORMAL",
+      "status": "OPEN"
+    },
+    {
+      "exchange": "NSE",
+      "segment": "CM",
+      "market_type": "NORMAL",
+      "status": "OPEN"
+    }
+  ]
+}

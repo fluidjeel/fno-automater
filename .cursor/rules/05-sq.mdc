@@ -1,0 +1,13 @@
+---
+description: SQ means short and quick replies
+alwaysApply: true
+---
+
+# SQ — Short and Quick
+
+If the user prompt contains `SQ` (standalone token), reply fast and short:
+
+- Lead with the answer. No preamble.
+- Minimal tool use. Only look something up if you cannot answer from context.
+- No extra options, plans, or "want me to…" unless they ask.
+- Complete sentences, but keep it to a few lines.

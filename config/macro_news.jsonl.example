@@ -1,0 +1,2 @@
+{"event_id":"sample-001","source":"verified-source","scope":"NIFTY","published_at":"2026-09-13T08:00:00Z","received_at":"2026-09-13T08:00:02Z","sentiment":1,"impact":"0.7","confidence":"0.8","evidence_ref":"data/raw/news/sample-001.json"}
+{"event_id":"sample-global-001","source":"verified-source","scope":"GLOBAL","published_at":"2026-09-13T07:30:00Z","received_at":"2026-09-13T07:30:05Z","sentiment":0,"impact":"0.5","confidence":"0.6","evidence_ref":"data/raw/news/sample-global-001.json"}

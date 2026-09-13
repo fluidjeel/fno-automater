@@ -1,0 +1,25 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "d": [
+    {
+      "n": "NSE:NIFTY50-INDEX",
+      "s": "ok",
+      "v": {
+        "ask": 24501.0,
+        "bid": 24500.0,
+        "ch": 100.5,
+        "chp": 0.41,
+        "lp": 24500.5,
+        "open_price": 24400.0,
+        "high_price": 24550.0,
+        "low_price": 24380.0,
+        "prev_close_price": 24400.0,
+        "volume": 0,
+        "tick_size": 0.05,
+        "short_name": "NIFTY50"
+      }
+    }
+  ]
+}

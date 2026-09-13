@@ -35,6 +35,18 @@ clock drift, session and warm-up. Do not use one universal freshness threshold.
   executable price.
 - Layer 4: attribution, drift, calibration and candidate tuning evidence.
 
+## Macro and news factor input
+
+The Phase 1 pipeline accepts structured, pre-classified macro/news records from
+an append-only JSONL input configured at `macro_news.input_file`. Each record
+must retain its source, scope, publication and receive timestamps, bounded
+sentiment (`-1`, `0`, `1`), impact, confidence and evidence reference. The current
+factor is a deterministic, recency-weighted sentiment feature; it is not a trade
+signal or a substitute for a promoted Layer 4 proposal. The pipeline does not
+fetch news or infer sentiment from free text. Missing, future, stale or
+out-of-scope records produce no factor. Scoring parameters are research-stage
+configuration and require validation before any strategy relies on them.
+
 ## Calculation rules
 
 - Event-time processing; provisional and final bars are different states.
@@ -59,4 +71,3 @@ clock drift, session and warm-up. Do not use one universal freshness threshold.
 - DuckDB/Parquet are acceptable for local analytics/replay.
 - Live order/risk events require crash-safe durable writes and tested recovery.
 - Retention and compaction must preserve audit/replay lineage.
-

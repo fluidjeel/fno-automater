@@ -1,0 +1,258 @@
+# Research profile. Collector enablement and weights require a review before
+# any sentiment snapshot is used by a strategy.
+schema_version: "1"
+config_version: "news-research-v1"
+max_headline_chars: 1000
+max_snippet_chars: 1200
+max_classifier_batch_size: 16
+max_classifier_tokens: 512
+sentiment_provider: unavailable
+finbert_model_path: ""
+event_cluster_window_seconds: 86400
+event_cluster_similarity: "0.55"
+
+sources:
+  - source_id: gdelt_global
+    kind: GDELT
+    tier: AGGREGATOR
+    endpoint: https://api.gdeltproject.org/api/v2/doc/doc
+    enabled: true
+    weight: "0.6"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 900
+    query: '(India OR RBI OR NSE OR SEBI OR crude oil OR gold)'
+  - source_id: rbi_press_releases
+    kind: RSS
+    tier: OFFICIAL
+    endpoint: https://rbi.org.in/pressreleases_rss.xml
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 300
+    assume_timezone: Asia/Kolkata
+  - source_id: rbi_notifications
+    kind: RSS
+    tier: OFFICIAL
+    endpoint: https://rbi.org.in/notifications_rss.xml
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 300
+    assume_timezone: Asia/Kolkata
+  - source_id: sebi_rss
+    kind: RSS
+    tier: OFFICIAL
+    endpoint: https://www.sebi.gov.in/sebirss.xml
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 300
+    assume_timezone: Asia/Kolkata
+  - source_id: nse_circulars
+    kind: RSS
+    tier: OFFICIAL
+    endpoint: https://feeds.feedburner.com/nseindia/circulars
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 300
+    assume_timezone: Asia/Kolkata
+  - source_id: pib_press_releases
+    kind: RSS
+    tier: OFFICIAL
+    endpoint: https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=1
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 300
+    assume_timezone: Asia/Kolkata
+  - source_id: google_news_search
+    kind: GOOGLE_NEWS_RSS
+    tier: AGGREGATOR
+    endpoint: https://news.google.com/rss/search?q=India%20markets&hl=en-IN&gl=IN&ceid=IN:en
+    enabled: false
+    weight: "0.3"
+    timeout_seconds: 10
+    max_items: 50
+    interval_seconds: 900
+  - source_id: fred_indicators
+    kind: FRED
+    tier: PRIMARY
+    endpoint: https://api.stlouisfed.org/fred/series/observations
+    enabled: true
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 3600
+    api_key_env: FRED_API_KEY
+    params:
+      series_id: DGS10
+  - source_id: eia_energy
+    kind: EIA
+    tier: PRIMARY
+    endpoint: https://api.eia.gov/v2
+    enabled: false
+    weight: "1"
+    timeout_seconds: 10
+    max_items: 100
+    interval_seconds: 3600
+    api_key_env: EIA_API_KEY
+
+# Taxonomy maps evidence to areas of attention. Asset relevance stays uncertain
+# unless a scored, classified event has traceable evidence.
+taxonomy:
+  - event_type: RBI_POLICY_LIQUIDITY
+    keywords: [RBI, repo rate, monetary policy, liquidity, MPC]
+    assets: [NSE_INDEX, NSE_EQUITY, INR]
+    sectors: [BANKING, FINANCIALS]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: INFLATION_GDP_EMPLOYMENT
+    keywords: [inflation, CPI, WPI, GDP, employment, unemployment]
+    assets: [NSE_INDEX, INR, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [ECONOMY]
+    horizon: days
+    base_magnitude: "0.8"
+    event_risk: CAUTION
+  - event_type: BUDGET_FISCAL_POLICY
+    keywords: [budget, fiscal deficit, taxation, government spending]
+    assets: [NSE_INDEX, NSE_EQUITY, INR, MCX_GOLD]
+    sectors: [ECONOMY]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: SEBI_NSE_REGULATORY
+    keywords: [SEBI, NSE circular, exchange circular, margin rules, market structure]
+    assets: [NSE_INDEX, NSE_EQUITY, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [MARKET_STRUCTURE]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: CORPORATE_EARNINGS
+    keywords: [earnings, results, quarterly result, guidance]
+    assets: [NSE_EQUITY]
+    sectors: [CORPORATE]
+    horizon: hours
+    base_magnitude: "0.6"
+    event_risk: CAUTION
+    positive_sentiment_direction: BULLISH
+    negative_sentiment_direction: BEARISH
+  - event_type: CORPORATE_ORDER
+    keywords: [order win, order loss, contract award, project award]
+    assets: [NSE_EQUITY]
+    sectors: [CORPORATE]
+    horizon: days
+    base_magnitude: "0.5"
+    event_risk: NORMAL
+    positive_sentiment_direction: BULLISH
+    negative_sentiment_direction: BEARISH
+  - event_type: GOVERNANCE_MANAGEMENT
+    keywords: [resignation, appointment, investigation, governance, auditor]
+    assets: [NSE_EQUITY]
+    sectors: [CORPORATE]
+    horizon: days
+    base_magnitude: "0.7"
+    event_risk: CAUTION
+  - event_type: CREDIT_DEFAULT
+    keywords: [credit rating, downgrade, default, insolvency, debt restructuring]
+    assets: [NSE_EQUITY, NSE_INDEX, INR]
+    sectors: [CREDIT, FINANCIALS]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: FED_POLICY
+    keywords: [Federal Reserve, FOMC, fed funds rate, rate decision]
+    assets: [NSE_INDEX, INR, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [GLOBAL_MACRO]
+    horizon: days
+    base_magnitude: "0.8"
+    event_risk: CAUTION
+  - event_type: US_INFLATION_EMPLOYMENT
+    keywords: [US CPI, nonfarm payrolls, unemployment claims, PCE inflation]
+    assets: [NSE_INDEX, INR, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [GLOBAL_MACRO]
+    horizon: days
+    base_magnitude: "0.7"
+    event_risk: CAUTION
+  - event_type: CRUDE_INVENTORIES
+    keywords: [crude inventories, petroleum status report, oil stocks]
+    assets: [MCX_CRUDE_OIL]
+    sectors: [ENERGY]
+    horizon: hours
+    base_magnitude: "0.8"
+    event_risk: CAUTION
+  - event_type: OPEC_SUPPLY
+    keywords: [OPEC, production quota, oil production cuts, supply decision]
+    assets: [MCX_CRUDE_OIL]
+    sectors: [ENERGY]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: ENERGY_DISRUPTION
+    keywords: [pipeline disruption, shipping disruption, refinery outage, oil transport]
+    assets: [MCX_CRUDE_OIL, MCX_GOLD]
+    sectors: [ENERGY]
+    horizon: hours
+    base_magnitude: "1"
+    event_risk: MARKET_EMERGENCY
+  - event_type: WAR_SANCTIONS_GEOPOLITICS
+    keywords: [war, sanctions, military escalation, geopolitical conflict]
+    assets: [NSE_INDEX, INR, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [GLOBAL_MACRO]
+    horizon: days
+    base_magnitude: "1"
+    event_risk: MARKET_EMERGENCY
+  - event_type: FX_SOVEREIGN_RISK
+    keywords: [currency crisis, sovereign rating, capital controls, FX intervention]
+    assets: [NSE_INDEX, INR, MCX_GOLD]
+    sectors: [GLOBAL_MACRO, CREDIT]
+    horizon: days
+    base_magnitude: "0.9"
+    event_risk: BLOCK_NEW_ENTRIES
+  - event_type: EXCHANGE_BROKER_INCIDENT
+    keywords: [exchange outage, trading halt, broker outage, order placement issue]
+    assets: [NSE_INDEX, NSE_EQUITY, MCX_GOLD, MCX_CRUDE_OIL]
+    sectors: [OPERATIONS]
+    horizon: minutes
+    base_magnitude: "1"
+    event_risk: MARKET_EMERGENCY
+
+scoring:
+  source_tier_weights:
+    OFFICIAL: "1"
+    PRIMARY: "0.9"
+    AGGREGATOR: "0.6"
+    MEDIA: "0.55"
+    SOCIAL: "0.2"
+    UNKNOWN: "0"
+  feature_weights:
+    sentiment: "0.25"
+    relevance: "0.2"
+    source_credibility: "0.15"
+    originality: "0.1"
+    novelty: "0.1"
+    freshness: "0.1"
+    confirmation: "0.05"
+    contradiction: "0.05"
+  freshness_half_life_seconds: 21600
+  max_item_age_seconds: 172800
+  snapshot_ttl_seconds: 900
+  risk_caution_threshold: "0.55"
+  risk_block_threshold: "0.75"
+  risk_emergency_threshold: "0.9"
+
+schedule:
+  timezone: Asia/Kolkata
+  premarket: "08:30"
+  midday: "12:30"
+  pre_cas: "15:00"
+  postmarket: "16:15"
+  weekly_proposal: "SUNDAY 19:00"
+  monday_invalidation: "MONDAY 08:15"

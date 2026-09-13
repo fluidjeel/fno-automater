@@ -88,3 +88,6 @@ safety invariant a test covers in its docstring.
 Python 3.12, type hints mandatory, `mypy --strict` clean, `ruff` formatted.
 Docstrings one line. Comments explain why, not what. Patch minimally; never
 reformat untouched code. Reuse existing patterns instead of rewriting them.
+
+`SQ` in a user prompt means Short and Quick: answer first, few lines, minimal
+lookups. See `.cursor/rules/05-sq.mdc`.

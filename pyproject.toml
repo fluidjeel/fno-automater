@@ -11,8 +11,13 @@ dependencies = [
 
 # Phase 1 and later. Unused in Phase 0; declared so the pin is visible.
 [project.optional-dependencies]
-data = ["polars>=1.9", "duckdb>=1.1"]
+data = ["polars>=1.9", "duckdb>=1.1", "httpx>=0.27", "fyers-apiv3>=3.0"]
+news = ["httpx>=0.27", "defusedxml>=0.7.1"]
+sentiment = ["transformers>=4.44", "torch>=2.4"]
 quant = ["QuantLib>=1.36"]
+
+[project.scripts]
+trading = "trading.cli:main"
 
 [dependency-groups]
 dev = [
@@ -21,6 +26,11 @@ dev = [
     "pytest>=8.3",
     "hypothesis>=6.112",
     "types-pyyaml>=6.0",
+    "types-defusedxml>=0.7.0",
+    "httpx>=0.27",
+    "defusedxml>=0.7.1",
+    "polars>=1.9",
+    "duckdb>=1.1",
 ]
 
 [build-system]
@@ -29,6 +39,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trading"]
+artifacts = ["src/trading/py.typed"]
 
 [tool.ruff]
 line-length = 88
@@ -60,6 +71,19 @@ ignore = [
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
 "tests/**" = ["S101", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401"]
+# isort order for trading.config vs trading.data.* differs macOS vs Linux.
+"tests/test_data_pipeline.py" = ["I001"]
+"src/trading/data/replay.py" = ["I001"]
+"src/trading/data/normalize.py" = ["PLR0912"]
+"src/trading/data/quality.py" = ["PLR0912", "PLR0915"]
+"src/trading/data/snapshot_builder.py" = ["PLR0912", "PLR0915"]
+"src/trading/data/storage/catalog.py" = ["PLC0415", "S608"]
+"src/trading/data/pipeline.py" = ["I001", "PLR0912", "PLR0915"]
+"src/trading/data/fyers/auth.py" = ["PLC0415", "PLR0911"]
+"src/trading/data/fyers/ws.py" = ["PLC0415", "PLR0912", "PLR0915"]
+"src/trading/cli.py" = ["PLR0912", "PLR0915"]
+"src/trading/news/scoring.py" = ["PLR0912", "PLR0915"]
+"src/trading/news/sources.py" = ["PLR0912"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -67,6 +91,8 @@ ban-relative-imports = "all"
 [tool.mypy]
 python_version = "3.11"
 files = ["src", "tests"]
+mypy_path = "src"
+explicit_package_bases = true
 strict = true
 warn_unreachable = true
 warn_no_return = true
@@ -76,6 +102,10 @@ no_implicit_reexport = true
 show_error_codes = true
 # Safety invariant 23: no silent escape hatches. An ignore must name its code.
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[[tool.mypy.overrides]]
+module = ["fyers_apiv3", "fyers_apiv3.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

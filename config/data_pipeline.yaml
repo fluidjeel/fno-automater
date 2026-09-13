@@ -1,0 +1,79 @@
+# Phase 1 data pipeline. Paths are relative to the repo root on the VM.
+schema_version: "1"
+normalization_version: "1"
+
+storage:
+  root: data
+  raw_subdir: raw
+  canonical_subdir: canonical
+  duckdb_path: data/catalog.duckdb
+  parquet_subdir: parquet
+
+# Fyers hybrid model: REST quotes/bars/chain/depth on a schedule; websocket
+# ticks via `trading data stream` (optional --daemon).
+fyers:
+  option_chain_strike_count: 25
+  poll_interval_seconds: 60
+  bar_resolutions: ["5"]
+  bar_lookback_days: 5
+  chain_greeks: true
+  history_oi_flag: true
+  fetch_depth: true
+  fetch_market_status: true
+  fetch_expiry_dates: true
+  greeks_calculation_version: fyers_chain
+  ws_channel: 11
+  ws_max_ticks: 100
+  ws_duration_seconds: 60
+  ws_reconnect: true
+  ws_reconnect_attempts: 5
+  ws_reconnect_backoff_seconds: 1.0
+
+# Exchange-local cash/FO window. Hours must match current official NSE
+# documentation; verified=false fails closed (no new exposure).
+session:
+  timezone: Asia/Kolkata
+  open_local: "09:15"
+  close_local: "15:30"
+  verified: true
+  segment: NSE_FO
+
+quality:
+  min_bar_count: 1
+  min_strike_count: 1
+  max_clock_drift_ms: 5000
+  clock_drift_invalid: false
+  max_cross_source_bps: 50
+  max_spread_bps: 50
+
+# Research-stage structured classifications from trusted sources. The numeric
+# parameters require validation before strategy use; no free-text AI scoring is
+# performed in the live pipeline.
+macro_news:
+  input_file: data/macro_news.jsonl
+  max_age_seconds: 604800
+  half_life_seconds: 86400
+  calculation_version: macro-news-linear-decay-v1
+
+# Per-underlying freshness for the POC positional strategy (not universal).
+freshness:
+  option_chain_max_age_ms:
+    "5m": 120000
+  quote_max_age_ms:
+    "5m": 60000
+  bar_max_age_ms:
+    "5m": 300000
+  tick_max_age_ms:
+    "5m": 5000
+  depth_max_age_ms:
+    "5m": 60000
+  market_status_max_age_ms:
+    "5m": 60000
+
+underlyings:
+  - symbol: "NSE:NIFTY50-INDEX"
+    feature_set_version: "nifty_index_v1"
+    exchange: NSE
+    underlying: NIFTY
+    instrument_kind: INDEX
+    asset_class: EQUITY_INDEX

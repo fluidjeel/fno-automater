@@ -1,0 +1,151 @@
+"""Interactive Fyers OAuth — same flow as blue-green ``tools/get_fyers_token``."""
+
+from __future__ import annotations
+
+import re
+import sys
+import webbrowser
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from trading.data.settings import FyersSettings
+
+__all__ = [
+    "exchange_auth_code",
+    "extract_auth_code",
+    "get_auth_url",
+    "run_interactive_auth",
+]
+
+_AUTH_CODE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def extract_auth_code(raw: str) -> str:
+    """Extract auth_code from a redirect URL or bare code string."""
+    text = raw.strip()
+    if "auth_code=" in text:
+        parsed = urlparse(text if "://" in text else f"https://x/?{text.lstrip('?')}")
+        params = parse_qs(parsed.query)
+        code = params.get("auth_code", [""])[0]
+        if code:
+            return code
+    if _AUTH_CODE_RE.fullmatch(text):
+        return text
+    raise ValueError(
+        "Could not parse auth_code. Paste the full redirect URL or the raw code."
+    )
+
+
+def get_auth_url(settings: FyersSettings) -> str:
+    """Return the Fyers login URL for the configured app."""
+    from fyers_apiv3 import fyersModel
+
+    session = fyersModel.SessionModel(
+        client_id=settings.fyers_app_id,
+        secret_key=settings.fyers_secret_key,
+        redirect_uri=settings.fyers_redirect_uri,
+        response_type="code",
+        grant_type="authorization_code",
+        state="fno-automated-auth",
+    )
+    auth_url: str = session.generate_authcode()
+    return auth_url
+
+
+def exchange_auth_code(settings: FyersSettings, auth_code: str) -> str:
+    """Exchange an auth_code for an access token."""
+    from fyers_apiv3 import fyersModel
+
+    session = fyersModel.SessionModel(
+        client_id=settings.fyers_app_id,
+        secret_key=settings.fyers_secret_key,
+        redirect_uri=settings.fyers_redirect_uri,
+        grant_type="authorization_code",
+    )
+    session.set_token(auth_code)
+    response = session.generate_token()
+    if response.get("s") != "ok":
+        raise ValueError(f"Token exchange failed: {response.get('message', response)}")
+    access_token = response.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("Token exchange returned no access_token")
+    return access_token
+
+
+def run_interactive_auth(
+    repo_root: Path,
+    *,
+    auth_code: str = "",
+    open_browser: bool = True,
+) -> int:
+    """Prompt for redirect URL, exchange code, cache token to ``.fyers_token``."""
+    print("=" * 60)
+    print("Fyers Authentication")
+    print("=" * 60)
+
+    try:
+        settings = FyersSettings.from_repo_root(repo_root)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print(
+            "\nCreate .env from .env.example with FYERS_APP_ID and FYERS_SECRET_KEY.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not settings.fyers_app_id or not settings.fyers_secret_key:
+        print(
+            "ERROR: FYERS_APP_ID and FYERS_SECRET_KEY must be set in .env",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"App: {settings.fyers_app_id}")
+    print(f"Redirect URI: {settings.fyers_redirect_uri}\n")
+
+    try:
+        auth_url = get_auth_url(settings)
+    except Exception as exc:
+        print(f"ERROR: could not build login URL: {exc}", file=sys.stderr)
+        return 1
+
+    print("Step 1: Open this URL and approve the app:\n")
+    print("-" * 60)
+    print(auth_url)
+    print("-" * 60)
+    print("\nStep 2: Log in with your Fyers credentials.")
+    print("Step 3: Copy the full redirected URL from your browser.\n")
+
+    if open_browser:
+        webbrowser.open(auth_url, new=1)
+
+    raw = (
+        auth_code.strip()
+        if auth_code
+        else input("Paste redirect URL or auth_code: ").strip()
+    )
+    if not raw:
+        print("ERROR: no URL or auth_code provided", file=sys.stderr)
+        return 1
+
+    try:
+        code = extract_auth_code(raw)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"\nFound auth_code: {code[:20]}...")
+    print("Exchanging for access token...")
+
+    try:
+        token = exchange_auth_code(settings, code)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    settings.save_cached_token(repo_root, token)
+    cache_path = settings.token_cache_path(repo_root)
+    print(f"\nToken saved to {cache_path}")
+    print(f"Token preview: {token[:30]}...")
+    print("\nRun: trading data fetch")
+    return 0

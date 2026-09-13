@@ -1,8 +1,8 @@
 # Current State
 
 LAST_UPDATED: 2026-09-13
-CURRENT_MILESTONE: Phase 0 - Contracts and safety foundation (complete)
-STATUS: PHASE_0_COMPLETE
+CURRENT_MILESTONE: Phase 1 - Market data and advisory news evidence
+STATUS: PHASE_1_DATA_FOUNDATION_IN_PROGRESS
 
 ## Confirmed decisions
 
@@ -62,33 +62,51 @@ lint and `mypy --strict` clean across 30 files.
   meta-test parses `SAFETY_INVARIANTS.md` and fails if any of the 25 is neither
   covered nor explicitly deferred.
 
+## Implemented since Phase 0
+
+- **Market-data foundation (live Fyers):** REST quotes, OHLCV (+OI flag), option
+  chain with vendor Greeks, 5-level depth, market status, expiry/reference,
+  JSONL authority plus Parquet/DuckDB catalog, quality gates (session, warmup,
+  drift, cross-source), snapshot features, replay, and WS ticks
+  (`trading data stream --daemon`). See `src/trading/data/` and
+  `config/data_pipeline.yaml`.
+- **News/macro evidence subsystem:** strict records and taxonomy; GDELT and
+  configured official RSS collectors; key-gated FRED and route-disabled EIA adapters; bounded
+  retry/circuit behavior; canonical URL and content hashes; event clustering;
+  explicit unavailable sentiment; optional local-only FinBERT; deterministic
+  weighted asset impacts and advisory event-risk snapshots; idempotent JSONL
+  persistence; CLI and an abstaining proposal default. See
+  `docs/context/NEWS_SUBSYSTEM.md` and `src/trading/news/`.
+- **Verification:** 495 tests pass offline, including source fixtures,
+  deterministic scoring, syndication deduplication, UNKNOWN sentiment, strict
+  contracts and storage idempotency. News does not affect the broker or open
+  positions. Source weights and thresholds are uncalibrated research values.
+
 ## In progress
 
-- Nothing. Phase 0 is closed and no task is `READY`.
+- Live Layer 1 Fyers completeness is implemented; see `docs/plans/TASK_LEDGER.md`.
+- Select and verify a point-in-time historical option-chain source before
+  claiming full Phase 1 replay coverage for options structures.
 
 ## Not yet confirmed
 
-- Data and broker providers/adapters, and the transactional order-state store.
-- Replay/backtest foundation and a point-in-time option-chain source.
+- Production-grade market-data source history, retention and reliability.
 - Portfolio, risk gateway, OMS and trade manager.
-- Observability and deployment environment.
-- AI provider and grounded evidence pipeline.
-- POC instrument and strategy parameters.
+- Layer 2 reviewed contract for consuming news event-risk states.
+- Historical calibration and source quality review for sentiment/event scores.
+- Observability, deployment environment, POC instrument and strategy parameters.
 
 ## Active blockers
 
-- Phase 1 cannot start until a point-in-time historical option-chain source is
-  chosen. This is usually the longest lead-time item in the project.
-- `config/base.yaml` contains no verified market rules, so any live-adjacent work
-  begins with a verification pass against current official documentation.
-- The eight invariants listed in `tests/test_safety_invariants.py::DEFERRED`
-  remain unproven until the components they constrain exist.
+- Live trading remains unavailable: `config/base.yaml` has unverified market
+  rules, no reviewed portfolio/risk/order path exists, and no point-in-time
+  historical option-chain source has been chosen.
+- Eight deferred safety invariants remain unproven until their components exist.
 
 ## Next action
 
-Resolve unresolved decision 4 in `docs/plans/ACTIVE_PLAN.md`: evaluate
-point-in-time historical option-chain sources on history depth, point-in-time
-guarantees and cost, then plan Phase 1 against the chosen source.
+Evaluate historical option-chain sources on history depth, point-in-time
+guarantees and cost. Live recording on the VM can accumulate forward history.
 
 ## Update rules
 

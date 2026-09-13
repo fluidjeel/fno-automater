@@ -19,6 +19,7 @@ __all__ = [
     "FrozenClock",
     "SteppingClock",
     "TimeError",
+    "WallClock",
     "ensure_utc",
     "to_exchange_local",
 ]
@@ -111,6 +112,17 @@ class SteppingClock:
         current = self.instant
         self.instant = current + self.step
         return current
+
+    def now_in(self, exchange_tz: tzinfo) -> datetime:
+        return to_exchange_local(self.now_utc(), exchange_tz)
+
+
+@dataclass(slots=True)
+class WallClock:
+    """Production clock. This module is the only place that may read wall time."""
+
+    def now_utc(self) -> datetime:
+        return datetime.now(UTC)
 
     def now_in(self, exchange_tz: tzinfo) -> datetime:
         return to_exchange_local(self.now_utc(), exchange_tz)

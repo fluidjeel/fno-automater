@@ -109,8 +109,12 @@ def test_no_module_reads_ambient_time_or_randomness() -> None:
         "uuid.uuid1",
         "uuid.uuid4",
     }
+    # Wall time is read only inside the clock module.
+    exempt = {DOMAIN / "clock.py"}
     violations: list[str] = []
     for path in _python_files(SRC):
+        if path in exempt:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):

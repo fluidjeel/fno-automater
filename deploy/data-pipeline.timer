@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll Fyers option chain during NSE session (IST)
+
+# NSE cash session ≈ 09:15–15:30 IST → 03:45–10:00 UTC. Poll every minute Mon–Fri.
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03..09:*:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

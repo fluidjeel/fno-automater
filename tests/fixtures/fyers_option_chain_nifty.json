@@ -1,0 +1,45 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "data": {
+    "timestamp": 1726200000,
+    "callOi": 2000,
+    "putOi": 1600,
+    "indiavixData": {"ltp": 13.25, "symbol": "NSE:INDIAVIX-INDEX"},
+    "optionsChain": [
+      {
+        "strike_price": -1,
+        "option_type": "",
+        "ltp": 24500.5,
+        "fp": 24500.5
+      },
+      {
+        "strike_price": 24500,
+        "option_type": "CE",
+        "ltp": 120.25,
+        "iv": 12.34,
+        "oi": 1000,
+        "volume": 500,
+        "greeks": {
+          "delta": 0.52,
+          "gamma": 0.01,
+          "theta": -8.5,
+          "vega": 11.2,
+          "iv": 12.34
+        }
+      },
+      {
+        "strike_price": 24500,
+        "option_type": "PE",
+        "ltp": 118.5,
+        "iv": 11.98,
+        "oi": 800,
+        "volume": 300
+      }
+    ],
+    "expiryData": [
+      {"date": "26-09-2024", "expiry": "1727366400", "expiry_flag": "W"}
+    ]
+  }
+}

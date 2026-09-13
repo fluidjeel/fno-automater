@@ -1,0 +1,19 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "d": {
+    "NSE:NIFTY50-INDEX": {
+      "bids": [
+        {"price": 24500.0, "volume": 150, "ord": 4}
+      ],
+      "ask": [
+        {"price": 24501.0, "volume": 120, "ord": 3}
+      ],
+      "totalbuyqty": 150,
+      "totalsellqty": 120,
+      "ltp": 24500.5,
+      "oi": 0
+    }
+  }
+}
