@@ -3,7 +3,7 @@
 ACTIVE_PLAN_VERSION: 4
 
 Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
-`READY` or `IN_PROGRESS`.
+`READY` or `IN_PROGRESS` (currently L2-005).
 
 ## Phase 2–3: Layer 2 control plane
 
@@ -11,9 +11,9 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
 | --- | --- | --- | --- | --- | --- |
 | L2-001 | DONE | Layer 2 contracts + deterministic replay fixtures | `domain/contracts/portfolio.py`, `sizing.py`, `reservation.py`, `order_plan.py`, `position.py`, `reconciliation_result.py`, `tests/fixtures/l2_replay/`, `tests/test_l2_contracts.py`, extend `tests/factories.py` | Strict round-trip; float/naive-datetime rejection; two replay fixtures produce byte-identical `RiskDecision` serialization | None |
 | L2-002 | DONE | Durable trading event store (SQLite) | `src/trading/storage/trading_store.py`, `schema.sql`, `tests/test_trading_store.py` | Transactional append; idempotency unique constraint; recovery reads event sequence | L2-001 |
-| L2-003 | READY | Broker ports + paper adapter | `src/trading/broker/ports.py`, `broker/paper/`, `tests/fixtures/broker/`, `tests/test_paper_broker.py` | Offline fixture round-trip for orders, positions, funds, margin preview | L2-001 |
-| L2-004 | — | Portfolio snapshot + reconciliation | `src/trading/portfolio/`, `tests/test_reconciliation.py` | Boot reconcile; critical mismatch sets `entries_blocked`; covers inv 5, 9 | L2-002, L2-003 |
-| L2-005 | — | Atomic capital reservation | `src/trading/risk/reservation.py`, `tests/test_reservation.py` | Concurrent reserve cannot overspend; lifecycle state machine; inv 14 | L2-002 |
+| L2-003 | DONE | Broker ports + paper adapter | `src/trading/broker/ports.py`, `broker/paper/`, `tests/fixtures/broker/`, `tests/test_paper_broker.py` | Offline fixture round-trip for orders, positions, funds, margin preview | L2-001 |
+| L2-004 | DONE | Portfolio snapshot + reconciliation | `src/trading/portfolio/`, `tests/test_reconciliation.py` | Boot reconcile; critical mismatch sets `entries_blocked`; covers inv 5, 9 | L2-002, L2-003 |
+| L2-005 | READY | Atomic capital reservation | `src/trading/risk/reservation.py`, `tests/test_reservation.py` | Concurrent reserve cannot overspend; lifecycle state machine; inv 14 | L2-002 |
 | L2-006 | — | Sizing engine (long call/put) + risk gateway | `src/trading/risk/sizing/long_option.py`, `risk/limits.py`, `risk/gateway.py`, `config/risk.yaml`, tests | `min()` constraint binding; REJECT on limit breach; confidence does not relax limits; inv 4 | L2-004, L2-005 |
 | L2-007 | — | OrderPlan builder + OMS core | `src/trading/oms/planner.py`, `oms/engine.py`, `oms/rate_limit.py`, tests | Idempotent submit (inv 11); UNKNOWN freeze (inv 13); durable write before submit | L2-002, L2-003, L2-006 |
 | L2-008 | — | Trade manager + deterministic exits | `src/trading/trade/manager.py`, `trade/exits.py`, tests | Stop monotonicity (inv 17); open position has protection (inv 16); partial → REPAIR_REQUIRED | L2-007 |
@@ -30,6 +30,15 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
 | L2-014 | — | Slice 5: iron condor | sizing + combined P&L exit scope | Wing loss minus credit | L2-013 |
 | L2-015 | — | Live Fyers broker adapter | `broker/fyers/` | Verified API behavior; paper parity drill | L2-010, UD-L2-03 |
 
+## Phase 3: Layer 3 strategy systems (`feature/layer3-strategies`)
+
+| ID | Status | Outcome | Scope | Verification | Dependency |
+| --- | --- | --- | --- | --- | --- |
+| L3-001 | DONE | Positional long call / long put (first vertical slice) | `src/trading/strategies/` (`base`, `macro`, `long_option`), `tests/test_l3_long_option.py` | Deterministic `TradeIntent`; ratio legs only (no quantity); no lookahead; bounded macro acceptance policy; snapshot freshness + option eligibility rejections; mocked Layer 2 boundary | L2-001 |
+
+Deferred Layer 3 slices: L3-002 debit spread, L3-003 commodity futures,
+L3-004 CAS/microstructure, L3-005 multi-leg options.
+
 ## Prior milestones (complete)
 
 | ID | Status | Outcome |
@@ -41,6 +50,7 @@ Completion record:
 
 ```text
 Layer 1 live data path complete. L2-001 contracts and replay fixtures done.
-L2-002 durable trading event store done.
-Next implementation task: L2-003 (broker ports + paper adapter).
+L2-002 durable trading event store done. L2-003 broker ports + paper adapter done.
+L2-004 portfolio snapshot + reconciliation done.
+Next implementation task: L2-005 (atomic capital reservation).
 ```
