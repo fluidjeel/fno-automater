@@ -29,6 +29,8 @@ class FyersSettings(BaseSettings):
     fyers_access_token: str = Field(default="", alias="FYERS_ACCESS_TOKEN")
     fyers_pin: str = Field(default="", alias="FYERS_PIN")
     fyers_env: str = Field(default="api", alias="FYERS_ENV")
+    a2a_telegram_bot_token: str = Field(default="", alias="A2A_TELEGRAM_BOT_TOKEN")
+    a2a_telegram_chat_id: str = Field(default="", alias="A2A_TELEGRAM_CHAT_ID")
     data_underlyings: str = Field(
         default="NSE:NIFTY50-INDEX",
         alias="DATA_UNDERLYINGS",

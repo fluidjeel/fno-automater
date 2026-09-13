@@ -1,5 +1,5 @@
 [Unit]
-Description=FNO automated trading — daily Fyers access-token refresh
+Description=FNO automated trading — daily Fyers login via Telegram (SEBI 2FA)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,9 @@ Type=oneshot
 WorkingDirectory=/home/ubuntu/fno-automated
 Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
 EnvironmentFile=/home/ubuntu/fno-automated/.env
-ExecStart=/home/ubuntu/.local/bin/uv run trading auth refresh
+ExecStart=/home/ubuntu/.local/bin/uv run trading auth telegram
+# Polls Telegram for the user's pasted redirect URL for up to 10 minutes.
+TimeoutStartSec=900
 User=ubuntu
 Group=ubuntu
 

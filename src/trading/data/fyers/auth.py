@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import re
 import sys
+import time
 import webbrowser
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
-from trading.data.fyers.telegram import send_telegram_message
+from trading.data.fyers.telegram import (
+    get_updates,
+    send_telegram_message,
+    telegram_configured,
+)
 from trading.data.settings import FyersSettings
 
 __all__ = [
@@ -20,9 +26,13 @@ __all__ = [
     "refresh_access_token",
     "run_interactive_auth",
     "run_refresh",
+    "run_telegram_auth",
 ]
 
 _AUTH_CODE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_AUTH_CODE_IN_URL = re.compile(r"auth_code=([A-Za-z0-9._-]+)")
+# Bare codes are long opaque tokens; short strings are almost always paste noise.
+_MIN_BARE_AUTH_CODE_LEN = 10
 _REFRESH_URL = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
 
 
@@ -113,6 +123,15 @@ def refresh_access_token(
     return access_token
 
 
+def _notify(settings: FyersSettings, text: str) -> bool:
+    """Send a Telegram operator alert using the configured credentials."""
+    return send_telegram_message(
+        text,
+        token=settings.a2a_telegram_bot_token,
+        chat_id=settings.a2a_telegram_chat_id,
+    )
+
+
 def run_interactive_auth(
     repo_root: Path,
     *,
@@ -194,7 +213,7 @@ def run_interactive_auth(
         print("Refresh token saved; run 'trading auth refresh' daily.")
     else:
         print("WARN: no refresh token returned; daily refresh will be unavailable.")
-    send_telegram_message("Fyers access token obtained (interactive login).")
+    _notify(settings, "Fyers access token obtained (interactive login).")
     print("\nRun: trading data fetch")
     return 0
 
@@ -205,7 +224,6 @@ def run_refresh(repo_root: Path) -> int:
         settings = FyersSettings.from_repo_root(repo_root)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        send_telegram_message(f"Fyers token refresh FAILED: {exc}")
         return 1
 
     refresh_token = settings.load_refresh_token(repo_root)
@@ -214,17 +232,112 @@ def run_refresh(repo_root: Path) -> int:
             "ERROR: no refresh token cached; run 'trading auth fyers' once first.",
             file=sys.stderr,
         )
-        send_telegram_message("Fyers token refresh FAILED: no refresh token cached.")
+        _notify(settings, "Fyers token refresh FAILED: no refresh token cached.")
         return 1
 
     try:
         access_token = refresh_access_token(settings, refresh_token=refresh_token)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        send_telegram_message(f"Fyers token refresh FAILED: {exc}")
+        _notify(settings, f"Fyers token refresh FAILED: {exc}")
         return 1
 
     settings.save_cached_token(repo_root, access_token)
     print("Fyers access token refreshed.")
-    send_telegram_message("Fyers access token refreshed successfully.")
+    _notify(settings, "Fyers access token refreshed successfully.")
     return 0
+
+
+def _auth_code_from_text(text: str) -> str | None:
+    """Pull an auth_code out of a pasted redirect URL or a bare code."""
+    match = _AUTH_CODE_IN_URL.search(text)
+    if match:
+        return match.group(1)
+    stripped = text.strip()
+    if _AUTH_CODE_RE.fullmatch(stripped) and len(stripped) > _MIN_BARE_AUTH_CODE_LEN:
+        return stripped
+    return None
+
+
+def _latest_update_id(updates: list[dict[str, Any]]) -> int:
+    ids = [
+        int(update["update_id"])
+        for update in updates
+        if isinstance(update.get("update_id"), int)
+    ]
+    return max(ids, default=0)
+
+
+def run_telegram_auth(
+    repo_root: Path,
+    *,
+    timeout_minutes: int = 10,
+    poll_seconds: int = 20,
+) -> int:
+    """Send the login URL to Telegram and exchange the pasted redirect URL."""
+    try:
+        settings = FyersSettings.from_repo_root(repo_root)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if not telegram_configured(
+        settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
+    ):
+        print(
+            "ERROR: set A2A_TELEGRAM_BOT_TOKEN and A2A_TELEGRAM_CHAT_ID in .env",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        auth_url = get_auth_url(settings)
+    except Exception as exc:
+        print(f"ERROR: could not build login URL: {exc}", file=sys.stderr)
+        _notify(settings, f"Fyers login failed to build URL: {exc}")
+        return 1
+
+    token = settings.a2a_telegram_bot_token
+    # Only accept replies that arrive after this point.
+    offset = _latest_update_id(get_updates(token=token)) + 1
+    sent = _notify(
+        settings,
+        "Fyers login required.\n\n"
+        f"{auth_url}\n\n"
+        "Open the link, log in and approve, then paste the full redirect URL "
+        "back here (it contains auth_code=...).",
+    )
+    if not sent:
+        print("ERROR: could not send Telegram message", file=sys.stderr)
+        return 1
+    print("Login URL sent to Telegram; waiting for your reply...")
+
+    deadline = time.monotonic() + timeout_minutes * 60
+    while time.monotonic() < deadline:
+        updates = get_updates(token=token, offset=offset, timeout_seconds=poll_seconds)
+        for update in updates:
+            update_id = update.get("update_id")
+            if isinstance(update_id, int):
+                offset = max(offset, update_id + 1)
+            message = update.get("message")
+            text = message.get("text") if isinstance(message, dict) else None
+            if not isinstance(text, str) or not text:
+                continue
+            code = _auth_code_from_text(text)
+            if code is None:
+                continue
+            try:
+                access_token, refresh_token = exchange_auth_code(settings, code)
+            except ValueError as exc:
+                _notify(settings, f"Fyers login failed: {exc}")
+                return 1
+            settings.save_cached_token(repo_root, access_token)
+            if refresh_token:
+                settings.save_refresh_token(repo_root, refresh_token)
+            _notify(settings, "✅ Fyers token refreshed.")
+            print("Fyers token refreshed from Telegram reply.")
+            return 0
+
+    _notify(settings, "⚠️ Fyers login timed out; token not refreshed.")
+    print("Timed out waiting for a Telegram reply.", file=sys.stderr)
+    return 1

@@ -7,13 +7,16 @@ import sys
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
+from trading.data.backfill import backfill_history, backfill_instruments
 from trading.data.config import load_data_pipeline_config
-from trading.data.fyers.auth import run_interactive_auth, run_refresh
+from trading.data.fyers.auth import run_interactive_auth, run_refresh, run_telegram_auth
+from trading.data.fyers.client import FyersMarketFeed
 from trading.data.fyers.ws import FyersTickStream
 from trading.data.macro_news import format_macro_summary, load_macro_news_jsonl
 from trading.data.pipeline import build_pipeline
 from trading.data.replay import build_replay_engine
 from trading.data.settings import FyersSettings
+from trading.data.storage.catalog import CatalogWriter
 from trading.data.storage.parquet_store import JsonlEventStore
 from trading.domain.clock import WallClock
 from trading.news.cluster import cluster_news
@@ -46,6 +49,10 @@ def _cmd_auth_fyers(args: argparse.Namespace) -> int:
 
 def _cmd_auth_refresh(args: argparse.Namespace) -> int:
     return run_refresh(_repo_root())
+
+
+def _cmd_auth_telegram(args: argparse.Namespace) -> int:
+    return run_telegram_auth(_repo_root())
 
 
 def _macro_news_path(root: Path, file_arg: str) -> Path:
@@ -144,6 +151,85 @@ def _cmd_data_stream(args: argparse.Namespace) -> int:
             f"{result.symbol}: {len(result.ticks)} tick(s) "
             f"stopped={result.stopped_reason} reconnects={result.reconnects}"
         )
+    return 0
+
+
+def _fyers_feed(root: Path) -> FyersMarketFeed:
+    config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    settings = FyersSettings.from_repo_root(root)
+    cached = settings.load_cached_token(root)
+    if cached and not settings.fyers_access_token:
+        settings = settings.model_copy(update={"fyers_access_token": cached})
+    return FyersMarketFeed(
+        settings,
+        WallClock(),
+        strike_count=config.fyers.option_chain_strike_count,
+        chain_greeks=config.fyers.chain_greeks,
+        history_oi_flag=config.fyers.history_oi_flag,
+    )
+
+
+def _cmd_data_backfill_instruments(_args: argparse.Namespace) -> int:
+    root = _repo_root()
+    config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    store = JsonlEventStore(root / config.storage.root)
+    results = backfill_instruments(
+        pipeline_config=config,
+        repo_root=root,
+        store=store,
+        clock=WallClock(),
+    )
+    for result in results:
+        print(f"{result.segment}: {result.spec_count} spec(s) raw={result.raw_ref}")
+    if not results:
+        print("no reference.segments configured", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_data_backfill_history(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    targets = [
+        underlying
+        for underlying in config.underlyings
+        if not args.symbol or underlying.symbol == args.symbol
+    ]
+    if not targets:
+        print(f"no underlying matching {args.symbol!r}", file=sys.stderr)
+        return 1
+    if args.resolutions:
+        resolutions = tuple(
+            item.strip() for item in args.resolutions.split(",") if item.strip()
+        )
+    else:
+        resolutions = config.fyers.bar_resolutions
+    days = args.days if args.days > 0 else config.fyers.bar_lookback_days
+    store = JsonlEventStore(root / config.storage.root)
+    catalog = CatalogWriter(
+        root / config.storage.root,
+        duckdb_path=root / config.storage.duckdb_path,
+        parquet_subdir=config.storage.parquet_subdir,
+    )
+    feed = _fyers_feed(root)
+    clock = WallClock()
+    for underlying in targets:
+        results = backfill_history(
+            pipeline_config=config,
+            repo_root=root,
+            feed=feed,
+            store=store,
+            clock=clock,
+            underlying=underlying,
+            resolutions=resolutions,
+            days=days,
+            catalog=catalog,
+        )
+        for result in results:
+            print(
+                f"{result.symbol} res={result.resolution} "
+                f"windows={len(result.windows)} events={len(result.event_ids)}"
+            )
     return 0
 
 
@@ -344,6 +430,11 @@ def main(argv: list[str] | None = None) -> int:
         "refresh", help="refresh access token from the stored refresh token"
     )
     fyers_refresh.set_defaults(func=_cmd_auth_refresh)
+    fyers_telegram = auth_sub.add_parser(
+        "telegram",
+        help="send the login URL to Telegram and exchange the pasted redirect URL",
+    )
+    fyers_telegram.set_defaults(func=_cmd_auth_telegram)
 
     data = sub.add_parser("data", help="market data pipeline")
     data_sub = data.add_subparsers(dest="data_cmd", required=True)
@@ -376,6 +467,30 @@ def main(argv: list[str] | None = None) -> int:
     replay.add_argument("--symbol", default="", help="Fyers symbol filter")
     replay.add_argument("--hours", type=int, default=24, help="lookback window")
     replay.set_defaults(func=_cmd_data_replay)
+    backfill = data_sub.add_parser(
+        "backfill", help="download instrument masters or historical bars"
+    )
+    backfill_sub = backfill.add_subparsers(dest="backfill_cmd", required=True)
+    instruments = backfill_sub.add_parser(
+        "instruments", help="refresh Fyers symbol-master catalog"
+    )
+    instruments.set_defaults(func=_cmd_data_backfill_instruments)
+    history = backfill_sub.add_parser(
+        "history", help="pull chunked OHLCV history into canonical storage"
+    )
+    history.add_argument("--symbol", default="", help="Fyers symbol filter")
+    history.add_argument(
+        "--resolutions",
+        default="",
+        help="comma-separated Fyers resolutions (default: config bar_resolutions)",
+    )
+    history.add_argument(
+        "--days",
+        type=int,
+        default=0,
+        help="inclusive lookback in UTC days (default: config fyers.bar_lookback_days)",
+    )
+    history.set_defaults(func=_cmd_data_backfill_history)
     news = data_sub.add_parser("news", help="macro news JSONL helpers")
     news_sub = news.add_subparsers(dest="news_cmd", required=True)
     validate = news_sub.add_parser("validate", help="check macro_news.jsonl records")

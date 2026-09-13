@@ -1,30 +1,43 @@
-"""Telegram Bot API notifications for operator alerting.
+"""Telegram Bot API helpers for operator alerting and the daily login handoff.
 
-Credentials are read from ``A2A_TELEGRAM_BOT_TOKEN`` and ``A2A_TELEGRAM_CHAT_ID``.
-When either is unset the call is a silent no-op returning ``False``, so alerting
-can be wired everywhere without breaking the trading path.
+Credentials are passed explicitly (from ``FyersSettings``) so the loader is the
+single source of truth and the helpers never read ``.env`` themselves. An empty
+token turns sends into a no-op returning ``False`` and updates into ``[]``.
 """
 
 from __future__ import annotations
 
-import os
+from typing import Any
 
 import httpx
 
-__all__ = ["send_telegram_message"]
+__all__ = [
+    "get_updates",
+    "send_telegram_message",
+    "telegram_configured",
+]
 
-_API = "https://api.telegram.org/bot{token}/sendMessage"
+_API = "https://api.telegram.org/bot{token}"
 
 
-def send_telegram_message(text: str, *, timeout_seconds: float = 5.0) -> bool:
-    """Post ``text`` to the configured Telegram chat. Returns whether it sent."""
-    token = os.getenv("A2A_TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("A2A_TELEGRAM_CHAT_ID", "")
+def telegram_configured(token: str, chat_id: str) -> bool:
+    """Whether both the bot token and a chat id are present."""
+    return bool(token and chat_id)
+
+
+def send_telegram_message(
+    text: str,
+    *,
+    token: str,
+    chat_id: str,
+    timeout_seconds: float = 5.0,
+) -> bool:
+    """Post ``text`` to ``chat_id``. Returns whether it was sent."""
     if not token or not chat_id:
         return False
     try:
         response = httpx.post(
-            _API.format(token=token),
+            f"{_API.format(token=token)}/sendMessage",
             json={"chat_id": chat_id, "text": text},
             timeout=timeout_seconds,
         )
@@ -32,3 +45,31 @@ def send_telegram_message(text: str, *, timeout_seconds: float = 5.0) -> bool:
         return True
     except httpx.HTTPError:
         return False
+
+
+def get_updates(
+    *,
+    token: str,
+    offset: int | None = None,
+    timeout_seconds: int = 0,
+) -> list[dict[str, Any]]:
+    """Long-poll ``getUpdates``. Returns an empty list on error or no token."""
+    if not token:
+        return []
+    params: dict[str, int] = {"timeout": timeout_seconds}
+    if offset is not None:
+        params["offset"] = offset
+    try:
+        response = httpx.get(
+            f"{_API.format(token=token)}/getUpdates",
+            params=params,
+            timeout=float(timeout_seconds + 10),
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not payload.get("ok"):
+            return []
+        result = payload.get("result", [])
+        return result if isinstance(result, list) else []
+    except (httpx.HTTPError, ValueError):
+        return []
