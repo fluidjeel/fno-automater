@@ -81,6 +81,7 @@ class TestRefreshAccessToken:
             captured["url"] == "https://api-t1.fyers.in/api/v3/validate-refresh-token"
         )
         assert captured["body"] == {
+            "grant_type": "refresh_token",
             "appIdHash": hashlib.sha256(b"APP-100:secret").hexdigest(),
             "refresh_token": "refresh-123",
             "pin": "1234",

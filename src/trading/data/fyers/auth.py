@@ -94,15 +94,19 @@ def refresh_access_token(
         response = client.post(
             _REFRESH_URL,
             json={
+                "grant_type": "refresh_token",
                 "appIdHash": settings.app_id_hash,
                 "refresh_token": refresh_token,
                 "pin": settings.fyers_pin,
             },
         )
-    response.raise_for_status()
-    payload = response.json()
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
     if payload.get("s") != "ok":
-        raise ValueError(f"refresh failed: {payload.get('message', payload)}")
+        message = payload.get("message") or f"HTTP {response.status_code}"
+        raise ValueError(f"refresh failed: {message}")
     access_token = payload.get("access_token")
     if not isinstance(access_token, str) or not access_token:
         raise ValueError("refresh returned no access_token")
