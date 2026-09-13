@@ -13,11 +13,18 @@ cp deploy/data-pipeline.timer /etc/systemd/system/fno-data-pipeline.timer
 sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/data-tick.service \
   | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
   > /etc/systemd/system/fno-data-tick.service
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/fyers-refresh.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-fyers-refresh.service
+cp deploy/fyers-refresh.timer /etc/systemd/system/fno-fyers-refresh.timer
 
 systemctl daemon-reload
 systemctl enable --now fno-data-pipeline.timer
+systemctl enable --now fno-fyers-refresh.timer
 systemctl enable fno-data-tick.service
 
 echo "Installed. Timer status: systemctl status fno-data-pipeline.timer"
-echo "One-shot fetch:        systemctl start fno-data-pipeline.service"
-echo "Tick daemon (manual):  systemctl start fno-data-tick.service"
+echo "Token refresh timer:     systemctl status fno-fyers-refresh.timer"
+echo "One-shot fetch:          systemctl start fno-data-pipeline.service"
+echo "Token refresh now:       systemctl start fno-fyers-refresh.service"
+echo "Tick daemon (manual):    systemctl start fno-data-tick.service"

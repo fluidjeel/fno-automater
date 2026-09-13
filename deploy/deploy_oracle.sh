@@ -97,7 +97,7 @@ FILTERS=(
   '.git/' '.DS_Store' '/data/' 'audit/' '*.duckdb' '*.parquet'
   'keys/' '*.key' '*.pem'
 )
-[ "$WITH_SECRETS" -eq 0 ] && FILTERS+=('.env' '.fyers_token')
+[ "$WITH_SECRETS" -eq 0 ] && FILTERS+=('.env' '.fyers_token' '.fyers_refresh_token')
 
 echo "==> uploading to $TARGET:$REMOTE_DIR"
 if [ "$USE_TAR" -eq 1 ]; then
@@ -117,6 +117,9 @@ if [ "$WITH_SECRETS" -eq 1 ]; then
   rsync -a -e "ssh ${SSH_OPTS[*]}" "$ENV_FILE" "$TARGET:$REMOTE_DIR/.env"
   if [ -f "$REPO_ROOT/.fyers_token" ]; then
     rsync -a -e "ssh ${SSH_OPTS[*]}" "$REPO_ROOT/.fyers_token" "$TARGET:$REMOTE_DIR/.fyers_token"
+  fi
+  if [ -f "$REPO_ROOT/.fyers_refresh_token" ]; then
+    rsync -a -e "ssh ${SSH_OPTS[*]}" "$REPO_ROOT/.fyers_refresh_token" "$TARGET:$REMOTE_DIR/.fyers_refresh_token"
   fi
 fi
 

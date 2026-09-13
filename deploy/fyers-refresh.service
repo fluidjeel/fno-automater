@@ -1,0 +1,16 @@
+[Unit]
+Description=FNO automated trading — daily Fyers access-token refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading auth refresh
+User=ubuntu
+Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target

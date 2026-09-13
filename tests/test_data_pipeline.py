@@ -709,8 +709,8 @@ class TestWebSocketTicks:
 
         settings = FyersSettings.model_construct(
             fyers_app_id="app",
-            fyers_secret_key="test-secret",  # noqa: S106
-            fyers_access_token="test-token",  # noqa: S106
+            fyers_secret_key="test-secret",
+            fyers_access_token="test-token",
         )
         stream = FyersTickStream(
             settings,
@@ -817,8 +817,8 @@ class TestWebSocketTicks:
 
         settings = FyersSettings.model_construct(
             fyers_app_id="app",
-            fyers_secret_key="test-secret",  # noqa: S106
-            fyers_access_token="test-token",  # noqa: S106
+            fyers_secret_key="test-secret",
+            fyers_access_token="test-token",
         )
         stream = FyersTickStream(
             settings,

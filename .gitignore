@@ -34,6 +34,7 @@ audit/
 .env.*
 !.env.example
 .fyers_token
+.fyers_refresh_token
 secrets/
 keys/
 *.key

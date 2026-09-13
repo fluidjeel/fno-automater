@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from trading.data.config import load_data_pipeline_config
-from trading.data.fyers.auth import run_interactive_auth
+from trading.data.fyers.auth import run_interactive_auth, run_refresh
 from trading.data.fyers.ws import FyersTickStream
 from trading.data.macro_news import format_macro_summary, load_macro_news_jsonl
 from trading.data.pipeline import build_pipeline
@@ -42,6 +42,10 @@ def _cmd_auth_fyers(args: argparse.Namespace) -> int:
         auth_code=args.auth_code,
         open_browser=not args.no_browser,
     )
+
+
+def _cmd_auth_refresh(args: argparse.Namespace) -> int:
+    return run_refresh(_repo_root())
 
 
 def _macro_news_path(root: Path, file_arg: str) -> Path:
@@ -336,6 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         help="print login URL only; do not open a browser",
     )
     fyers_auth.set_defaults(func=_cmd_auth_fyers)
+    fyers_refresh = auth_sub.add_parser(
+        "refresh", help="refresh access token from the stored refresh token"
+    )
+    fyers_refresh.set_defaults(func=_cmd_auth_refresh)
 
     data = sub.add_parser("data", help="market data pipeline")
     data_sub = data.add_subparsers(dest="data_cmd", required=True)

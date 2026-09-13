@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -26,6 +27,7 @@ class FyersSettings(BaseSettings):
         alias="FYERS_REDIRECT_URI",
     )
     fyers_access_token: str = Field(default="", alias="FYERS_ACCESS_TOKEN")
+    fyers_pin: str = Field(default="", alias="FYERS_PIN")
     fyers_env: str = Field(default="api", alias="FYERS_ENV")
     data_underlyings: str = Field(
         default="NSE:NIFTY50-INDEX",
@@ -68,8 +70,18 @@ class FyersSettings(BaseSettings):
     def underlying_symbols(self) -> tuple[str, ...]:
         return tuple(s.strip() for s in self.data_underlyings.split(",") if s.strip())
 
+    @property
+    def app_id_hash(self) -> str:
+        """Hex SHA-256 of ``app_id:secret_key`` for Fyers v3 auth endpoints."""
+        return hashlib.sha256(
+            f"{self.fyers_app_id}:{self.fyers_secret_key}".encode()
+        ).hexdigest()
+
     def token_cache_path(self, root: Path) -> Path:
         return root / ".fyers_token"
+
+    def refresh_token_cache_path(self, root: Path) -> Path:
+        return root / ".fyers_refresh_token"
 
     def load_cached_token(self, root: Path) -> str | None:
         path = self.token_cache_path(root)
@@ -80,6 +92,16 @@ class FyersSettings(BaseSettings):
 
     def save_cached_token(self, root: Path, token: str) -> None:
         self.token_cache_path(root).write_text(token.strip(), encoding="utf-8")
+
+    def load_refresh_token(self, root: Path) -> str | None:
+        path = self.refresh_token_cache_path(root)
+        if path.is_file():
+            token = path.read_text(encoding="utf-8").strip()
+            return token or None
+        return None
+
+    def save_refresh_token(self, root: Path, token: str) -> None:
+        self.refresh_token_cache_path(root).write_text(token.strip(), encoding="utf-8")
 
     @classmethod
     def from_repo_root(cls, repo_root: Path) -> FyersSettings:

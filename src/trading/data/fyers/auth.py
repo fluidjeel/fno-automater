@@ -8,16 +8,22 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
+from trading.data.fyers.telegram import send_telegram_message
 from trading.data.settings import FyersSettings
 
 __all__ = [
     "exchange_auth_code",
     "extract_auth_code",
     "get_auth_url",
+    "refresh_access_token",
     "run_interactive_auth",
+    "run_refresh",
 ]
 
 _AUTH_CODE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_REFRESH_URL = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
 
 
 def extract_auth_code(raw: str) -> str:
@@ -52,8 +58,8 @@ def get_auth_url(settings: FyersSettings) -> str:
     return auth_url
 
 
-def exchange_auth_code(settings: FyersSettings, auth_code: str) -> str:
-    """Exchange an auth_code for an access token."""
+def exchange_auth_code(settings: FyersSettings, auth_code: str) -> tuple[str, str]:
+    """Exchange an auth_code for ``(access_token, refresh_token)``."""
     from fyers_apiv3 import fyersModel
 
     session = fyersModel.SessionModel(
@@ -69,6 +75,37 @@ def exchange_auth_code(settings: FyersSettings, auth_code: str) -> str:
     access_token = response.get("access_token")
     if not isinstance(access_token, str) or not access_token:
         raise ValueError("Token exchange returned no access_token")
+    refresh_token = response.get("refresh_token", "")
+    if not isinstance(refresh_token, str):
+        refresh_token = ""
+    return access_token, refresh_token
+
+
+def refresh_access_token(
+    settings: FyersSettings,
+    *,
+    refresh_token: str,
+    transport: httpx.BaseTransport | None = None,
+) -> str:
+    """Exchange a refresh token for a fresh access token (no browser login)."""
+    if not settings.fyers_pin:
+        raise ValueError("FYERS_PIN is required to refresh the access token")
+    with httpx.Client(timeout=15.0, transport=transport) as client:
+        response = client.post(
+            _REFRESH_URL,
+            json={
+                "appIdHash": settings.app_id_hash,
+                "refresh_token": refresh_token,
+                "pin": settings.fyers_pin,
+            },
+        )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("s") != "ok":
+        raise ValueError(f"refresh failed: {payload.get('message', payload)}")
+    access_token = payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise ValueError("refresh returned no access_token")
     return access_token
 
 
@@ -138,14 +175,52 @@ def run_interactive_auth(
     print("Exchanging for access token...")
 
     try:
-        token = exchange_auth_code(settings, code)
+        token, refresh_token = exchange_auth_code(settings, code)
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
     settings.save_cached_token(repo_root, token)
+    if refresh_token:
+        settings.save_refresh_token(repo_root, refresh_token)
     cache_path = settings.token_cache_path(repo_root)
     print(f"\nToken saved to {cache_path}")
     print(f"Token preview: {token[:30]}...")
+    if refresh_token:
+        print("Refresh token saved; run 'trading auth refresh' daily.")
+    else:
+        print("WARN: no refresh token returned; daily refresh will be unavailable.")
+    send_telegram_message("Fyers access token obtained (interactive login).")
     print("\nRun: trading data fetch")
+    return 0
+
+
+def run_refresh(repo_root: Path) -> int:
+    """Refresh the access token from the stored refresh token (no browser)."""
+    try:
+        settings = FyersSettings.from_repo_root(repo_root)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        send_telegram_message(f"Fyers token refresh FAILED: {exc}")
+        return 1
+
+    refresh_token = settings.load_refresh_token(repo_root)
+    if not refresh_token:
+        print(
+            "ERROR: no refresh token cached; run 'trading auth fyers' once first.",
+            file=sys.stderr,
+        )
+        send_telegram_message("Fyers token refresh FAILED: no refresh token cached.")
+        return 1
+
+    try:
+        access_token = refresh_access_token(settings, refresh_token=refresh_token)
+    except Exception as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        send_telegram_message(f"Fyers token refresh FAILED: {exc}")
+        return 1
+
+    settings.save_cached_token(repo_root, access_token)
+    print("Fyers access token refreshed.")
+    send_telegram_message("Fyers access token refreshed successfully.")
     return 0
