@@ -1,0 +1,91 @@
+# Base configuration.
+#
+# Every value the exchange, regulator or broker controls is null on purpose.
+# Filling one in requires reading the current official source named in `source`
+# and recording the date you read it in `verified_at`. Reading an unverified
+# value raises ConfigNotVerifiedError rather than returning a default, because a
+# stale lot size or margin rule produces orders the exchange rejects, or accepts
+# at the wrong size.
+#
+# Do not copy numbers from docs/research/. Those documents contain remembered
+# 2026 figures that were already stale when written.
+
+schema_version: "1"
+environment: BACKTEST
+account_id: "REPLACE_ME"
+base_currency: INR
+
+exchanges:
+  - exchange: NSE
+    timezone: Asia/Kolkata
+    session_open_local: "09:15"
+    session_close_local: "15:30"
+    max_orders_per_second:
+      value: null
+      source: "broker API documentation and exchange order-rate circular"
+      verified_at: null
+    max_orders_per_day:
+      value: null
+      source: "broker API documentation"
+      verified_at: null
+    algo_id_required_above_ops:
+      value: null
+      source: "SEBI algorithmic trading framework, current circular"
+      verified_at: null
+
+  - exchange: NFO
+    timezone: Asia/Kolkata
+    session_open_local: "09:15"
+    session_close_local: "15:30"
+    max_orders_per_second:
+      value: null
+      source: "broker API documentation and exchange order-rate circular"
+      verified_at: null
+    max_orders_per_day:
+      value: null
+      source: "broker API documentation"
+      verified_at: null
+    algo_id_required_above_ops:
+      value: null
+      source: "SEBI algorithmic trading framework, current circular"
+      verified_at: null
+
+# Instruments are populated from the broker instrument master, not by hand. The
+# POC underlying is still an open decision, so the list starts empty.
+instruments: []
+
+margin:
+  min_cash_fraction_of_margin:
+    value: null
+    source: "SEBI margin composition circular in force on the trading date"
+    verified_at: null
+    note: "Applies to open F&O positions. Verify the effective date, not just the rule."
+  expiry_day_short_option_elm_fraction:
+    value: null
+    source: "exchange extreme loss margin schedule"
+    verified_at: null
+  margin_buffer_fraction:
+    value: null
+    source: "internal policy, sized against observed intraday margin moves"
+    verified_at: null
+
+# Account policy is ours to set, so these are required rather than verified.
+# They remain deliberately conservative until live evidence justifies otherwise.
+risk:
+  max_loss_per_trade_fraction: "0.01"
+  daily_loss_cap_fraction: "0.03"
+  max_portfolio_risk_fraction: "0.10"
+  max_concurrent_trades: 3
+  max_margin_utilisation_fraction: "0.50"
+
+# DATA_SPEC.md: no single universal freshness threshold. Populate one entry per
+# timeframe a strategy actually consumes; an unconfigured timeframe fails closed.
+freshness:
+  max_age_ms_by_timeframe: {}
+  warmup_bars_by_timeframe: {}
+  max_clock_drift_ms: 500
+
+storage:
+  durable_write_required_before_submit: true
+  raw_retention_days: 90
+  audit_retention_days: 2555
