@@ -14,9 +14,11 @@ __all__ = [
     "DataQuality",
     "DifferenceClass",
     "Exchange",
+    "ExitScope",
     "InstrumentKind",
     "IntentState",
     "OptionType",
+    "OrderPlanState",
     "OrderState",
     "OrderType",
     "ProposalType",
@@ -24,9 +26,11 @@ __all__ = [
     "ReasonCode",
     "Recommendation",
     "ReconciliationTrigger",
+    "ReservationState",
     "RiskAction",
     "Severity",
     "Side",
+    "SizingBindingConstraint",
     "SystemState",
     "TimeInForce",
     "TradeState",
@@ -141,6 +145,51 @@ class RiskAction(StrEnum):
     RESIZE = "RESIZE"
     DEFER = "DEFER"
     REJECT = "REJECT"
+
+
+@unique
+class ReservationState(StrEnum):
+    """Capital reservation lifecycle. Invariant 14."""
+
+    REQUESTED = "REQUESTED"
+    RESERVED = "RESERVED"
+    REJECTED = "REJECTED"
+    COMMITTED = "COMMITTED"
+    RELEASED = "RELEASED"
+
+    @property
+    def holds_capital(self) -> bool:
+        return self in {ReservationState.RESERVED, ReservationState.COMMITTED}
+
+
+@unique
+class SizingBindingConstraint(StrEnum):
+    """Which term bound the final lot count in the min() sizing formula."""
+
+    RISK = "RISK"
+    CAPITAL = "CAPITAL"
+    MARGIN = "MARGIN"
+    PORTFOLIO_LIMIT = "PORTFOLIO_LIMIT"
+    LIQUIDITY = "LIQUIDITY"
+
+
+@unique
+class ExitScope(StrEnum):
+    """What price or P&L series a stop or target applies to."""
+
+    STRATEGY_PNL = "STRATEGY_PNL"
+    LEG_PRICE = "LEG_PRICE"
+    UNDERLYING = "UNDERLYING"
+    SPREAD_VALUE = "SPREAD_VALUE"
+
+
+@unique
+class OrderPlanState(StrEnum):
+    """Logical plan state before per-leg OrderState takes over."""
+
+    CREATED = "CREATED"
+    RISK_APPROVED = "RISK_APPROVED"
+    SUBMITTED = "SUBMITTED"
 
 
 @unique
@@ -279,6 +328,7 @@ class ReasonCode(StrEnum):
     DATA_INVALID = "DATA_INVALID"
     DATA_DEGRADED = "DATA_DEGRADED"
     DATA_GAP = "DATA_GAP"
+    PRICE_UNAVAILABLE = "PRICE_UNAVAILABLE"
     WARMUP_INCOMPLETE = "WARMUP_INCOMPLETE"
     CLOCK_DRIFT = "CLOCK_DRIFT"
     SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"

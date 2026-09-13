@@ -8,6 +8,7 @@ from trading.domain.state.machine import (
 from trading.domain.state.machines import (
     INTENT_MACHINE,
     ORDER_MACHINE,
+    RESERVATION_MACHINE,
     SYSTEM_MACHINE,
     TRADE_MACHINE,
 )
@@ -15,6 +16,7 @@ from trading.domain.state.machines import (
 __all__ = [
     "INTENT_MACHINE",
     "ORDER_MACHINE",
+    "RESERVATION_MACHINE",
     "SYSTEM_MACHINE",
     "TRADE_MACHINE",
     "IllegalTransitionError",

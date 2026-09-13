@@ -13,10 +13,12 @@ from typing import Any
 from trading.domain.contracts import (
     AIProposal,
     ApprovedLeg,
+    CapitalReservation,
     ContractRef,
     DataQualityReport,
     EntryPolicy,
     EvidenceRef,
+    ExitPolicy,
     ExitTemplate,
     ExposureSnapshot,
     FeatureSnapshot,
@@ -28,10 +30,25 @@ from trading.domain.contracts import (
     OrderCommand,
     OrderEvent,
     OrderIdentity,
+    OrderPlan,
+    PendingOrderSummary,
+    PlannedOrder,
+    PortfolioSnapshot,
+    PortfolioView,
+    PositionLegState,
+    PositionRecord,
+    PositionState,
+    ProtectiveOrderStub,
     ReconciliationEvent,
+    ReconciliationResult,
     RiskDecision,
+    SizingDecision,
+    SizingLegResult,
+    SizingLimits,
+    SizingRequest,
     SnapshotTimes,
     TradeIntent,
+    UnderlyingExposure,
     Versions,
 )
 from trading.domain.enums import (
@@ -39,18 +56,24 @@ from trading.domain.enums import (
     DataQuality,
     DifferenceClass,
     Exchange,
+    ExitScope,
     InstrumentKind,
     OptionType,
+    OrderPlanState,
     OrderState,
     OrderType,
     ProposalType,
     ReasonCode,
     Recommendation,
     ReconciliationTrigger,
+    ReservationState,
     RiskAction,
     Severity,
     Side,
+    SizingBindingConstraint,
+    SystemState,
     TimeInForce,
+    TradeState,
 )
 from trading.domain.primitives import (
     Currency,
@@ -374,6 +397,256 @@ def reconciliation_event(**overrides: Any) -> ReconciliationEvent:
     )
 
 
+def position_record(**overrides: Any) -> PositionRecord:
+    return PositionRecord.model_validate(
+        {
+            "trade_id": "TRD-OPEN-1",
+            "strategy_id": "positional_index_options_poc",
+            "contract": option_contract(),
+            "side": Side.BUY,
+            "quantity_contracts": 75,
+            "average_price": price("118.50"),
+            "unrealized_pnl": money("250"),
+            **overrides,
+        }
+    )
+
+
+def pending_order(**overrides: Any) -> PendingOrderSummary:
+    return PendingOrderSummary.model_validate(
+        {
+            "internal_order_id": "ORD-PEND-1",
+            "intent_id": "INT-1",
+            "contract": option_contract(),
+            "side": Side.BUY,
+            "quantity_contracts": 75,
+            "state": OrderState.ACKNOWLEDGED,
+            **overrides,
+        }
+    )
+
+
+def underlying_exposure(**overrides: Any) -> UnderlyingExposure:
+    return UnderlyingExposure.model_validate(
+        {
+            "underlying": "NIFTY",
+            "net_delta": 75,
+            "gross_notional": money("900000"),
+            "open_position_count": 1,
+            **overrides,
+        }
+    )
+
+
+def portfolio_snapshot(**overrides: Any) -> PortfolioSnapshot:
+    return PortfolioSnapshot.model_validate(
+        {
+            "portfolio_snapshot_id": "PORT-1",
+            "account_id": "ACC-1",
+            "as_of": NOW,
+            "exposure": exposure(),
+            "positions": (),
+            "pending_orders": (),
+            "reserved_capital": money("0"),
+            "underlying_exposure": (),
+            "versions": versions(),
+            **overrides,
+        }
+    )
+
+
+def portfolio_view(**overrides: Any) -> PortfolioView:
+    return PortfolioView.model_validate(
+        {
+            "as_of": NOW,
+            "open_trade_count": 0,
+            "margin_available": money("700000"),
+            "realized_pnl_today": money("0"),
+            "net_delta": 0,
+            "system_state": SystemState.READY,
+            "entries_permitted": True,
+            **overrides,
+        }
+    )
+
+
+def sizing_limits(**overrides: Any) -> SizingLimits:
+    return SizingLimits.model_validate(
+        {
+            "policy_version": "1",
+            "config_version": "1",
+            "max_loss_per_trade": money("7000"),
+            "daily_loss_remaining": money("21000"),
+            "strategy_allocation_remaining": money("140000"),
+            "margin_available": money("700000"),
+            **overrides,
+        }
+    )
+
+
+def sizing_request(**overrides: Any) -> SizingRequest:
+    snap = snapshot()
+    return SizingRequest.model_validate(
+        {
+            "request_id": "SIZE-REQ-1",
+            "intent": intent(snapshot_id=snap.snapshot_id),
+            "feature_snapshot": snap,
+            "portfolio_snapshot": portfolio_snapshot(),
+            "limits": sizing_limits(),
+            "requested_at": NOW,
+            **overrides,
+        }
+    )
+
+
+def sizing_leg_result(leg_id: str = "leg-1", lots: int = 1) -> SizingLegResult:
+    return SizingLegResult(leg_id=leg_id, lots=Lots(lots), lot_size=LOT)
+
+
+def sizing_decision(**overrides: Any) -> SizingDecision:
+    return SizingDecision.model_validate(
+        {
+            "sizing_id": "SIZE-1",
+            "request_id": "SIZE-REQ-1",
+            "intent_id": "INT-1",
+            "binding_constraint": SizingBindingConstraint.RISK,
+            "approved_legs": (sizing_leg_result(),),
+            "risk_lots": 1,
+            "capital_lots": 2,
+            "margin_lots": 3,
+            "portfolio_limit_lots": 4,
+            "liquidity_lots": 5,
+            "estimated_margin": money("12000"),
+            "recalculated_max_loss": money("9800"),
+            "decided_at": NOW,
+            **overrides,
+        }
+    )
+
+
+def capital_reservation(**overrides: Any) -> CapitalReservation:
+    return CapitalReservation.model_validate(
+        {
+            "reservation_id": "RES-1",
+            "intent_id": "INT-1",
+            "strategy_id": "positional_index_options_poc",
+            "risk_decision_id": "DEC-1",
+            "state": ReservationState.RESERVED,
+            "amount": money("10000"),
+            "created_at": NOW,
+            "updated_at": NOW,
+            **overrides,
+        }
+    )
+
+
+def planned_order(**overrides: Any) -> PlannedOrder:
+    return PlannedOrder.model_validate(
+        {
+            "plan_leg_id": "PLAN-LEG-1",
+            "leg_id": "leg-1",
+            "identity": order_identity(),
+            "command": order_command(),
+            "plan_state": OrderPlanState.RISK_APPROVED,
+            **overrides,
+        }
+    )
+
+
+def protective_stub(**overrides: Any) -> ProtectiveOrderStub:
+    return ProtectiveOrderStub.model_validate(
+        {
+            "stub_id": "PROT-1",
+            "contract": option_contract(),
+            "side": Side.SELL,
+            "order_type": OrderType.STOP,
+            "quantity_contracts": 75,
+            "trigger_price": price("95.00"),
+            **overrides,
+        }
+    )
+
+
+def order_plan(**overrides: Any) -> OrderPlan:
+    return OrderPlan.model_validate(
+        {
+            "plan_id": "PLAN-1",
+            "intent_id": "INT-1",
+            "risk_decision_id": "DEC-1",
+            "correlation_id": "COR-1",
+            "policy_version": "1",
+            "orders": (planned_order(),),
+            "protective_orders": (protective_stub(),),
+            "created_at": NOW,
+            "expires_at": LATER,
+            **overrides,
+        }
+    )
+
+
+def exit_policy(**overrides: Any) -> ExitPolicy:
+    return ExitPolicy.model_validate(
+        {
+            "policy_id": "EXIT-POL-1",
+            "trade_id": "TRD-1",
+            "scope": ExitScope.LEG_PRICE,
+            "initial_stop_distance_ticks": 200,
+            "current_stop_distance_ticks": 200,
+            "stop_price": price("95.00"),
+            "target_price": price("140.00"),
+            "initialized_at": NOW,
+            **overrides,
+        }
+    )
+
+
+def position_leg_state(**overrides: Any) -> PositionLegState:
+    return PositionLegState.model_validate(
+        {
+            "leg_id": "leg-1",
+            "contract": option_contract(),
+            "side": Side.BUY,
+            "quantity_contracts": 75,
+            "average_entry_price": price("118.50"),
+            "current_stop_price": price("95.00"),
+            **overrides,
+        }
+    )
+
+
+def position_state(**overrides: Any) -> PositionState:
+    return PositionState.model_validate(
+        {
+            "trade_id": "TRD-1",
+            "intent_id": "INT-1",
+            "strategy_id": "positional_index_options_poc",
+            "state": TradeState.OPEN,
+            "legs": (position_leg_state(),),
+            "exit_policy": exit_policy(),
+            "protective_order_ids": ("PROT-ORD-1",),
+            "opened_at": NOW,
+            "as_of": NOW,
+            **overrides,
+        }
+    )
+
+
+def reconciliation_result(**overrides: Any) -> ReconciliationResult:
+    return ReconciliationResult.model_validate(
+        {
+            "result_id": "RECON-RUN-1",
+            "trigger": ReconciliationTrigger.BOOT,
+            "events": (reconciliation_event(),),
+            "entries_blocked": False,
+            "prior_system_state": SystemState.RECOVERY,
+            "resulting_system_state": SystemState.READY,
+            "started_at": NOW,
+            "completed_at": NOW + timedelta(seconds=2),
+            **overrides,
+        }
+    )
+
+
 ALL_FACTORIES = (
     index_contract,
     option_contract,
@@ -393,4 +666,12 @@ ALL_FACTORIES = (
     order_command,
     order_event,
     reconciliation_event,
+    portfolio_snapshot,
+    portfolio_view,
+    sizing_request,
+    sizing_decision,
+    capital_reservation,
+    order_plan,
+    position_state,
+    reconciliation_result,
 )

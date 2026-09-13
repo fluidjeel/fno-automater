@@ -5,6 +5,7 @@ from __future__ import annotations
 from trading.domain.enums import (
     IntentState,
     OrderState,
+    ReservationState,
     SystemState,
     TradeState,
     Trigger,
@@ -14,6 +15,7 @@ from trading.domain.state.machine import ANY_TRIGGER, StateMachine
 __all__ = [
     "INTENT_MACHINE",
     "ORDER_MACHINE",
+    "RESERVATION_MACHINE",
     "SYSTEM_MACHINE",
     "TRADE_MACHINE",
 ]
@@ -213,6 +215,32 @@ TRADE_MACHINE: StateMachine[TradeState] = StateMachine(
         TradeState.REPAIR_REQUIRED: {
             TradeState.CLOSING: ANY_TRIGGER,
             TradeState.OPEN: frozenset({Trigger.RECONCILIATION}),
+        },
+    },
+)
+
+# REQUESTED -> RESERVED | REJECTED; RESERVED -> COMMITTED | RELEASED;
+# COMMITTED -> RELEASED. Invariant 14.
+RESERVATION_MACHINE: StateMachine[ReservationState] = StateMachine(
+    "reservation",
+    initial=ReservationState.REQUESTED,
+    states=frozenset(ReservationState),
+    terminal=frozenset({ReservationState.REJECTED, ReservationState.RELEASED}),
+    edges={
+        ReservationState.REQUESTED: {
+            ReservationState.RESERVED: frozenset({Trigger.RISK_DECISION}),
+            ReservationState.REJECTED: frozenset({Trigger.RISK_DECISION}),
+        },
+        ReservationState.RESERVED: {
+            ReservationState.COMMITTED: frozenset({Trigger.BROKER_EVENT}),
+            ReservationState.RELEASED: frozenset(
+                {Trigger.BROKER_EVENT, Trigger.LOCAL_COMMAND, Trigger.TIMEOUT}
+            ),
+        },
+        ReservationState.COMMITTED: {
+            ReservationState.RELEASED: frozenset(
+                {Trigger.BROKER_EVENT, Trigger.RECONCILIATION}
+            ),
         },
     },
 )

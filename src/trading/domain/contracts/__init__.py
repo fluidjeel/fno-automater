@@ -13,6 +13,7 @@ from trading.domain.contracts.common import (
     Lineage,
     Versions,
 )
+from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import (
     EntryPolicy,
     ExitTemplate,
@@ -21,6 +22,23 @@ from trading.domain.contracts.intent import (
     TradeIntent,
 )
 from trading.domain.contracts.order import OrderCommand, OrderEvent, OrderIdentity
+from trading.domain.contracts.order_plan import (
+    OrderPlan,
+    PlannedOrder,
+    ProtectiveOrderStub,
+)
+from trading.domain.contracts.portfolio import (
+    PendingOrderSummary,
+    PortfolioSnapshot,
+    PortfolioView,
+    PositionRecord,
+    UnderlyingExposure,
+)
+from trading.domain.contracts.position import (
+    ExitPolicy,
+    PositionLegState,
+    PositionState,
+)
 from trading.domain.contracts.proposal import (
     AIProposal,
     EvidenceRef,
@@ -28,7 +46,15 @@ from trading.domain.contracts.proposal import (
     ParameterProposal,
 )
 from trading.domain.contracts.reconciliation import ReconciliationEvent
+from trading.domain.contracts.reconciliation_result import ReconciliationResult
+from trading.domain.contracts.reservation import CapitalReservation
 from trading.domain.contracts.risk import ApprovedLeg, RiskDecision
+from trading.domain.contracts.sizing import (
+    SizingDecision,
+    SizingLegResult,
+    SizingLimits,
+    SizingRequest,
+)
 from trading.domain.contracts.snapshot import (
     DerivativesContext,
     FeatureSnapshot,
@@ -41,16 +67,19 @@ __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
     "ApprovedLeg",
+    "CapitalReservation",
     "ContractError",
     "ContractRef",
     "DataQualityReport",
     "DerivativesContext",
     "EntryPolicy",
     "EvidenceRef",
+    "ExitPolicy",
     "ExitTemplate",
     "ExposureSnapshot",
     "FeatureSnapshot",
     "Greeks",
+    "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
     "Lineage",
@@ -59,12 +88,27 @@ __all__ = [
     "OrderCommand",
     "OrderEvent",
     "OrderIdentity",
+    "OrderPlan",
     "ParameterProposal",
+    "PendingOrderSummary",
+    "PlannedOrder",
+    "PortfolioSnapshot",
+    "PortfolioView",
+    "PositionLegState",
+    "PositionRecord",
+    "PositionState",
+    "ProtectiveOrderStub",
     "ReconciliationEvent",
+    "ReconciliationResult",
     "RiskDecision",
+    "SizingDecision",
+    "SizingLegResult",
+    "SizingLimits",
+    "SizingRequest",
     "SnapshotTimes",
     "StrictModel",
     "TradeIntent",
+    "UnderlyingExposure",
     "VersionedModel",
     "Versions",
 ]

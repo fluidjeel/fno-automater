@@ -27,6 +27,7 @@ from trading.domain.enums import (
 from trading.domain.state import (
     INTENT_MACHINE,
     ORDER_MACHINE,
+    RESERVATION_MACHINE,
     SYSTEM_MACHINE,
     TRADE_MACHINE,
     IllegalTransitionError,
@@ -41,6 +42,7 @@ ALL_MACHINES: tuple[StateMachine[Any], ...] = (
     INTENT_MACHINE,
     ORDER_MACHINE,
     TRADE_MACHINE,
+    RESERVATION_MACHINE,
 )
 
 

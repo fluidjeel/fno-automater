@@ -1,29 +1,46 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 3
+ACTIVE_PLAN_VERSION: 4
 
 Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
 `READY` or `IN_PROGRESS`.
 
+## Phase 2–3: Layer 2 control plane
+
 | ID | Status | Outcome | Scope | Verification | Dependency |
 | --- | --- | --- | --- | --- | --- |
-| NEWS-001 | DONE | Strict contracts, source/scoring config and taxonomy | `src/trading/news/contracts.py`, `config/news.yaml`, tests | Contract/config rejection and round-trip tests | None |
-| NEWS-002 | DONE | Configured source collectors | `src/trading/news/sources.py`, offline fixtures/tests | RSS/GDELT/FRED/EIA behavior, retries, keys, range and limits | NEWS-001 |
-| NEWS-003 | DONE | Normalize, deduplicate and cluster evidence | `src/trading/news/cluster.py`, tests | Stable event IDs; syndicated copies do not inflate confirmation | NEWS-001 |
-| NEWS-004 | DONE | Classifier interface and optional local FinBERT | `src/trading/news/sentiment.py`, optional extra, tests | Deterministic test classifier; unavailable model yields UNKNOWN | NEWS-001 |
-| NEWS-005 | DONE | Asset impacts, snapshots and event-risk state | `src/trading/news/scoring.py`, tests | Weighted deterministic scoring, contradiction flags, no position mutations | NEWS-003, NEWS-004 |
-| NEWS-006 | DONE | Store, CLI and operator documentation | `src/trading/news/storage.py`, `src/trading/cli.py`, docs | Idempotent JSONL; CLI smoke; full test/lint/type checks | NEWS-002, NEWS-005 |
-| NEWS-007 | DONE | Grounded weekly proposal contract and safe default | `src/trading/news/proposal.py`, tests | Strict evidence/expiry contract; generator abstains | NEWS-005 |
-| L1-001 | DONE | Live Fyers depth, status, chain Greeks, history OI | `src/trading/data/fyers/client.py`, `normalize.py`, fixtures | Offline fixtures; pipeline persists new event types | None |
-| L1-002 | DONE | Session, warmup, drift, cross-source quality | `src/trading/data/quality.py` | Invariant-6 tests | L1-001 |
-| L1-003 | DONE | Snapshot features: Greeks, OI, PCR, depth sizes | `src/trading/data/snapshot_builder.py` | Fixture snapshot carries ATM delta and bid size | L1-001 |
-| L1-004 | DONE | Parquet/DuckDB catalog | `src/trading/data/storage/catalog.py` | DuckDB count matches JSONL event ids | L1-001 |
-| L1-005 | DONE | WS daemon + systemd unit | `src/trading/data/fyers/ws.py`, `deploy/data-tick.service` | Offline reconnect test | L1-001 |
+| L2-001 | DONE | Layer 2 contracts + deterministic replay fixtures | `domain/contracts/portfolio.py`, `sizing.py`, `reservation.py`, `order_plan.py`, `position.py`, `reconciliation_result.py`, `tests/fixtures/l2_replay/`, `tests/test_l2_contracts.py`, extend `tests/factories.py` | Strict round-trip; float/naive-datetime rejection; two replay fixtures produce byte-identical `RiskDecision` serialization | None |
+| L2-002 | DONE | Durable trading event store (SQLite) | `src/trading/storage/trading_store.py`, `schema.sql`, `tests/test_trading_store.py` | Transactional append; idempotency unique constraint; recovery reads event sequence | L2-001 |
+| L2-003 | READY | Broker ports + paper adapter | `src/trading/broker/ports.py`, `broker/paper/`, `tests/fixtures/broker/`, `tests/test_paper_broker.py` | Offline fixture round-trip for orders, positions, funds, margin preview | L2-001 |
+| L2-004 | — | Portfolio snapshot + reconciliation | `src/trading/portfolio/`, `tests/test_reconciliation.py` | Boot reconcile; critical mismatch sets `entries_blocked`; covers inv 5, 9 | L2-002, L2-003 |
+| L2-005 | — | Atomic capital reservation | `src/trading/risk/reservation.py`, `tests/test_reservation.py` | Concurrent reserve cannot overspend; lifecycle state machine; inv 14 | L2-002 |
+| L2-006 | — | Sizing engine (long call/put) + risk gateway | `src/trading/risk/sizing/long_option.py`, `risk/limits.py`, `risk/gateway.py`, `config/risk.yaml`, tests | `min()` constraint binding; REJECT on limit breach; confidence does not relax limits; inv 4 | L2-004, L2-005 |
+| L2-007 | — | OrderPlan builder + OMS core | `src/trading/oms/planner.py`, `oms/engine.py`, `oms/rate_limit.py`, tests | Idempotent submit (inv 11); UNKNOWN freeze (inv 13); durable write before submit | L2-002, L2-003, L2-006 |
+| L2-008 | — | Trade manager + deterministic exits | `src/trading/trade/manager.py`, `trade/exits.py`, tests | Stop monotonicity (inv 17); open position has protection (inv 16); partial → REPAIR_REQUIRED | L2-007 |
+| L2-009 | — | Safety controls + readiness | `src/trading/safety/controls.py`, `safety/readiness.py`, tests | Daily loss kill switch (inv 24); stale snapshot blocks entry (inv 6); system RECOVERY gating | L2-004 |
+| L2-010 | — | E2E vertical slice 1: long call/put paper | `tests/test_l2_slice1_long_option.py` | Full path intent→RiskDecision→OrderPlan→fill→exit→reconcile→audit; replay deterministic | L2-007, L2-008, L2-009 |
+
+## Deferred (post slice 1)
+
+| ID | Status | Outcome | Scope | Verification | Dependency |
+| --- | --- | --- | --- | --- | --- |
+| L2-011 | — | Slice 2: debit spread sizing + E2E | `risk/sizing/debit_spread.py`, E2E test | Defined max loss sizing; multi-leg OrderPlan | L2-010 |
+| L2-012 | — | Slice 3: commodity futures | `risk/sizing/commodity_future.py`, E2E test | Stop-distance + margin preview sizing | L2-010 |
+| L2-013 | — | Slice 4: credit spread / multi-leg defined risk | sizing + partial-fill repair policy | inv 15 failure tests | L2-011 |
+| L2-014 | — | Slice 5: iron condor | sizing + combined P&L exit scope | Wing loss minus credit | L2-013 |
+| L2-015 | — | Live Fyers broker adapter | `broker/fyers/` | Verified API behavior; paper parity drill | L2-010, UD-L2-03 |
+
+## Prior milestones (complete)
+
+| ID | Status | Outcome |
+| --- | --- | --- |
+| NEWS-001..007 | DONE | News/macro evidence subsystem |
+| L1-001..005 | DONE | Live Fyers Layer 1 completeness |
 
 Completion record:
 
 ```text
-Live Layer 1 completeness: REST depth/status/Greeks/OI, quality gates,
-snapshot features, Parquet/DuckDB catalog, WS daemon. Historical option-chain
-vendor source remains the Phase 1 replay blocker for options structures.
+Layer 1 live data path complete. L2-001 contracts and replay fixtures done.
+L2-002 durable trading event store done.
+Next implementation task: L2-003 (broker ports + paper adapter).
 ```
