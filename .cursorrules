@@ -1,0 +1,330 @@
+# Autonomous Trading System - Cursor Development Rules
+# Minimize tokens. Maximize clarity. No redundant explanations.
+
+## 1. CODE STYLE & STRUCTURE
+- **Python 3.11+**, type hints mandatory (mypy strict mode)
+- Use DuckDB + Polars for data ops, not Pandas
+- QuantLib for options pricing (BSM for NSE, Black-76 for MCX)
+- OpenAlgo as broker abstraction layer
+- Redis for state sync between Oracle VPS and Lambda
+- All execution logic: deterministic, testable, no randomness except jitter in backoff
+- All AI logic: async, Lambda-bound, never touches hot path
+
+## 2. FILE ORGANIZATION
+```
+trading_system/
+├── infra/
+│   ├── vps_core.py          # Oracle VPS persistent layer (WebSocket, order books, state)
+│   ├── lambda_tasks.py      # AWS Lambda episodic compute (universe selection, AI eval)
+│   ├── redis_sync.py        # Redis Pub/Sub + session recovery
+│   └── broker_adapter.py    # OpenAlgo wrapper (Fyers, Zerodha)
+├── services/
+│   ├── service1_market_data.py    # Live ticks, Greeks polling, rate-limit aware
+│   ├── service2_alt_data.py       # News NLP, macro ingestion via Lambda
+│   └── service3_quant_compute.py  # QuantLib pricing, Greeks, IV surface
+├── agents/
+│   ├── agent4_universe_selection.py   # Weekly multifactor screening
+│   ├── agent2_hybrid_execution.py     # OFI + CAS trade detection + execution
+│   ├── health_agent.py               # Daemon monitoring, fallback logic
+│   └── evaluator_agent.py            # Post-market Kelly tuning via LLM
+├── execution/
+│   ├── script1_positional.py   # Iron Condors, stock futures, calendar spreads
+│   ├── script3_risk.py         # Theta-driven pre-exits, trailing stops, hard caps
+│   └── cas_executor.py         # 3:27 PM trigger, 3:35 PM liquidation
+├── models/
+│   ├── pricing.py              # BSM, Black-76 wrappers
+│   ├── kelly_sizing.py         # Fractional Kelly + 2% hard cap
+│   └── ofi_microstructure.py   # MLOFI computation from 50-level depth
+├── backtest/
+│   ├── harness.py              # Walk-forward validation, slippage modeling
+│   ├── cas_validator.py        # CAS strategy paper-trading harness
+│   └── strategy_metrics.py     # Sharpe, max DD, win rate, payoff ratios
+├── compliance/
+│   ├── sebi_algo_id.py         # Algo ID tagging (10 OPS threshold check)
+│   ├── margin_enforcer.py      # 50:50 cash margin rule, STT cost bake-in
+│   └── validators.py           # Pre-trade risk checks
+├── logging/
+│   ├── audit_log.py            # JSONL format (OpenAlgo compatible)
+│   └── trades_db.py            # DuckDB trade history
+└── tests/
+    ├── test_pricing.py
+    ├── test_kelly.py
+    ├── test_cas_logic.py
+    └── test_fallback_logic.py
+```
+
+## 3. EXECUTION SCRIPTS (DETERMINISTIC ONLY)
+**Write as pure functions. No side effects. Testable in isolation.**
+
+```python
+# Pattern: Script always takes explicit state, returns decision + trade list
+def script1_position_entry(
+    universe: list[str],
+    current_prices: dict,
+    kelly_params: dict,  # p, b from AI Agent 4
+    max_loss_pct: float = 0.02,  # Hard cap
+) -> list[Trade]:
+    """Deterministic execution. No I/O, no randomness."""
+    # 1. Compute position sizes (Kelly or hard cap, whichever is tighter)
+    # 2. Check margin compliance (50:50 rule)
+    # 3. Return Trade objects (no execution here)
+    pass
+
+def script3_risk_management(
+    open_positions: list[Position],
+    current_prices: dict,
+    current_greeks: dict,
+) -> list[CloseOrder]:
+    """Autonomous risk manager. Theta decay logic + trailing stops."""
+    # 1. For each options position: compute projected theta decay over next N hours
+    # 2. If theta > remaining momentum edge: liquidate
+    # 3. For momentum positions: update trailing stop from ATR
+    # 4. Return list of liquidation orders (no execution)
+    pass
+
+def cas_signal_detection(
+    cas_imbalance_qty: int,
+    reference_price: float,
+    price_band_pct: float = 0.03,
+) -> bool:
+    """Pure logic: does imbalance warrant a trade? Boolean, no side effects."""
+    # 1. Check if |imbalance| > N sigma (configurable threshold)
+    # 2. Check if expected gap > price band cap (if so, edge is capped)
+    # 3. Return True/False only
+    pass
+```
+
+## 4. AI AGENTS (ASYNC ONLY, LAMBDA-BOUND)
+**Write as Lambda entry points. No persistence. All state passed in.**
+
+```python
+# Pattern: Agent receives context, returns structured JSON, never modifies state
+async def agent4_universe_selection(
+    macro_data: dict,  # From Service 2
+    market_data: dict,  # NSE 500 universe snapshot
+) -> UniverseDecision:
+    """Weekly: multifactor screening + correlation filter."""
+    # 1. Deterministic script: liquidity filter (₹75L median order size, ₹75Cr turnover)
+    # 2. AI: multifactor Z-score (0.35 Quality + 0.25 Value + 0.25 Momentum + 0.15 Low Vol)
+    # 3. Correlation filter: > 0.50 → discard lower risk-adjusted return
+    # 4. Return JSON: {universe: [...], scores: {...}, updated_at: ts}
+    pass
+
+async def agent2_ofi_detection(
+    market_depth_50: dict,
+    recent_ticks: list,
+) -> TradeSignal:
+    """Intraday: MLOFI computation + parabolic ignition check."""
+    # 1. Compute Multi-Level OFI across top 10 levels
+    # 2. Check if MLOFI hits extreme percentile (configurable, e.g., 5th/95th)
+    # 3. Return: {signal: True/False, confidence: 0-1, entry_price: float}
+    # 4. **Fallback**: if MLOFI computation fails, return signal=False
+    pass
+
+async def cas_imbalance_analyzer(
+    cas_imbalance_data: dict,  # Live from NSE at 3:27 PM
+    reference_price: float,
+) -> CASTradeDecision:
+    """3:27 PM: analyze CAS imbalance, recommend naked call buy."""
+    # 1. Parse imbalance quantity (buy/sell)
+    # 2. Compute Z-score against historical imbalance distribution
+    # 3. Check if gap would exceed ±3% price band cap
+    # 4. Return: {should_trade: bool, estimated_payoff: float, confidence: 0-1}
+    pass
+
+async def evaluator_agent(
+    audit_logs: list[dict],  # JSONL from OpenAlgo, last 100 trades
+    macro_context: dict,
+) -> HyperparameterUpdate:
+    """Post-market: recalculate Kelly p, b from rolling window."""
+    # 1. Segment trades by strategy (harvesting, momentum, CAS, etc.)
+    # 2. Compute win_rate (p), avg_win/avg_loss (b) per strategy
+    # 3. LLM: analyze failure reasons, suggest parameter tweaks
+    # 4. Return: {p_new, b_new, reasons_str, allow_update: bool}
+    # 5. **Safety gate**: block updates > 5% shift on any core metric
+    pass
+```
+
+## 5. BACKTEST HARNESS (MINIMAL, PRODUCTION-FOCUSED)
+**No fancy visualization. Just metrics that matter.**
+
+```python
+# Pattern: Walk-forward by day. Track slippage, margin breaches, drawdowns.
+
+class CASValidator:
+    """Paper-trade CAS strategy for 4+ weeks. Minimal overhead."""
+    def __init__(self, start_date: date, end_date: date):
+        self.trades = []
+        self.daily_pnl = {}
+    
+    def ingest_cas_data(self, date: date, imbalance_data: dict, close_price: float):
+        """Feed real CAS imbalance at 3:27 PM, official close at 3:30."""
+        signal = cas_imbalance_analyzer(imbalance_data, reference_price)
+        if signal.should_trade:
+            # Simulate: buy call at 3:27, liquidate at 3:35
+            entry_price = self._estimate_entry(signal, slippage=0.001)
+            exit_price = self._estimate_exit(close_price, slippage=0.001)
+            pnl = (exit_price - entry_price) * 75  # Nifty lot size
+            self.trades.append({
+                'date': date, 'entry': entry_price, 'exit': exit_price, 'pnl': pnl
+            })
+    
+    def report(self) -> dict:
+        """Return: {win_rate, avg_payoff, max_dd, sharpe}."""
+        wins = [t['pnl'] for t in self.trades if t['pnl'] > 0]
+        losses = [t['pnl'] for t in self.trades if t['pnl'] <= 0]
+        return {
+            'total_trades': len(self.trades),
+            'win_rate': len(wins) / len(self.trades),
+            'avg_win': sum(wins) / len(wins) if wins else 0,
+            'avg_loss': abs(sum(losses) / len(losses)) if losses else 0,
+            'payoff_ratio': (sum(wins) / len(wins)) / (abs(sum(losses)) / len(losses)) if wins and losses else 0,
+        }
+```
+
+## 6. COMPLIANCE & SAFETY (NEVER SKIP)
+**All trades tagged with Algo ID before execution. 50:50 margin enforced.**
+
+```python
+def pre_trade_check(
+    trade: Trade,
+    account_state: dict,
+    algo_id: str,  # Exchange-assigned
+) -> bool:
+    """Gate every trade. Return True only if all checks pass."""
+    # 1. Verify Algo ID is exchange-registered (or < 10 OPS threshold)
+    # 2. Verify margin: (cash_required / total_margin) >= 0.50
+    # 3. Verify order size does not exceed 2% of account equity
+    # 4. Verify position limits (5% for client, 15% for broker)
+    # 5. Tag trade with Algo ID before submitting to broker
+    # 6. Log everything to audit_log.jsonl
+    return all([check1, check2, check3, check4])
+```
+
+## 7. REDIS STATE SYNC (CRITICAL FOR FAILOVER)
+**Every persistent state lives in Redis. WebSocket disconnect → recovery via session ID.**
+
+```python
+class RedisStateManager:
+    """Central truth for positions, pending orders, market data state."""
+    def __init__(self, redis_url: str):
+        self.r = redis.Redis.from_url(redis_url)
+    
+    def save_market_state(self, session_id: str, last_seq: int, positions: dict):
+        """On disconnect: save session ID + last sequence number."""
+        self.r.set(f"session:{session_id}:last_seq", last_seq)
+        self.r.set(f"session:{session_id}:positions", json.dumps(positions))
+    
+    def recover_on_reconnect(self, session_id: str) -> dict:
+        """On reconnect: broker replays all missed ticks from last_seq."""
+        return {
+            'last_seq': int(self.r.get(f"session:{session_id}:last_seq")),
+            'positions': json.loads(self.r.get(f"session:{session_id}:positions")),
+        }
+```
+
+## 8. LOGGING & AUDIT (SEBI-COMPLIANT)
+**JSONL format (one trade per line). Include reasoning, slippage, Greeks at entry/exit.**
+
+```python
+def log_trade(trade: Trade, greeks: dict, slippage: float):
+    """Every trade: reason, entry/exit prices, Greeks, margin used, Algo ID."""
+    event = {
+        'timestamp': datetime.utcnow().isoformat(),
+        'algo_id': trade.algo_id,
+        'strategy': trade.strategy,
+        'action': trade.action,
+        'instrument': trade.instrument,
+        'qty': trade.qty,
+        'entry_price': trade.entry_price,
+        'exit_price': trade.exit_price,
+        'greeks_entry': greeks,
+        'slippage': slippage,
+        'margin_used': trade.margin_pct,
+        'reason': trade.reason_str,  # "Kelly sizing", "OFI breakout", "CAS imbalance", etc.
+    }
+    with open('audit_log.jsonl', 'a') as f:
+        f.write(json.dumps(event) + '\n')
+```
+
+## 9. MINIMAL PROMPT PATTERN FOR AGENTS
+**When calling Claude API or LLM for Agent decisions, be brutally specific.**
+
+```python
+# Pattern: Feed structured JSON, ask for structured JSON back. No prose.
+
+AGENT4_PROMPT = """
+You are a universe selection agent. You receive:
+- market_data: NSE 500 screened by liquidity (₹75L median order size, ₹75Cr turnover)
+- macro_data: US yields, DXY, India VIX, crude, sectoral momentum
+
+Return ONLY valid JSON:
+{
+  "universe": ["RELIANCE", "TCS", ...],  # top 20-30 by multifactor score
+  "scores": {"RELIANCE": 0.85, ...},
+  "reason": "Quality 0.9, Momentum 0.75, Low Vol 0.8, Value 0.6. Excluded INFY (corr > 0.50 with TCS).",
+  "timestamp": "2026-09-13T10:30:00Z"
+}
+"""
+
+EVALUATOR_PROMPT = """
+Post-market analysis of last 100 trades. Compute Kelly parameters.
+Input: JSONL audit logs (strategy, entry, exit, pnl, reason).
+Return ONLY:
+{
+  "win_rate": 0.55,
+  "avg_win": 1250,
+  "avg_loss": -850,
+  "p": 0.55,
+  "b": 1.47,
+  "recommendation": "Increase harvesting size 5%, reduce CAS allocation to 5% (win rate 15%)",
+  "allow_update": true
+}
+"""
+```
+
+## 10. LOCAL DEVELOPMENT WORKFLOW
+**Oracle VPS mock for local testing. Use DuckDB for fixture data.**
+
+```bash
+# Local: simulate market data + agent decisions without real broker
+pytest tests/test_cas_logic.py -v
+
+# Local backtest: walk-forward CAS validator
+python -m backtest.cas_validator --start=2026-08-03 --end=2026-09-13
+
+# Local compliance check: verify all trades pass pre_trade_check
+python -m compliance.validators --audit_log=audit_log.jsonl
+
+# Stage to Oracle VPS for live paper trading
+rsync -av infra/vps_core.py oracle_vps:/trading_system/
+rsync -av services/ oracle_vps:/trading_system/services/
+```
+
+## 11. DEBUGGING CHECKLIST (BEFORE LIVE)
+- [ ] CAS validator running for 4+ weeks: win_rate >= 15%, payoff_ratio >= 2.0
+- [ ] All scripts testable in isolation (no I/O, pure functions)
+- [ ] Redis state recovery tested (WebSocket disconnect + reconnect)
+- [ ] Margin check: no trade violates 50:50 cash rule
+- [ ] Algo ID tagging: all orders carry exchange-assigned ID
+- [ ] Kelly recalibration: 5% gate on p, b prevents parameter drift
+- [ ] Fallback logic: Agent timeout → deterministic script triggers within 100ms
+- [ ] Audit logs: every trade JSONL-formatted with reasoning
+
+## 12. SEBI COMPLIANCE CHECKLIST
+- [ ] 10 OPS threshold check: if > 10 orders/sec/exchange, strategy must be registered
+- [ ] Static IP whitelisted at broker (Oracle VPS fixed IP)
+- [ ] Algo ID tagging on every order (via OpenAlgo)
+- [ ] 50:50 cash margin enforced pre-trade
+- [ ] STT cost baked into Kelly b parameter
+- [ ] CAS: liquidate intraday cash positions before 3:12 PM
+- [ ] Expiry-day: unwind calendar spreads before expiry to avoid 2% ELM penalty
+
+## 13. TOKEN EFFICIENCY RULES FOR CURSOR
+- **No docstrings longer than 1 line.** Use comments instead.
+- **No explanations in code comments.** Only "why", not "what".
+- **Inline all small functions.** Don't ask for refactoring unless > 50 LOC.
+- **Use type hints as doc.** `def foo(x: dict[str, float]) -> TradeSignal:` beats prose.
+- **Reuse existing patterns.** If you write a Strategy class once, don't ask to rewrite it.
+- **Ask for diffs only.** "Change line 42 from X to Y" beats "rewrite the whole function".
+- **Keep tests minimal.** Test only boundaries and fallback logic, not happy path.

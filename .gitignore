@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Local data: raw and canonical market data are never committed
+data/
+*.duckdb
+*.parquet
+
+# Runtime artifacts: audit exports and durable state are environment-local
+audit/
+*.jsonl
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# OS
+.DS_Store
