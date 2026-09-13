@@ -1,9 +1,15 @@
 [Unit]
 Description=Refresh the Fyers access token each morning before NSE open
 
-# 08:00 IST = 02:30 UTC; runs before the data pipeline (03:45 UTC) Mon–Fri.
+# Three attempts before the 09:15 IST open, in case the first is missed:
+#   08:00 IST = 02:30 UTC
+#   08:30 IST = 03:00 UTC
+#   09:00 IST = 03:30 UTC
+# Each run skips itself when the token is already fresh.
 [Timer]
 OnCalendar=Mon..Fri *-*-* 02:30:00
+OnCalendar=Mon..Fri *-*-* 03:00:00
+OnCalendar=Mon..Fri *-*-* 03:30:00
 Persistent=true
 
 [Install]

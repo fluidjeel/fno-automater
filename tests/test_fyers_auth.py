@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -12,6 +14,8 @@ import pytest
 from trading.data.fyers import auth as auth_mod
 from trading.data.fyers.auth import (
     _auth_code_from_text,
+    _token_expiry,
+    _token_is_fresh,
     extract_auth_code,
     refresh_access_token,
     run_telegram_auth,
@@ -155,3 +159,34 @@ class TestRunTelegramAuth:
         assert run_telegram_auth(tmp_path) == 0
         assert (tmp_path / ".fyers_token").read_text() == "new-access-token"
         assert (tmp_path / ".fyers_refresh_token").read_text() == "new-refresh-token"
+
+
+class TestTokenFreshness:
+    @staticmethod
+    def _jwt(exp: int) -> str:
+        def b64(data: bytes) -> str:
+            return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+        header = b64(b'{"alg":"none"}')
+        payload = b64(json.dumps({"exp": exp}).encode())
+        return f"{header}.{payload}.sig"
+
+    def test_token_expiry_decodes_exp(self) -> None:
+        exp = 1_700_000_000
+        assert _token_expiry(self._jwt(exp)) == datetime.fromtimestamp(exp, tz=UTC)
+
+    def test_fresh_token_means_no_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        settings = _settings_with_pin(monkeypatch)
+        future = int((datetime.now(UTC) + timedelta(days=1)).timestamp())
+        settings.save_cached_token(tmp_path, self._jwt(future))
+        assert _token_is_fresh(settings, tmp_path) is True
+
+    def test_stale_token_means_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        settings = _settings_with_pin(monkeypatch)
+        past = int((datetime.now(UTC) - timedelta(days=1)).timestamp())
+        settings.save_cached_token(tmp_path, self._jwt(past))
+        assert _token_is_fresh(settings, tmp_path) is False

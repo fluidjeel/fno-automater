@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import sys
 import time
 import webbrowser
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -18,6 +21,7 @@ from trading.data.fyers.telegram import (
     telegram_configured,
 )
 from trading.data.settings import FyersSettings
+from trading.domain.clock import WallClock
 
 __all__ = [
     "exchange_auth_code",
@@ -33,6 +37,8 @@ _AUTH_CODE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _AUTH_CODE_IN_URL = re.compile(r"auth_code=([A-Za-z0-9._-]+)")
 # Bare codes are long opaque tokens; short strings are almost always paste noise.
 _MIN_BARE_AUTH_CODE_LEN = 10
+# A JWT is header.payload.signature.
+_JWT_SEGMENTS = 3
 _REFRESH_URL = "https://api-t1.fyers.in/api/v3/validate-refresh-token"
 
 
@@ -268,6 +274,56 @@ def _latest_update_id(updates: list[dict[str, Any]]) -> int:
     return max(ids, default=0)
 
 
+def _auth_code_from_update(update: dict[str, Any]) -> str | None:
+    message = update.get("message")
+    text = message.get("text") if isinstance(message, dict) else None
+    if not isinstance(text, str) or not text:
+        return None
+    return _auth_code_from_text(text)
+
+
+def _token_expiry(token: str) -> datetime | None:
+    """Decode the JWT ``exp`` claim. ``None`` when unparseable."""
+    parts = token.split(".")
+    if len(parts) != _JWT_SEGMENTS:
+        return None
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    exp = payload.get("exp") if isinstance(payload, dict) else None
+    if not isinstance(exp, int):
+        return None
+    return datetime.fromtimestamp(exp, tz=UTC)
+
+
+def _token_is_fresh(settings: FyersSettings, repo_root: Path) -> bool:
+    """True when the cached access token is still valid well into the session."""
+    cached = settings.load_cached_token(repo_root)
+    if not cached:
+        return False
+    expiry = _token_expiry(cached)
+    if expiry is None:
+        return False
+    return expiry > WallClock().now_utc() + timedelta(minutes=15)
+
+
+def _complete_login(settings: FyersSettings, repo_root: Path, code: str) -> int:
+    """Exchange an auth_code and persist the tokens. Returns process status."""
+    try:
+        access_token, refresh_token = exchange_auth_code(settings, code)
+    except ValueError as exc:
+        print(f"Fyers login failed: {exc}", file=sys.stderr)
+        return 1
+    settings.save_cached_token(repo_root, access_token)
+    if refresh_token:
+        settings.save_refresh_token(repo_root, refresh_token)
+    _notify(settings, "✅ Fyers token refreshed.")
+    print("Fyers token refreshed from Telegram reply.")
+    return 0
+
+
 def run_telegram_auth(
     repo_root: Path,
     *,
@@ -290,6 +346,19 @@ def run_telegram_auth(
         )
         return 1
 
+    if _token_is_fresh(settings, repo_root):
+        print("Access token is still valid; no login prompt needed.")
+        return 0
+
+    token = settings.a2a_telegram_bot_token
+    # A reply to an earlier prompt may still be pending; honor it first.
+    pending = get_updates(token=token)
+    offset = _latest_update_id(pending) + 1
+    for update in pending:
+        code = _auth_code_from_update(update)
+        if code is not None and _complete_login(settings, repo_root, code) == 0:
+            return 0
+
     try:
         auth_url = get_auth_url(settings)
     except Exception as exc:
@@ -297,9 +366,6 @@ def run_telegram_auth(
         _notify(settings, f"Fyers login failed to build URL: {exc}")
         return 1
 
-    token = settings.a2a_telegram_bot_token
-    # Only accept replies that arrive after this point.
-    offset = _latest_update_id(get_updates(token=token)) + 1
     sent = _notify(
         settings,
         "Fyers login required.\n\n"
@@ -319,24 +385,10 @@ def run_telegram_auth(
             update_id = update.get("update_id")
             if isinstance(update_id, int):
                 offset = max(offset, update_id + 1)
-            message = update.get("message")
-            text = message.get("text") if isinstance(message, dict) else None
-            if not isinstance(text, str) or not text:
-                continue
-            code = _auth_code_from_text(text)
+            code = _auth_code_from_update(update)
             if code is None:
                 continue
-            try:
-                access_token, refresh_token = exchange_auth_code(settings, code)
-            except ValueError as exc:
-                _notify(settings, f"Fyers login failed: {exc}")
-                return 1
-            settings.save_cached_token(repo_root, access_token)
-            if refresh_token:
-                settings.save_refresh_token(repo_root, refresh_token)
-            _notify(settings, "✅ Fyers token refreshed.")
-            print("Fyers token refreshed from Telegram reply.")
-            return 0
+            return _complete_login(settings, repo_root, code)
 
     _notify(settings, "⚠️ Fyers login timed out; token not refreshed.")
     print("Timed out waiting for a Telegram reply.", file=sys.stderr)
