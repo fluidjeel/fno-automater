@@ -2,41 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
-
-_DEBUG_LOG = Path(
-    "/Users/apple/Documents/manasjit/fno-automated/.cursor/debug-b45cd5.log"
-)
-
-
-def _agent_log(
-    location: str,
-    message: str,
-    data: dict[str, object],
-    hypothesis_id: str,
-    *,
-    run_id: str = "pre-fix",
-) -> None:
-    try:
-        payload = {
-            "sessionId": "b45cd5",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data,
-            "hypothesisId": hypothesis_id,
-            "runId": run_id,
-        }
-        with _DEBUG_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
-
 
 from trading.config import load_config
 from trading.data.config import (
@@ -268,19 +237,6 @@ class DataPipeline:
             session=self._pipeline_config.session,
             quality_config=self._pipeline_config.quality,
         )
-        # #region agent log
-        _agent_log(
-            "pipeline.py:run_once",
-            "quality_assessed",
-            {
-                "symbol": symbol,
-                "quality_state": quality.state.value,
-                "reason_codes": [code.value for code in quality.reason_codes],
-                "event_count": len(events),
-            },
-            "H3",
-        )
-        # #endregion
         snapshot: FeatureSnapshot | None = None
         if quality.state is not DataQuality.INVALID:
             builder = MarketSnapshotBuilder(

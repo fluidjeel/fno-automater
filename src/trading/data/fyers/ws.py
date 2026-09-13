@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from collections.abc import Callable
@@ -19,34 +18,6 @@ from trading.domain.clock import Clock
 from trading.domain.enums import DataQuality
 
 __all__ = ["FyersTickStream", "TickStreamResult"]
-
-_DEBUG_LOG = Path(
-    "/Users/apple/Documents/manasjit/fno-automated/.cursor/debug-b45cd5.log"
-)
-
-
-def _agent_log(
-    location: str,
-    message: str,
-    data: dict[str, object],
-    hypothesis_id: str,
-    *,
-    run_id: str = "pre-fix",
-) -> None:
-    try:
-        payload = {
-            "sessionId": "b45cd5",
-            "timestamp": int(time.time() * 1000),
-            "location": location,
-            "message": message,
-            "data": data,
-            "hypothesisId": hypothesis_id,
-            "runId": run_id,
-        }
-        with _DEBUG_LOG.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload) + "\n")
-    except OSError:
-        pass
 
 
 @runtime_checkable
@@ -147,42 +118,15 @@ class FyersTickStream:
         attempts = 0
         stopped_reason = "duration"
         log_dir = self._repo_root / "data" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
         while not halt.is_set():
-            # #region agent log
-            _agent_log(
-                "ws.py:collect",
-                "before_socket_factory",
-                {"log_dir": str(log_dir), "log_dir_exists": log_dir.exists()},
-                "H1",
+            socket = self._socket_factory(
+                access_token=self._settings.auth_header,
+                write_to_file=False,
+                log_path=str(log_dir),
+                reconnect=False,
+                on_message=on_message,
             )
-            # #endregion
-            log_dir.mkdir(parents=True, exist_ok=True)
-            # #region agent log
-            _agent_log(
-                "ws.py:collect",
-                "after_mkdir",
-                {"log_dir_exists": log_dir.is_dir()},
-                "H2",
-            )
-            # #endregion
-            try:
-                socket = self._socket_factory(
-                    access_token=self._settings.auth_header,
-                    write_to_file=False,
-                    log_path=str(log_dir),
-                    reconnect=False,
-                    on_message=on_message,
-                )
-            except OSError as exc:
-                # #region agent log
-                _agent_log(
-                    "ws.py:collect",
-                    "socket_factory_failed",
-                    {"error_type": type(exc).__name__, "error": str(exc)},
-                    "H1",
-                )
-                # #endregion
-                raise
             try:
                 socket.connect()
                 socket.subscribe(
