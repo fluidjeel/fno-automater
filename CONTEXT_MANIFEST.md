@@ -1,5 +1,8 @@
 # Context Manifest
 
+Rules live in `.cursor/rules/`. Canonical context lives in `docs/context/`.
+Implementation memory lives in `docs/plans/`.
+
 ## Automatically applied
 
 - `.cursor/rules/00-core.mdc`: compact safety and low-token execution rules.
@@ -32,6 +35,14 @@
 - `POC_ROADMAP.md`: safe vertical build order.
 - `CURRENT_STATE.md`: concise evidence-backed project status.
 - `STRATEGY_SPECS/`: relevant strategy specification only.
+
+## Superseded
+
+`docs/research/` holds the three source documents this context pack replaces:
+the layered architecture DOCX, the autonomous-system research PDF and the
+originating chat transcript. They are provenance, not specification. The
+Service/Agent topology, AI-in-the-loop execution, CAS lottery trade, Redis as
+position authority and hard-coded exchange thresholds found there are rejected.
 
 ## Implementation memory
 

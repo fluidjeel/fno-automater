@@ -1,0 +1,39 @@
+---
+description: Feeds, data quality, deterministic calculations and replay
+globs: src/trading/data/**/*.py,src/trading/features/**/*.py,src/trading/replay/**/*.py
+alwaysApply: false
+---
+
+# Data and Calculations
+
+Spec: `docs/context/DATA_SPEC.md`.
+
+## Quality gate
+
+Assign `VALID`, `DEGRADED`, `STALE` or `INVALID` with reason codes. Thresholds
+are per strategy and per timeframe. There is no single universal freshness
+threshold; do not invent one.
+
+## Canonical events
+
+Every event records provider and instrument identity, event/source/receive
+times, provider sequence, explicit units and precision, a raw payload
+reference, and the normalization version. Corrections and duplicates are
+explicit states, not silent overwrites.
+
+## Calculation rules
+
+- Event-time processing. Provisional and final bars are different states.
+- No silent forward-fill for execution-critical data.
+- Explicit period, annualization, currency, contracts/lots and percent/fraction
+  units. Record model, convergence and calculation version.
+- Layer 1 owns bars, returns, indicators, realized vol, IV, Greeks, skew, term
+  structure, liquidity and OFI. It does not select or size trades.
+
+## Replay integrity
+
+Point-in-time universe and reference data. No completed bar used before
+completion, no revised value used before publication. Same snapshot, config and
+code version reproduces the same decision, byte for byte.
+
+Raw and canonical data are preserved separately and immutably.

@@ -1,0 +1,42 @@
+---
+description: Planning-only rule. Reads the canonical context once and produces the active plan.
+alwaysApply: false
+---
+
+# Planning Context
+
+Invoke this rule only when planning a milestone. Implementation turns must not
+load it.
+
+## Read exactly once
+
+1. `docs/context/PROJECT_CONTEXT.md` - mission, scope, non-goals.
+2. `docs/context/ARCHITECTURE.md` - layers, flows, runtime placement.
+3. `docs/context/SAFETY_INVARIANTS.md` - non-negotiable live-safety properties.
+4. `docs/context/DOMAIN_CONTRACTS.md` - typed messages and state machines.
+5. `docs/context/DATA_SPEC.md` - data, quality, calculation, replay.
+6. `docs/context/BROKER_SPEC.md` - adapter, order, reconciliation behavior.
+7. `docs/context/TESTING_AND_RELEASE.md` - evidence and promotion gates.
+8. `docs/context/OPERATIONS_RUNBOOK.md` - readiness and remediation.
+9. `docs/context/POC_ROADMAP.md` - safe vertical build order.
+10. `docs/context/CURRENT_STATE.md` - evidence-backed status.
+11. Only the relevant `docs/context/STRATEGY_SPECS/` file.
+
+Then inspect the actual repository with `rg`. Do not trust
+`CURRENT_STATE.md` over observed files.
+
+## Produce
+
+Write `docs/plans/ACTIVE_PLAN.md` as a compact digest: goal, scope, non-goals,
+context digest, vertical slices with exact files and acceptance tests,
+unresolved decisions, residual risks. Populate `docs/plans/TASK_LEDGER.md` with
+exactly one `READY` item.
+
+Set `PLAN_STATUS: APPROVED`, increment `CONTEXT_DIGEST_VERSION`, and set
+`CONTEXT_REFRESH_REQUIRED: no` only after the user approves.
+
+## Rules
+
+Build one vertical slice, not disconnected placeholders. Respect the roadmap
+order; do not pull a later phase forward. Record unresolved decisions
+explicitly rather than choosing a default and hiding it in code.

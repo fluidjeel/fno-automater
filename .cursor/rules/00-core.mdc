@@ -1,0 +1,51 @@
+---
+description: Core safety and execution rules for the autonomous trading platform
+alwaysApply: true
+---
+
+# Core Rules
+
+Authority: `docs/context/` is canonical. `docs/research/` is superseded history;
+never implement from it.
+
+## Non-negotiable
+
+1. Deterministic versioned code owns every live decision: signals, sizing,
+   allocation, risk, order creation, stops, exits, flattening.
+2. AI is asynchronous and proposal-only. It never calls a broker, mutates live
+   state or config, or bypasses a gate. No LLM call in a live decision path.
+3. Strategies emit `TradeIntent` only. They never construct broker orders.
+4. Layer 2 recalculates every financially authoritative value at decision time.
+5. Broker orders, fills, positions and funds are external truth.
+6. Unknown, stale, inconsistent or invalid critical state blocks new exposure.
+   Existing positions keep deterministic protection regardless.
+
+## Layer ownership
+
+| Layer | Owns | Never |
+| --- | --- | --- |
+| 1 Data | Feeds, quality state, features, IV/Greeks | Trade selection, sizing |
+| 2 Risk | Portfolio, sizing, limits, OMS, exits, reconciliation | Setup detection |
+| 3 Strategy | Setup logic, requested risk, exit template | Final qty, broker calls |
+| 4 Analytics | Evaluation, proposals, backtest | Any live mutation |
+
+Domain and calculation code imports no infrastructure. Side effects live behind
+typed ports.
+
+## Configuration, not constants
+
+Lot sizes, order-rate caps, margin rules, expiry penalties, loss caps and
+freshness thresholds are validated configuration. Never a literal in domain
+logic, never a remembered value. Unverified config fails closed.
+
+## Money and time
+
+`Decimal` or integer minor units for anything financial; never `float`. All
+timestamps timezone-aware, stored UTC, with exchange-local session logic.
+Time and IDs are injected, never read from ambient global state.
+
+## Style
+
+Python 3.12, type hints mandatory, `mypy --strict` clean. Polars over Pandas.
+One-line docstrings. Comments explain why, not what. Patch minimally; do not
+reformat untouched code.

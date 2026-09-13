@@ -1,0 +1,37 @@
+---
+description: Strategy plug-ins and their specifications
+globs: src/trading/strategies/**/*.py,docs/context/STRATEGY_SPECS/*.md
+alwaysApply: false
+---
+
+# Strategies
+
+Each strategy is an independent pure plug-in. It consumes an immutable
+`FeatureSnapshot` and a read-only portfolio view, and returns zero or more
+`TradeIntent` objects.
+
+## Prohibited
+
+- Broker calls, OMS access, order construction, final quantity.
+- Reading mutable global state or a partially updated feature frame.
+- Calling another strategy, forming a pipeline.
+- LLM or network calls of any kind.
+- Naked short options.
+
+## Required
+
+- Pure function of its inputs. Same snapshot and config yields the same intents.
+- A complete exit template on every intent: stop, target, time, expiry,
+  invalidation, and a multi-leg partial-fill policy.
+- A deterministic path when no promoted AI proposal is available: approved
+  baseline or abstain. Missing or expired proposal is never an error.
+- Confidence is evidence, not permission. A high score cannot substitute for a
+  failed hard gate.
+
+## Specifications
+
+One spec per strategy, from `docs/context/STRATEGY_SPECS/TEMPLATE.md`. Do not
+invent production defaults; leave parameters unset until research sets them and
+record every trial. Preserve a final holdout.
+
+Follow roadmap order. CAS and microstructure are Phase 7, not early work.

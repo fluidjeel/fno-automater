@@ -1,0 +1,42 @@
+---
+description: Domain models, primitives and state machines
+globs: src/trading/domain/**/*.py
+alwaysApply: false
+---
+
+# Domain Contracts
+
+Spec: `docs/context/DOMAIN_CONTRACTS.md`.
+
+## Model rules
+
+- Strict Pydantic: `extra="forbid"`, `frozen=True`, `strict=True`.
+- Every model carries `schema_version`.
+- Reject unknown fields, NaN, infinity, naive datetimes, invalid precision.
+- Serialize and replay without information loss. Round-trip is tested.
+- `Decimal` or integer minor units for money; `float` never appears in a
+  financial field.
+
+## Authority boundaries encoded in types
+
+`TradeIntent` has no field capable of expressing a broker command or a final
+quantity. That absence is the design, not an oversight. Do not add one.
+
+`AIProposal` carries a hard `valid_until` and supports `ABSTAIN`. Prose stays in
+a field structurally separate from machine-consumable output.
+
+`RiskDecision` carries its own `expires_at`. An expired decision must be
+recalculated, never consumed.
+
+## State machines
+
+`STARTING -> RECOVERY -> READY -> DEGRADED -> HALTED` and the Intent, Order and
+Trade machines are transition tables. An illegal transition raises and emits an
+audit record; it never silently no-ops.
+
+`OrderState.UNKNOWN` is reachable and leaves only through reconciliation.
+
+## Imports
+
+This tree imports only the standard library and `pydantic`. An AST test
+enforces it. If you need infrastructure, you are in the wrong layer.

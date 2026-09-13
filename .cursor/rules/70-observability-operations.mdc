@@ -1,0 +1,47 @@
+---
+description: Telemetry, deployment, configuration governance and operations
+globs: src/trading/observability/**/*.py,src/trading/config/**/*.py,config/**/*.yaml,deploy/**
+alwaysApply: false
+---
+
+# Observability and Operations
+
+Spec: `docs/context/OPERATIONS_RUNBOOK.md`.
+
+## Readiness
+
+Three independent levels: `LIVE_SAFE` (every confirmed position protected and
+reconcilable), `ENTRY_READY` (feeds, broker, risk, storage, clock and config
+valid for new exposure), `RESEARCH_READY`.
+
+Entry readiness is evaluated per strategy dependency, not from one process
+heartbeat. Research failure never removes live safety.
+
+## Remediation
+
+All remediation is bounded deterministic code or an explicit operator command.
+AI may summarize evidence; it cannot invoke an action.
+
+Safety controls are independently callable and tested: entry freeze, strategy
+halt, cancel pending, controlled flatten, global halt. Each records actor,
+scope, trigger, old and new state, command, result, broker reference and
+incident ID.
+
+Flattening is not the universal first response. An unreliable broker connection
+makes repeated liquidation attempts dangerous.
+
+## Monitoring
+
+Feed and feature age, gaps, clock drift, heartbeat, storage durability, broker
+connection, unknown/reject/partial counts, reconciliation lag, exposure and
+margin discrepancy, protective coverage, AI cost and schema failures.
+
+Keep IDs and symbols out of metric labels; put them in structured logs and
+traces. Every critical alert has an owner, a severity and a tested runbook.
+
+## Configuration governance
+
+Versioned, validated, checksummed. A live change requires schema validation,
+evidence, an approval record, a deployment record and a rollback target.
+Volatile market rules live here, never in source constants. Secrets never
+appear in prompts, logs or configuration files.

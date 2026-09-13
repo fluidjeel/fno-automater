@@ -1,0 +1,40 @@
+---
+description: Tests, backtests, CI and release gates
+globs: tests/**/*.py,.github/workflows/*.yml
+alwaysApply: false
+---
+
+# Testing and Release
+
+Spec: `docs/context/TESTING_AND_RELEASE.md`.
+
+## Test classes
+
+- Unit: pricing inputs, rounding, sizing, limits, stops, schema validation,
+  transitions, reason codes.
+- Invariant/property: determinism, no limit bypass through rounding, no
+  duplicate or negative reservation, idempotency under duplicate processing,
+  stop monotonicity, illegal transitions rejected.
+- Contract: recorded and sanitized feed and broker fixtures, serialization,
+  producer/consumer compatibility.
+- Scenario/failure: stale, missing, duplicate and out-of-order events, clock
+  drift, partial fill, reject, unknown submit timeout, amend/cancel race, rate
+  limit, disconnect, restart, broker mismatch, storage failure, AI timeout and
+  malformed response, kill switch.
+- Replay/research: decision-time visibility, costs, slippage, liquidity, roll,
+  expiry, corporate actions, point-in-time universe, walk-forward.
+
+## Conventions
+
+- Test boundaries and failure paths, not the happy path.
+- Name the safety invariant a test covers in its docstring so coverage of
+  `SAFETY_INVARIANTS.md` is auditable.
+- Any change touching an invariant requires an explicit failure test.
+- Tests run offline and deterministically. No network, no wall clock, no
+  ambient randomness; inject `Clock` and `IdFactory`.
+
+## Gates
+
+Never promote while a data-freshness, risk, idempotency, order-state,
+reconciliation, protective-exit, audit, restart or kill-switch test fails.
+Profitability or win rate alone is never sufficient evidence.

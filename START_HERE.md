@@ -1,44 +1,56 @@
-# Trading Platform Context Pack
+# Trading Platform
 
-Extract this archive at the repository root. Existing source files are not
-included and should not be overwritten.
+Autonomous trading platform for Indian markets. Deterministic software owns
+every live decision; AI improves research, context and evaluation outside the
+live path. This is an automated trading system with AI support, not an AI
+trading system.
 
-## First planning session
+## Layout
 
-Start Cursor Agent in planning mode and send:
+| Path | Contents |
+| --- | --- |
+| `docs/context/` | Canonical architecture, safety and specification set |
+| `docs/plans/` | Active implementation plan and task ledger |
+| `docs/research/` | Superseded source documents, kept for provenance only |
+| `.cursor/rules/` | Agent rules: core plus file-scoped specifications |
+| `src/trading/` | Implementation |
+| `config/` | Versioned, validated configuration |
+| `tests/` | Unit, invariant, contract and scenario tests |
 
-```text
-Plan the next implementation milestone. Apply @planning-context. Read the full
-canonical context exactly once, inspect the current repository, and write the
-approved implementation digest to docs/plans/ACTIVE_PLAN.md before coding.
-```
+`docs/research/` describes an earlier design that the canonical context
+replaces. Never implement from it.
 
-During planning, Cursor reads the canonical context set. During implementation,
-it reads only:
+## Development
 
-1. `.cursor/rules/00-core.mdc` automatically.
-2. `docs/plans/ACTIVE_PLAN.md` and `docs/context/CURRENT_STATE.md`.
-3. Rules and specifications matching the files being changed.
-4. Narrow source/test ranges discovered with `rg`.
+    uv sync
+    uv run ruff check .
+    uv run mypy src
+    uv run pytest
 
-It must not reread the full context pack unless the task changes architecture,
-the active plan declares `CONTEXT_REFRESH_REQUIRED: yes`, or a contradiction
-cannot be resolved from the plan and relevant scoped specification.
+## Planning a milestone
 
-## Normal implementation prompt
+Start Cursor Agent in planning mode and apply `@planning-context`. It reads the
+canonical context once, inspects the repository, and writes the approved digest
+to `docs/plans/ACTIVE_PLAN.md` before any coding.
 
-```text
-Implement the next READY item from docs/plans/TASK_LEDGER.md using
-docs/plans/ACTIVE_PLAN.md. Do not reread the full planning context. Patch
-minimally, run the listed tests, then update the ledger and current state.
-```
+## Implementing
 
-## Files intended for maintenance
+    Implement the next READY item from docs/plans/TASK_LEDGER.md using
+    docs/plans/ACTIVE_PLAN.md. Do not reread the full planning context. Patch
+    minimally, run the listed tests, then update the ledger and current state.
 
-- Update `CURRENT_STATE.md` after meaningful milestones.
-- Replace `ACTIVE_PLAN.md` when beginning a new milestone.
-- Keep `TASK_LEDGER.md` factual and compact.
-- Create one strategy specification per strategy from the supplied template.
-- Put volatile broker/exchange values in validated configuration, never prose or
-  source constants.
+During implementation the agent reads `.cursor/rules/00-core.mdc`
+automatically, plus `ACTIVE_PLAN.md`, `CURRENT_STATE.md`, the rules matching
+the files being changed, and narrow source ranges found with `rg`. It must not
+reread the full context pack unless the task changes architecture, the active
+plan declares `CONTEXT_REFRESH_REQUIRED: yes`, or a contradiction cannot be
+resolved from the plan and the relevant scoped specification.
 
+## Maintenance
+
+- Update `docs/context/CURRENT_STATE.md` after meaningful milestones.
+- Replace `docs/plans/ACTIVE_PLAN.md` when beginning a new milestone.
+- Keep `docs/plans/TASK_LEDGER.md` factual and compact.
+- One strategy specification per strategy, from the supplied template.
+- Volatile broker and exchange values belong in validated configuration, never
+  in prose or source constants.

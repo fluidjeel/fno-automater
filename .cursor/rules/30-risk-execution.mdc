@@ -1,0 +1,43 @@
+---
+description: Portfolio, risk gateway, OMS, broker adapter and recovery
+globs: src/trading/risk/**/*.py,src/trading/oms/**/*.py,src/trading/broker/**/*.py,src/trading/portfolio/**/*.py
+alwaysApply: false
+---
+
+# Risk and Execution
+
+Specs: `docs/context/BROKER_SPEC.md`, `docs/context/OPERATIONS_RUNBOOK.md`.
+
+This is the only path to the broker and the only place that authorizes exposure.
+
+## Orders and capital
+
+- One logical order uses one stable idempotency key across every retry.
+- A timeout or acknowledgement never proves a fill.
+- Unknown submit outcome blocks replacement until broker reconciliation. Never
+  blind-retry.
+- Capital is reserved before submission, released only from confirmed events.
+- Every open position maps to active deterministic protective coverage.
+- Stops only tighten. Widening requires a versioned tested policy.
+
+## Decisions
+
+Input `TradeIntent`, output `APPROVE`, `RESIZE`, `DEFER` or `REJECT`, always
+with machine-readable reason codes and a durable decision record. Recalculate
+max loss, margin, exposure and executable price here; never trust the
+strategy's numbers.
+
+## Reconciliation
+
+Runs on boot, reconnect, schedule, manual request and anomaly. Broker wins.
+Classify every difference, repair deterministically, emit a
+`ReconciliationEvent`. Entries stay blocked until critical breaks resolve.
+
+## Adapter boundary
+
+The broker adapter translates commands and responses. It holds no strategy
+logic, no sizing, no stop policy, no AI call, and no retry policy that can
+create duplicate risk.
+
+Verify current broker behavior before coding against it. Never hard-code a
+remembered exchange threshold.
