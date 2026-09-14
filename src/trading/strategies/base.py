@@ -56,13 +56,14 @@ class StrategyDecision:
 class StrategyContext:
     """All inputs a strategy may read for exactly one decision.
 
-    ``underlying`` is the underlying index/stock snapshot; ``option`` is the
-    candidate option contract snapshot the strategy is asked to consider.
-    ``now`` is the injected decision instant, so no strategy reads wall time.
+    ``underlying`` is the underlying index/stock/commodity snapshot;
+    ``candidates`` are the tradable contract snapshots the strategy is asked to
+    consider (one for a single-leg, two for a spread). ``now`` is the injected
+    decision instant, so no strategy reads wall time.
     """
 
     underlying: FeatureSnapshot
-    option: FeatureSnapshot
+    candidates: tuple[FeatureSnapshot, ...]
     view: PortfolioView
     now: datetime
     macro: MacroAssessment | None = None

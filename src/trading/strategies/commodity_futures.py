@@ -1,13 +1,9 @@
-"""Positional long call / long put strategy (Layer 3 first vertical slice).
+"""Directional commodity futures — Layer 3 slice 3.
 
-Defined-risk, premium-paid direction: buy one option contract whose type
-matches a deterministic directional read. The strategy emits a single
-``TradeIntent`` with a ratio leg (never a quantity) and a complete protective
-``ExitTemplate``; Layer 2 alone sizes and prices it.
-
-Determinism: every parameter is a versioned constant and ``intent_id`` is a
-hash of the decision inputs, so identical inputs produce identical bytes.
-No lookahead: only the injected ``now`` and snapshot timestamps are read.
+A single futures leg in the direction of the deterministic read (long on
+bullish, short on bearish). Unlike options, futures have no structural loss
+bound; the ``ExitTemplate`` stop is what bounds the loss, and Layer 2 sizes
+lots so that the stop equals ``requested_risk``.
 """
 
 from __future__ import annotations
@@ -24,7 +20,7 @@ from trading.domain.contracts import (
     IntentLeg,
     TradeIntent,
 )
-from trading.domain.enums import InstrumentKind, OptionType, ReasonCode, Side
+from trading.domain.enums import InstrumentKind, ReasonCode, Side
 from trading.domain.primitives import Currency, Money, Percent
 from trading.strategies._common import DEFAULT_MACRO_MIN_CONFIDENCE, resolve_direction
 from trading.strategies.base import (
@@ -35,36 +31,30 @@ from trading.strategies.base import (
 )
 from trading.strategies.macro import MacroBias
 
-__all__ = ["LongOptionStrategy"]
+__all__ = ["CommodityFuturesStrategy"]
 
-STRATEGY_ID = "positional_long_option"
-STRATEGY_VERSION = "long-option-v1"
+STRATEGY_ID = "commodity_futures_trend"
+STRATEGY_VERSION = "commodity-futures-v1"
 
-# Versioned research parameters. These are uncalibrated and must not be treated
-# as validated risk policy; changing any of them changes STRATEGY_VERSION.
 REQUESTED_RISK_INR = Decimal("10000")
-MIN_DAYS_TO_EXPIRY = 7
-MIN_OPEN_INTEREST = 1000
+MIN_DAYS_TO_EXPIRY = 3
+MIN_OPEN_INTEREST = 500
 MAX_SNAPSHOT_AGE_SECONDS = 120
-MAX_ENTRY_SPREAD_FRACTION = Decimal("0.05")
-STOP_TICKS = 40
-TARGET_TICKS = 80
+MAX_ENTRY_SPREAD_FRACTION = Decimal("0.02")
+STOP_TICKS = 60
+TARGET_TICKS = 120
 EXIT_BEFORE_EXPIRY_DAYS = 1
 ENTRY_TIMEOUT_SECONDS = 30
 INTENT_TTL_SECONDS = 300
-SESSION_LABEL = "NSE_FO"
-INVALIDATION_NOTE = "Long premium position; maximum loss is the paid premium."
+SESSION_LABEL = "MCX"
+INVALIDATION_NOTE = "Stop-bounded futures position; the stop is the maximum loss."
 
 _CURRENCY = Currency.INR
 
 
-def _option_type_for(bias: MacroBias) -> OptionType:
-    return OptionType.CALL if bias is MacroBias.BULLISH else OptionType.PUT
-
-
 @register_strategy
-class LongOptionStrategy:
-    """Buy a single call on a bullish read or a single put on a bearish read."""
+class CommodityFuturesStrategy:
+    """Long futures on a bullish read, short futures on a bearish read."""
 
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
@@ -88,12 +78,19 @@ class LongOptionStrategy:
                 decision,
                 ctx,
                 ReasonCode.INSTRUMENT_UNKNOWN,
-                "exactly one option required",
+                "exactly one future required",
             )
 
-        reason = self._validation_reason(ctx)
-        if reason is not None:
-            return self._reject(decision, ctx, reason, "input failed validation")
+        stale = self._snapshot_is_stale(ctx)
+        if stale is not None:
+            return self._reject(decision, ctx, stale, "snapshot is stale or invalid")
+
+        future = ctx.candidates[0]
+        eligibility = self._future_eligibility_reason(future)
+        if eligibility is not None:
+            return self._reject(
+                decision, ctx, eligibility, "future contract ineligible"
+            )
 
         bias, confidence = resolve_direction(
             ctx.underlying,
@@ -102,14 +99,10 @@ class LongOptionStrategy:
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
         if bias is MacroBias.NEUTRAL:
-            return decision  # no directional signal: no trade, not an error
+            return decision
 
-        option = ctx.candidates[0]
-        option_type = _option_type_for(bias)
-        if option.contract.option_type is not option_type:
-            return decision  # candidate does not match the read; skip, do not reject
-
-        intent = self._build_intent(ctx, option, bias, option_type, confidence)
+        side = Side.BUY if bias is MacroBias.BULLISH else Side.SELL
+        intent = self._build_intent(ctx, future, side, bias, confidence)
         return StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
@@ -141,21 +134,22 @@ class LongOptionStrategy:
             rejections=(*decision.rejections, rejection),
         )
 
-    def _validation_reason(self, ctx: StrategyContext) -> ReasonCode | None:
-        option = ctx.candidates[0]
-        if not ctx.underlying.permits_new_exposure or not option.permits_new_exposure:
+    def _snapshot_is_stale(self, ctx: StrategyContext) -> ReasonCode | None:
+        if not ctx.underlying.permits_new_exposure:
+            return ReasonCode.DATA_INVALID
+        if not ctx.candidates[0].permits_new_exposure:
             return ReasonCode.DATA_INVALID
         age = ctx.now - ctx.underlying.times.calculation_time
         if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
             return ReasonCode.DATA_STALE
         if ctx.now < ctx.underlying.times.calculation_time:
-            return ReasonCode.DATA_INVALID  # decision instant precedes the data
-        return self._option_eligibility_reason(option)
+            return ReasonCode.DATA_INVALID
+        return None
 
-    def _option_eligibility_reason(self, option: FeatureSnapshot) -> ReasonCode | None:
-        derivatives = option.derivatives
+    def _future_eligibility_reason(self, future: FeatureSnapshot) -> ReasonCode | None:
+        derivatives = future.derivatives
         if (
-            option.contract.instrument_kind is not InstrumentKind.OPTION
+            future.contract.instrument_kind is not InstrumentKind.FUTURE
             or derivatives is None
         ):
             return ReasonCode.INSTRUMENT_UNKNOWN
@@ -166,40 +160,37 @@ class LongOptionStrategy:
             and derivatives.open_interest < MIN_OPEN_INTEREST
         ):
             return ReasonCode.DEPTH_INSUFFICIENT
-        return self._spread_reason(option)
+        return self._spread_reason(future)
 
     @staticmethod
-    def _spread_reason(option: FeatureSnapshot) -> ReasonCode | None:
-        bid = option.market.bid
-        ask = option.market.ask
+    def _spread_reason(future: FeatureSnapshot) -> ReasonCode | None:
+        bid = future.market.bid
+        ask = future.market.ask
         if bid is None or ask is None:
             return ReasonCode.PRICE_UNAVAILABLE
         mid = (bid.value + ask.value) / 2
         if mid <= 0:
             return ReasonCode.PRICE_UNAVAILABLE
-        spread_fraction = (ask.value - bid.value) / mid
-        if spread_fraction > MAX_ENTRY_SPREAD_FRACTION:
+        if (ask.value - bid.value) / mid > MAX_ENTRY_SPREAD_FRACTION:
             return ReasonCode.SPREAD_TOO_WIDE
         return None
 
     def _build_intent(
         self,
         ctx: StrategyContext,
-        option: FeatureSnapshot,
+        future: FeatureSnapshot,
+        side: Side,
         bias: MacroBias,
-        option_type: OptionType,
         confidence: Decimal,
     ) -> TradeIntent:
         risk = Money.of(REQUESTED_RISK_INR, _CURRENCY)
-        setup_code = f"LONG_{option_type.value}_{bias.value}"
+        setup_code = f"{side.value}_FUTURES_{bias.value}"
         now = ctx.now
-        config_version = ctx.underlying.lineage.versions.config_version
-
         intent_id = _derive_id(
             self.strategy_id,
             self.strategy_version,
             ctx.underlying.snapshot_id,
-            option.contract.symbol,
+            future.contract.symbol,
             setup_code,
             now.isoformat(),
         )
@@ -210,23 +201,18 @@ class LongOptionStrategy:
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
             snapshot_id=ctx.underlying.snapshot_id,
-            promoted_config_version=config_version,
+            promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
             underlying=ctx.underlying.contract.underlying,
             asset_class=ctx.underlying.contract.asset_class,
             legs=(
-                IntentLeg(
-                    leg_id="leg-1",
-                    contract=option.contract,
-                    side=Side.BUY,
-                    ratio=1,
-                ),
+                IntentLeg(leg_id="leg-1", contract=future.contract, side=side, ratio=1),
             ),
             entry_policy=EntryPolicy(
                 limit_offset_ticks=0,
                 max_spread=Percent.from_fraction(MAX_ENTRY_SPREAD_FRACTION),
-                max_slippage=Percent.from_percent(Decimal("0.25")),
+                max_slippage=Percent.from_percent(Decimal("0.20")),
                 timeout_seconds=ENTRY_TIMEOUT_SECONDS,
                 max_attempts=1,
                 allow_market_fallback=False,

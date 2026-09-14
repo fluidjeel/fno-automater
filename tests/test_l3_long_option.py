@@ -92,7 +92,7 @@ def _ctx(
 ) -> StrategyContext:
     return StrategyContext(
         underlying=underlying or _underlying("24100", "24000"),
-        option=option or _option(),
+        candidates=(option or _option(),),
         view=view or portfolio_view(),
         now=now,
         macro=macro,

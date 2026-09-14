@@ -14,10 +14,14 @@ from trading.strategies.base import (
     StrategyDecision,
     build_strategy,
 )
+from trading.strategies.commodity_futures import CommodityFuturesStrategy
+from trading.strategies.debit_spread import DebitSpreadStrategy
 from trading.strategies.long_option import LongOptionStrategy
 from trading.strategies.macro import MacroAssessment, MacroBias
 
 __all__ = [
+    "CommodityFuturesStrategy",
+    "DebitSpreadStrategy",
     "LongOptionStrategy",
     "MacroAssessment",
     "MacroBias",

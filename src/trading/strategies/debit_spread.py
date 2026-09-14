@@ -1,13 +1,9 @@
-"""Positional long call / long put strategy (Layer 3 first vertical slice).
+"""Vertical debit spread (bull call / bear put) — Layer 3 slice 2.
 
-Defined-risk, premium-paid direction: buy one option contract whose type
-matches a deterministic directional read. The strategy emits a single
-``TradeIntent`` with a ratio leg (never a quantity) and a complete protective
-``ExitTemplate``; Layer 2 alone sizes and prices it.
-
-Determinism: every parameter is a versioned constant and ``intent_id`` is a
-hash of the decision inputs, so identical inputs produce identical bytes.
-No lookahead: only the injected ``now`` and snapshot timestamps are read.
+A defined-risk, premium-paid two-leg structure: buy the nearer-money option and
+sell the further out-of-the-money option of the same type and expiry. The short
+leg is never naked; it is covered by the long leg. The strategy emits one
+``TradeIntent`` with two ratio legs; Layer 2 sizes and prices it.
 """
 
 from __future__ import annotations
@@ -17,6 +13,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from trading.domain.contracts import (
+    ContractRef,
     EntryPolicy,
     ExitTemplate,
     FeatureSnapshot,
@@ -35,13 +32,11 @@ from trading.strategies.base import (
 )
 from trading.strategies.macro import MacroBias
 
-__all__ = ["LongOptionStrategy"]
+__all__ = ["DebitSpreadStrategy"]
 
-STRATEGY_ID = "positional_long_option"
-STRATEGY_VERSION = "long-option-v1"
+STRATEGY_ID = "debit_spread"
+STRATEGY_VERSION = "debit-spread-v1"
 
-# Versioned research parameters. These are uncalibrated and must not be treated
-# as validated risk policy; changing any of them changes STRATEGY_VERSION.
 REQUESTED_RISK_INR = Decimal("10000")
 MIN_DAYS_TO_EXPIRY = 7
 MIN_OPEN_INTEREST = 1000
@@ -53,18 +48,22 @@ EXIT_BEFORE_EXPIRY_DAYS = 1
 ENTRY_TIMEOUT_SECONDS = 30
 INTENT_TTL_SECONDS = 300
 SESSION_LABEL = "NSE_FO"
-INVALIDATION_NOTE = "Long premium position; maximum loss is the paid premium."
+INVALIDATION_NOTE = "Defined-risk vertical debit spread; maximum loss is the net debit."
+SPREAD_LEG_COUNT = 2
 
 _CURRENCY = Currency.INR
 
 
-def _option_type_for(bias: MacroBias) -> OptionType:
-    return OptionType.CALL if bias is MacroBias.BULLISH else OptionType.PUT
+def _strike(option: FeatureSnapshot) -> Decimal:
+    strike = option.contract.strike
+    if strike is None:
+        raise ValueError("option contract missing strike")
+    return strike
 
 
 @register_strategy
-class LongOptionStrategy:
-    """Buy a single call on a bullish read or a single put on a bearish read."""
+class DebitSpreadStrategy:
+    """Bull call spread on a bullish read, bear put spread on a bearish read."""
 
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
@@ -83,12 +82,12 @@ class LongOptionStrategy:
             return self._reject(
                 decision, ctx, ReasonCode.ENTRY_FROZEN, "entries not permitted"
             )
-        if len(ctx.candidates) != 1:
+        if len(ctx.candidates) != SPREAD_LEG_COUNT:
             return self._reject(
                 decision,
                 ctx,
                 ReasonCode.INSTRUMENT_UNKNOWN,
-                "exactly one option required",
+                "exactly two options required",
             )
 
         reason = self._validation_reason(ctx)
@@ -102,14 +101,11 @@ class LongOptionStrategy:
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
         if bias is MacroBias.NEUTRAL:
-            return decision  # no directional signal: no trade, not an error
+            return decision
 
-        option = ctx.candidates[0]
-        option_type = _option_type_for(bias)
-        if option.contract.option_type is not option_type:
-            return decision  # candidate does not match the read; skip, do not reject
-
-        intent = self._build_intent(ctx, option, bias, option_type, confidence)
+        option_type = OptionType.CALL if bias is MacroBias.BULLISH else OptionType.PUT
+        long_leg, short_leg = self._ordered_legs(ctx.candidates, option_type)
+        intent = self._build_intent(ctx, long_leg, short_leg, option_type, confidence)
         return StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
@@ -142,17 +138,38 @@ class LongOptionStrategy:
         )
 
     def _validation_reason(self, ctx: StrategyContext) -> ReasonCode | None:
-        option = ctx.candidates[0]
-        if not ctx.underlying.permits_new_exposure or not option.permits_new_exposure:
+        if not ctx.underlying.permits_new_exposure:
+            return ReasonCode.DATA_INVALID
+        if any(not leg.permits_new_exposure for leg in ctx.candidates):
             return ReasonCode.DATA_INVALID
         age = ctx.now - ctx.underlying.times.calculation_time
         if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
             return ReasonCode.DATA_STALE
         if ctx.now < ctx.underlying.times.calculation_time:
-            return ReasonCode.DATA_INVALID  # decision instant precedes the data
-        return self._option_eligibility_reason(option)
+            return ReasonCode.DATA_INVALID
+        option_type = ctx.candidates[0].contract.option_type
+        return self._structure_reason(ctx, option_type)
 
-    def _option_eligibility_reason(self, option: FeatureSnapshot) -> ReasonCode | None:
+    def _structure_reason(
+        self, ctx: StrategyContext, option_type: OptionType | None
+    ) -> ReasonCode | None:
+        first, second = ctx.candidates
+        if first.contract.expiry != second.contract.expiry:
+            return ReasonCode.INSTRUMENT_UNKNOWN
+        if first.contract.underlying != second.contract.underlying:
+            return ReasonCode.INSTRUMENT_UNKNOWN
+        if (
+            first.contract.option_type is not option_type
+            or second.contract.option_type is not option_type
+        ):
+            return ReasonCode.INSTRUMENT_UNKNOWN
+        for option in ctx.candidates:
+            reason = self._leg_reason(option)
+            if reason is not None:
+                return reason
+        return None
+
+    def _leg_reason(self, option: FeatureSnapshot) -> ReasonCode | None:
         derivatives = option.derivatives
         if (
             option.contract.instrument_kind is not InstrumentKind.OPTION
@@ -177,29 +194,49 @@ class LongOptionStrategy:
         mid = (bid.value + ask.value) / 2
         if mid <= 0:
             return ReasonCode.PRICE_UNAVAILABLE
-        spread_fraction = (ask.value - bid.value) / mid
-        if spread_fraction > MAX_ENTRY_SPREAD_FRACTION:
+        if (ask.value - bid.value) / mid > MAX_ENTRY_SPREAD_FRACTION:
             return ReasonCode.SPREAD_TOO_WIDE
         return None
+
+    @staticmethod
+    def _ordered_legs(
+        candidates: tuple[FeatureSnapshot, ...], option_type: OptionType
+    ) -> tuple[IntentLeg, IntentLeg]:
+        low, high = sorted(candidates, key=_strike)
+        if _strike(low) >= _strike(high):
+            raise ValueError("spread strikes must be distinct")
+        if option_type is OptionType.CALL:
+            long_leg, short_leg = low, high
+        else:
+            long_leg, short_leg = high, low
+        return (
+            IntentLeg(
+                leg_id="leg-long", contract=long_leg.contract, side=Side.BUY, ratio=1
+            ),
+            IntentLeg(
+                leg_id="leg-short", contract=short_leg.contract, side=Side.SELL, ratio=1
+            ),
+        )
 
     def _build_intent(
         self,
         ctx: StrategyContext,
-        option: FeatureSnapshot,
-        bias: MacroBias,
+        long_leg: IntentLeg,
+        short_leg: IntentLeg,
         option_type: OptionType,
         confidence: Decimal,
     ) -> TradeIntent:
         risk = Money.of(REQUESTED_RISK_INR, _CURRENCY)
-        setup_code = f"LONG_{option_type.value}_{bias.value}"
+        setup_code = (
+            "BULL_CALL_SPREAD" if option_type is OptionType.CALL else "BEAR_PUT_SPREAD"
+        )
         now = ctx.now
-        config_version = ctx.underlying.lineage.versions.config_version
-
+        contract: ContractRef = long_leg.contract
         intent_id = _derive_id(
             self.strategy_id,
             self.strategy_version,
             ctx.underlying.snapshot_id,
-            option.contract.symbol,
+            contract.symbol,
             setup_code,
             now.isoformat(),
         )
@@ -210,19 +247,12 @@ class LongOptionStrategy:
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
             snapshot_id=ctx.underlying.snapshot_id,
-            promoted_config_version=config_version,
+            promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
             underlying=ctx.underlying.contract.underlying,
             asset_class=ctx.underlying.contract.asset_class,
-            legs=(
-                IntentLeg(
-                    leg_id="leg-1",
-                    contract=option.contract,
-                    side=Side.BUY,
-                    ratio=1,
-                ),
-            ),
+            legs=(long_leg, short_leg),
             entry_policy=EntryPolicy(
                 limit_offset_ticks=0,
                 max_spread=Percent.from_fraction(MAX_ENTRY_SPREAD_FRACTION),
@@ -240,7 +270,7 @@ class LongOptionStrategy:
                 time_exit=None,
                 exit_before_expiry_days=EXIT_BEFORE_EXPIRY_DAYS,
                 invalidation_note=INVALIDATION_NOTE,
-                partial_fill_policy="CANCEL_REMAINDER",
+                partial_fill_policy="ALL_OR_CANCEL",
             ),
             constraints=IntentConstraints(
                 min_days_to_expiry=MIN_DAYS_TO_EXPIRY,
