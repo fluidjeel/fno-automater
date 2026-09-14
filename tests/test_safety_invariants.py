@@ -61,6 +61,7 @@ from trading.domain.state import (
     IllegalTransitionError,
 )
 from trading.portfolio import build_broker_snapshot
+from trading.safety import SafetyControls
 
 SPEC = (
     Path(__file__).resolve().parent.parent / "docs" / "context" / "SAFETY_INVARIANTS.md"
@@ -69,7 +70,9 @@ BASE_CONFIG = Path(__file__).resolve().parent.parent / "config" / "base.yaml"
 BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
 
 # Invariants this module tests at Phase 0.
-COVERED = frozenset({2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 23, 25})
+COVERED = frozenset(
+    {2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 23, 24, 25}
+)
 
 # Invariants that require a component Phase 0 does not build yet.
 DEFERRED: dict[int, str] = {
@@ -79,7 +82,6 @@ DEFERRED: dict[int, str] = {
     15: "Phase 3: needs an execution planner to invoke the repair policy",
     20: "Phase 1: needs the replay harness to check for lookahead",
     22: "Phase 6: needs the evaluator and the promotion pipeline",
-    24: "Phase 5: needs kill-switch implementations to drill",
 }
 
 
@@ -389,6 +391,27 @@ class TestChangeControl:
         config = load_config(BASE_CONFIG).config
         with pytest.raises(ConfigNotVerifiedError):
             config.require_ready_for(Environment.LIVE)
+
+    def test_invariant_24_kill_switch_actions_are_independently_callable(
+        self,
+    ) -> None:
+        """Kill-switch actions are deterministic, independently callable and tested."""
+        clock = FrozenClock(f.NOW)
+        controls = SafetyControls(
+            clock=clock,
+            id_factory=SequentialIdFactory(clock.instant),
+        )
+        event = controls.freeze_entries(
+            actor="operator",
+            scope="account/ACC-1",
+        )
+        assert controls.blocks_entry()
+        assert ReasonCode.ENTRY_FROZEN in event.reason_codes
+        controls.release_entry_freeze(
+            actor="operator",
+            scope="account/ACC-1",
+        )
+        assert not controls.blocks_entry()
 
     def test_invariant_25_every_transition_is_auditable(self) -> None:
         """Every decision, order and recovery transition is durably auditable."""

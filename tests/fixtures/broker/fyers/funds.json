@@ -1,0 +1,10 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "fund_limit": [
+    {"id": 1, "title": "Total Balance", "equityAmount": 700000.0},
+    {"id": 2, "title": "Utilized Amount", "equityAmount": 12000.0},
+    {"id": 10, "title": "Available Balance", "equityAmount": 688000.0}
+  ]
+}

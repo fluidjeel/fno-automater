@@ -1,0 +1,25 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "netPositions": [
+    {
+      "netQty": 75,
+      "qty": 75,
+      "avgPrice": 120.0,
+      "netAvg": 120.0,
+      "side": 1,
+      "productType": "MARGIN",
+      "unrealized_profit": 150.0,
+      "pl": 150.0,
+      "symbol": "NSE:NIFTY26SEP24000CE",
+      "id": "NSE:NIFTY26SEP24000CE-MARGIN",
+      "fyToken": "1011220912345678"
+    }
+  ],
+  "overall": {
+    "count_total": 1,
+    "count_open": 1,
+    "pl_total": 150.0
+  }
+}

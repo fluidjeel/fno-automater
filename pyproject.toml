@@ -84,7 +84,7 @@ ignore = [
 "src/trading/cli.py" = ["PLR0912", "PLR0915"]
 "src/trading/news/scoring.py" = ["PLR0912", "PLR0915"]
 "src/trading/news/sources.py" = ["PLR0912"]
-"src/trading/risk/gateway.py" = ["PLR0911"]
+"src/trading/risk/gateway.py" = ["PLR0911", "PLR0912"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

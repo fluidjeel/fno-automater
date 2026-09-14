@@ -1,0 +1,26 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "orderBook": [
+    {
+      "client_id": "ORD-PEND-1",
+      "id": "25091400000002",
+      "symbol": "NSE:NIFTY26SEP24000CE",
+      "qty": 75,
+      "filledQty": 0,
+      "remaining_quantity": 75,
+      "limitPrice": 120.0,
+      "stopPrice": 0.0,
+      "tradedPrice": 0.0,
+      "type": 1,
+      "side": 1,
+      "status": 6,
+      "productType": "MARGIN",
+      "validity": "DAY",
+      "orderDateTime": "2026-09-14 09:30:01",
+      "message": "",
+      "fyToken": "1011220912345678"
+    }
+  ]
+}

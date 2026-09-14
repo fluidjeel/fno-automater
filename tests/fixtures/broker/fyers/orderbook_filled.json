@@ -1,0 +1,26 @@
+{
+  "s": "ok",
+  "code": 200,
+  "message": "",
+  "orderBook": [
+    {
+      "client_id": "ORD-1",
+      "id": "25091400000001",
+      "symbol": "NSE:NIFTY26SEP24000CE",
+      "qty": 75,
+      "filledQty": 75,
+      "remaining_quantity": 0,
+      "limitPrice": 120.0,
+      "stopPrice": 0.0,
+      "tradedPrice": 120.0,
+      "type": 1,
+      "side": 1,
+      "status": 2,
+      "productType": "MARGIN",
+      "validity": "DAY",
+      "orderDateTime": "2026-09-14 09:30:01",
+      "message": "",
+      "fyToken": "1011220912345678"
+    }
+  ]
+}

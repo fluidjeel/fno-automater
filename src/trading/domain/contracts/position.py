@@ -14,7 +14,7 @@ from trading.domain.contracts.base import (
 )
 from trading.domain.contracts.common import ContractRef
 from trading.domain.enums import ExitScope, Side, TradeState
-from trading.domain.primitives import Price
+from trading.domain.primitives import Money, Price
 
 __all__ = ["ExitPolicy", "PositionLegState", "PositionState"]
 
@@ -29,6 +29,9 @@ class ExitPolicy(VersionedModel):
     current_stop_distance_ticks: StrictInt = Field(gt=0)
     stop_price: Price | None = None
     target_price: Price | None = None
+    strategy_entry_pnl: Money | None = None
+    pnl_stop: Money | None = None
+    pnl_target: Money | None = None
     trailing_active: StrictBool = False
     breakeven_active: StrictBool = False
     time_exit: UtcDatetime | None = None

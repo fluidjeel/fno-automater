@@ -21,6 +21,7 @@ from trading.domain.enums import (
     DifferenceClass,
     OrderState,
     Severity,
+    Side,
     SystemState,
 )
 from trading.domain.ids import SequentialIdFactory
@@ -175,6 +176,42 @@ class TestBootReconcile:
             for event in outcome.result.events
         )
         assert outcome.broker_snapshot.positions[0].trade_id == "TRD-1"
+
+    def test_closed_trade_reconciles_without_open_broker_position(
+        self,
+        broker: PaperBroker,
+        reconciler: PortfolioReconciler,
+        store: TradingStore,
+    ) -> None:
+        """Net-zero local fills must not require an open broker position."""
+        entry = broker.submit(_submit_request())
+        exit_order = f.planned_order(
+            identity=f.order_identity(
+                internal_order_id="ORD-EXIT-1",
+                trade_id=entry.identity.trade_id,
+                idempotency_key="exit-key-1",
+            ),
+            command=f.order_command(side=Side.SELL, limit_price=f.price("118.00")),
+        )
+        exit_fill = broker.submit(
+            _submit_request(order=exit_order, attempt_number=1),
+        )
+        store.append(
+            TradingEventType.ORDER_EVENT,
+            entry,
+            event_id=entry.event_id,
+            idempotency_key=entry.identity.idempotency_key,
+        )
+        store.append(
+            TradingEventType.ORDER_EVENT,
+            exit_fill,
+            event_id=exit_fill.event_id,
+            idempotency_key=exit_fill.identity.idempotency_key,
+        )
+        outcome = reconciler.boot_reconcile(ACCOUNT_ID)
+
+        assert outcome.result.entries_blocked is False
+        assert broker.get_positions() == ()
 
     def test_matched_broker_and_local_positions_open_entries(
         self,

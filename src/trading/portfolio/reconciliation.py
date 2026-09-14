@@ -29,6 +29,7 @@ from trading.domain.enums import (
     ReasonCode,
     ReconciliationTrigger,
     Severity,
+    Side,
     SystemState,
     Trigger,
 )
@@ -255,11 +256,7 @@ def _compare_positions(
     id_factory: IdFactory,
 ) -> list[ReconciliationEvent]:
     scope = f"account/{account_id}/positions"
-    local_trade_ids = {
-        event.identity.trade_id
-        for event in local.orders.values()
-        if event.state is OrderState.FILLED
-    }
+    local_trade_ids = _expected_open_trade_ids(local)
     broker_by_trade = {position.trade_id: position for position in broker_positions}
     events: list[ReconciliationEvent] = []
 
@@ -369,6 +366,24 @@ def _compare_orders(
             )
         )
     return events
+
+
+def _expected_open_trade_ids(local: LocalPortfolioState) -> set[str]:
+    """Return trade ids that should still have broker exposure."""
+    net_by_trade: dict[str, int] = {}
+    for event in local.orders.values():
+        if event.filled_quantity <= 0:
+            continue
+        if event.state not in {OrderState.FILLED, OrderState.PARTIAL}:
+            continue
+        signed = (
+            event.filled_quantity
+            if event.command.side is Side.BUY
+            else -event.filled_quantity
+        )
+        trade_id = event.identity.trade_id
+        net_by_trade[trade_id] = net_by_trade.get(trade_id, 0) + signed
+    return {trade_id for trade_id, qty in net_by_trade.items() if qty != 0}
 
 
 def _matched_event(

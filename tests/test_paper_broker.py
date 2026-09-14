@@ -139,6 +139,30 @@ class TestOrderLifecycle:
         with pytest.raises(Exception, match="terminal"):
             broker.cancel("ORD-1")
 
+    def test_sell_close_removes_position_and_releases_margin(
+        self,
+        broker: PaperBroker,
+    ) -> None:
+        """A full exit sell clears broker exposure for slice-1 close."""
+        entry = broker.submit(_submit_request())
+        trade_id = entry.identity.trade_id
+        exit_order = f.planned_order(
+            identity=f.order_identity(
+                internal_order_id="ORD-EXIT-1",
+                trade_id=trade_id,
+                idempotency_key="exit-key-1",
+            ),
+            command=f.order_command(
+                side=Side.SELL,
+                limit_price=f.price("118.00"),
+            ),
+        )
+        broker.submit(
+            _submit_request(order=exit_order, attempt_number=1),
+        )
+        assert broker.get_positions() == ()
+        assert broker.get_funds().margin_used == f.money("0")
+
 
 class TestMarginPreview:
     def test_preview_margin_returns_fixture_result(self, broker: PaperBroker) -> None:

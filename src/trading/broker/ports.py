@@ -32,6 +32,7 @@ __all__ = [
     "BrokerFunds",
     "BrokerPort",
     "BrokerSubmitRequest",
+    "BrokerSubmitTimeoutError",
     "DuplicateBrokerOrderError",
     "MarginPreviewLeg",
     "MarginPreviewPort",
@@ -51,6 +52,14 @@ class DuplicateBrokerOrderError(BrokerError):
         self.idempotency_key = idempotency_key
         self.existing_event = existing_event
         super().__init__(f"DUPLICATE_IDEMPOTENCY_KEY: {idempotency_key}")
+
+
+class BrokerSubmitTimeoutError(BrokerError):
+    """Raised when a submit acknowledgement never arrives."""
+
+    def __init__(self, idempotency_key: str) -> None:
+        self.idempotency_key = idempotency_key
+        super().__init__(f"broker submit timed out: {idempotency_key}")
 
 
 class BrokerFunds(StrictModel):

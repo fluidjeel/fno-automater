@@ -6,10 +6,15 @@ from trading.risk.reservation import (
     ReservationError,
     ReservationNotFoundError,
 )
-from trading.risk.sizing import LongOptionSizingEngine, LotBounds
+from trading.risk.sizing import (
+    DebitSpreadSizingEngine,
+    LongOptionSizingEngine,
+    LotBounds,
+)
 
 __all__ = [
     "CapitalReservationService",
+    "DebitSpreadSizingEngine",
     "LongOptionSizingEngine",
     "LotBounds",
     "ReservationError",

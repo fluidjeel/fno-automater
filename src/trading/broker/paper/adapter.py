@@ -33,6 +33,10 @@ def margin_preview_key(symbol: str, side: Side, quantity_contracts: int) -> str:
     return f"{symbol}|{side.value}|{quantity_contracts}"
 
 
+def _position_key(trade_id: str, symbol: str) -> str:
+    return f"{trade_id}|{symbol}"
+
+
 @dataclass
 class _PaperState:
     """Mutable broker mirror used by the paper adapter."""
@@ -58,7 +62,10 @@ class PaperBroker:
         self._fixtures = fixtures
         self._state = _PaperState(
             funds=fixtures.account,
-            positions={position.trade_id: position for position in fixtures.positions},
+            positions={
+                _position_key(position.trade_id, position.contract.symbol): position
+                for position in fixtures.positions
+            },
         )
 
     @classmethod
@@ -176,15 +183,21 @@ class PaperBroker:
         """Return fixture-backed margin preview; fail closed when unconfirmed."""
         if not request.legs:
             raise BrokerError("margin preview requires at least one leg")
-        leg = request.legs[0]
-        key = margin_preview_key(
-            leg.contract.symbol,
-            leg.side,
-            leg.quantity_contracts,
-        )
-        preview = self._fixtures.margin_previews.get(key)
-        if preview is None:
-            currency = self._state.funds.equity.currency
+        currency = self._state.funds.equity.currency
+        total = Money.zero(currency)
+        all_confirmed = True
+        for leg in request.legs:
+            key = margin_preview_key(
+                leg.contract.symbol,
+                leg.side,
+                leg.quantity_contracts,
+            )
+            preview = self._fixtures.margin_previews.get(key)
+            if preview is None or not preview.confirmed:
+                all_confirmed = False
+                continue
+            total = total + preview.margin_required
+        if not all_confirmed or total.is_zero:
             return MarginPreviewResult(
                 request_id=request.request_id,
                 as_of=self._clock.now_utc(),
@@ -192,11 +205,12 @@ class PaperBroker:
                 margin_available_after=self._state.funds.margin_available,
                 confirmed=False,
             )
-        return preview.model_copy(
-            update={
-                "request_id": request.request_id,
-                "as_of": self._clock.now_utc(),
-            }
+        return MarginPreviewResult(
+            request_id=request.request_id,
+            as_of=self._clock.now_utc(),
+            margin_required=total.quantized(),
+            margin_available_after=self._state.funds.margin_available - total,
+            confirmed=True,
         )
 
     def _apply_fill(
@@ -207,14 +221,12 @@ class PaperBroker:
     ) -> None:
         command = event.command
         trade_id = event.identity.trade_id
-        notional = fill_price.value * Decimal(command.quantity_contracts)
         currency = self._state.funds.equity.currency
-
-        existing = self._state.positions.get(trade_id)
+        position_key = _position_key(trade_id, command.contract.symbol)
+        existing = self._state.positions.get(position_key)
+        closing = existing is not None and existing.side is not command.side
         if existing is None:
-            if command.side is Side.SELL:
-                raise BrokerError("paper broker does not support naked short entry")
-            self._state.positions[trade_id] = PositionRecord(
+            self._state.positions[position_key] = PositionRecord(
                 trade_id=trade_id,
                 strategy_id=request.strategy_id,
                 contract=command.contract,
@@ -223,60 +235,89 @@ class PaperBroker:
                 average_price=fill_price,
                 unrealized_pnl=Money.zero(currency),
             )
+        elif closing:
+            remaining = existing.quantity_contracts - command.quantity_contracts
+            if command.quantity_contracts > existing.quantity_contracts:
+                raise BrokerError("close quantity exceeds open position")
+            if remaining == 0:
+                del self._state.positions[position_key]
+            else:
+                self._state.positions[position_key] = existing.model_copy(
+                    update={"quantity_contracts": remaining},
+                )
         else:
-            self._state.positions[trade_id] = self._merge_position(
+            self._state.positions[position_key] = self._merge_position(
                 existing,
-                command.side,
                 command.quantity_contracts,
                 fill_price,
             )
 
+        if closing and existing is not None:
+            margin_delta = self._margin_delta(
+                command,
+                command.quantity_contracts,
+                position_side=existing.side,
+            )
+        else:
+            margin_delta = self._margin_delta(command, command.quantity_contracts)
+        funds = self._state.funds
+        if closing:
+            self._state.funds = funds.model_copy(
+                update={
+                    "as_of": event.received_at,
+                    "margin_used": funds.margin_used - margin_delta,
+                    "margin_available": funds.margin_available + margin_delta,
+                }
+            )
+        else:
+            self._state.funds = funds.model_copy(
+                update={
+                    "as_of": event.received_at,
+                    "margin_used": funds.margin_used + margin_delta,
+                    "margin_available": funds.margin_available - margin_delta,
+                }
+            )
+
+    def _margin_delta(
+        self,
+        command: OrderCommand,
+        quantity_contracts: int,
+        *,
+        position_side: Side | None = None,
+    ) -> Money:
+        lookup_side = position_side if position_side is not None else command.side
         preview_key = margin_preview_key(
             command.contract.symbol,
-            command.side,
-            command.quantity_contracts,
+            lookup_side,
+            quantity_contracts,
         )
         preview = self._fixtures.margin_previews.get(preview_key)
-        margin_delta = (
-            preview.margin_required
-            if preview is not None and preview.confirmed
-            else Money.of(str(notional), currency)
-        )
-        funds = self._state.funds
-        self._state.funds = funds.model_copy(
-            update={
-                "as_of": event.received_at,
-                "margin_used": funds.margin_used + margin_delta,
-                "margin_available": funds.margin_available - margin_delta,
-            }
-        )
+        currency = self._state.funds.equity.currency
+        if preview is not None and preview.confirmed:
+            return preview.margin_required
+        notional = command.limit_price
+        if notional is None:
+            raise BrokerError("LIMIT order requires a limit price")
+        return Money.of(str(notional.value * Decimal(quantity_contracts)), currency)
 
     @staticmethod
     def _merge_position(
         existing: PositionRecord,
-        side: Side,
         quantity_contracts: int,
         fill_price: Price,
     ) -> PositionRecord:
-        if side is Side.BUY:
-            total_qty = existing.quantity_contracts + quantity_contracts
-            weighted = (
-                existing.average_price.value * Decimal(existing.quantity_contracts)
-                + fill_price.value * Decimal(quantity_contracts)
-            ) / Decimal(total_qty)
-            average_price = Price(weighted, existing.average_price.tick)
-            return existing.model_copy(
-                update={
-                    "quantity_contracts": total_qty,
-                    "average_price": average_price,
-                }
-            )
-        if quantity_contracts > existing.quantity_contracts:
-            raise BrokerError("paper broker cannot flip position through sell")
-        remaining = existing.quantity_contracts - quantity_contracts
-        if remaining == 0:
-            raise BrokerError("position close is handled by removing the record")
-        return existing.model_copy(update={"quantity_contracts": remaining})
+        total_qty = existing.quantity_contracts + quantity_contracts
+        weighted = (
+            existing.average_price.value * Decimal(existing.quantity_contracts)
+            + fill_price.value * Decimal(quantity_contracts)
+        ) / Decimal(total_qty)
+        average_price = Price.snap(weighted, existing.average_price.tick)
+        return existing.model_copy(
+            update={
+                "quantity_contracts": total_qty,
+                "average_price": average_price,
+            }
+        )
 
     @staticmethod
     def _resolve_fill_price(command: OrderCommand) -> Price:

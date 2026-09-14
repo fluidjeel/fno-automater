@@ -113,6 +113,20 @@ def index_contract(**overrides: Any) -> ContractRef:
     )
 
 
+def future_contract(**overrides: Any) -> ContractRef:
+    return ContractRef.model_validate(
+        {
+            "exchange": Exchange.MCX,
+            "symbol": "CRUDEOIL26OCTFUT",
+            "instrument_kind": InstrumentKind.FUTURE,
+            "asset_class": AssetClass.COMMODITY,
+            "underlying": "CRUDEOIL",
+            "expiry": date(2026, 10, 17),
+            **overrides,
+        }
+    )
+
+
 def option_contract(**overrides: Any) -> ContractRef:
     return ContractRef.model_validate(
         {

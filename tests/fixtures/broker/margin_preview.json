@@ -9,6 +9,86 @@
         "margin_available_after": {"amount": "688000", "currency": "INR"},
         "confirmed": true
       }
+    },
+    {
+      "key": "NIFTY26SEP24200CE|SELL|75",
+      "result": {
+        "request_id": "MARGIN-FIXTURE-2",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "8000", "currency": "INR"},
+        "margin_available_after": {"amount": "680000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "CRUDEOIL26OCTFUT|BUY|100",
+      "result": {
+        "request_id": "MARGIN-FUT-1",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "45000", "currency": "INR"},
+        "margin_available_after": {"amount": "655000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP24000CE|SELL|75",
+      "result": {
+        "request_id": "MARGIN-CS-1",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "9000", "currency": "INR"},
+        "margin_available_after": {"amount": "691000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP24200CE|BUY|75",
+      "result": {
+        "request_id": "MARGIN-CS-2",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "3000", "currency": "INR"},
+        "margin_available_after": {"amount": "688000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP24500CE|SELL|75",
+      "result": {
+        "request_id": "MARGIN-IC-1",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "5000", "currency": "INR"},
+        "margin_available_after": {"amount": "695000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP24700CE|BUY|75",
+      "result": {
+        "request_id": "MARGIN-IC-2",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "2000", "currency": "INR"},
+        "margin_available_after": {"amount": "693000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP23500PE|SELL|75",
+      "result": {
+        "request_id": "MARGIN-IC-3",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "5000", "currency": "INR"},
+        "margin_available_after": {"amount": "688000", "currency": "INR"},
+        "confirmed": true
+      }
+    },
+    {
+      "key": "NIFTY26SEP23300PE|BUY|75",
+      "result": {
+        "request_id": "MARGIN-IC-4",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "2000", "currency": "INR"},
+        "margin_available_after": {"amount": "686000", "currency": "INR"},
+        "confirmed": true
+      }
     }
   ]
 }
