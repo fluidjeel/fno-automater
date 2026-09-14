@@ -143,3 +143,42 @@ def test_bearish_macro_overrides_technical() -> None:
     decision = DebitSpreadStrategy().evaluate(ctx)
     assert decision.emits_intent
     assert decision.intents[0].setup_code == "BEAR_PUT_SPREAD"
+
+
+def test_candidates_are_always_the_type_the_read_requires() -> None:
+    """Regression: a resolved direction must pick the matching option legs.
+
+    A bullish read over put candidates previously produced a "bull call spread"
+    built from puts, which is a bear put spread — the emitted position was
+    directionally inverted against the signal it came from.
+    """
+    decision = DebitSpreadStrategy().evaluate(_ctx(_bear_put()))
+    assert not decision.emits_intent
+    assert decision.rejections == ()
+
+
+def test_bearish_read_over_call_candidates_emits_nothing() -> None:
+    """The converse of the regression: bearish read, call candidates."""
+    ctx = _ctx(_bull_call(), underlying=_underlying("23900", "24000"))
+    decision = DebitSpreadStrategy().evaluate(ctx)
+    assert not decision.emits_intent
+    assert decision.rejections == ()
+
+
+def test_emitted_legs_always_match_the_setup_code() -> None:
+    """Every emitted spread names a structure whose legs really express it."""
+    bullish = DebitSpreadStrategy().evaluate(_ctx(_bull_call()))
+    assert bullish.emits_intent
+    assert bullish.intents[0].setup_code == "BULL_CALL_SPREAD"
+    assert all(
+        leg.contract.option_type is OptionType.CALL for leg in bullish.intents[0].legs
+    )
+
+    bearish = DebitSpreadStrategy().evaluate(
+        _ctx(_bear_put(), underlying=_underlying("23900", "24000"))
+    )
+    assert bearish.emits_intent
+    assert bearish.intents[0].setup_code == "BEAR_PUT_SPREAD"
+    assert all(
+        leg.contract.option_type is OptionType.PUT for leg in bearish.intents[0].legs
+    )

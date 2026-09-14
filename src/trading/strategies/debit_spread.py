@@ -4,6 +4,11 @@ A defined-risk, premium-paid two-leg structure: buy the nearer-money option and
 sell the further out-of-the-money option of the same type and expiry. The short
 leg is never naked; it is covered by the long leg. The strategy emits one
 ``TradeIntent`` with two ratio legs; Layer 2 sizes and prices it.
+
+The legs are only built when the candidate pair can express the resolved
+direction. A bullish read over put candidates would otherwise order the
+opposite structure, so that case yields no intent instead of a trade against
+the signal.
 """
 
 from __future__ import annotations
@@ -104,6 +109,16 @@ class DebitSpreadStrategy:
             return decision
 
         option_type = OptionType.CALL if bias is MacroBias.BULLISH else OptionType.PUT
+        mismatched = any(
+            option.contract.option_type is not option_type for option in ctx.candidates
+        )
+        if mismatched:
+            # The candidates do not express the resolved direction. Emitting here
+            # would build the opposite structure — a bullish read over put legs
+            # orders a bear put spread — so skip rather than trade against the
+            # signal. This is not an input error, so it is not a rejection.
+            return decision
+
         long_leg, short_leg = self._ordered_legs(ctx.candidates, option_type)
         intent = self._build_intent(ctx, long_leg, short_leg, option_type, confidence)
         return StrategyDecision(
