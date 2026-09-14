@@ -53,13 +53,19 @@ def is_commodity_future(
     intent: TradeIntent,
     instrument: InstrumentSpec,
 ) -> bool:
-    """Return True when the intent is a single-leg long commodity future."""
+    """Return True for a single-leg commodity future, in either direction.
+
+    This detects the *structure*, not the admissibility of it. A short future is
+    still a commodity future, so it must be classified as one: the naked-short
+    policy in the risk gateway then refuses it with an accurate reason code,
+    instead of it falling through to "unknown instrument" and looking like a bad
+    symbol. Pricing a short is a separate concern, guarded in ``size`` below.
+    """
     if len(intent.legs) != 1:
         return False
     leg = intent.legs[0]
     return (
-        leg.side is Side.BUY
-        and instrument.instrument_kind is InstrumentKind.FUTURE
+        instrument.instrument_kind is InstrumentKind.FUTURE
         and intent.asset_class is AssetClass.COMMODITY
         and leg.contract.instrument_kind is InstrumentKind.FUTURE
     )
@@ -82,6 +88,12 @@ class CommodityFutureSizingEngine:
         """Compute lots from stop distance, lot value and the min() formula."""
         if not is_commodity_future(request.intent, instrument):
             raise ValueError("intent is not a commodity future entry")
+        if request.intent.legs[0].side is not Side.BUY:
+            raise ValueError(
+                "this engine prices long futures only: the margin preview below "
+                "requests a BUY, so sizing a short against long margin would "
+                "understate it. The naked-short policy refuses that direction."
+            )
         intent = request.intent
         leg = intent.legs[0]
         feature = request.feature_snapshot
