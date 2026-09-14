@@ -1,0 +1,23 @@
+# Layer 2 risk policy: strategy allocation, concentration and premium budgets.
+# Account-level loss caps live in base.yaml (risk.*). This file scopes capital
+# across strategies and structures without hard-coding limits in domain logic.
+
+schema_version: "1"
+policy_version: "1"
+
+strategy_allocations:
+  positional_long_option:
+    allocation_fraction: "0.20"
+  positional_index_options_poc:
+    allocation_fraction: "0.20"
+
+underlying_concentration_fraction: "0.25"
+options_premium_budget_fraction: "0.15"
+slippage_buffer_fraction: "0.0025"
+
+charges_per_lot:
+  amount: "50"
+  currency: INR
+
+net_delta_limit: 500
+decision_ttl_seconds: 300

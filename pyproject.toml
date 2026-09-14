@@ -39,7 +39,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/trading"]
-artifacts = ["src/trading/py.typed"]
+artifacts = ["src/trading/py.typed", "src/trading/storage/schema.sql"]
 
 [tool.ruff]
 line-length = 88
@@ -84,6 +84,7 @@ ignore = [
 "src/trading/cli.py" = ["PLR0912", "PLR0915"]
 "src/trading/news/scoring.py" = ["PLR0912", "PLR0915"]
 "src/trading/news/sources.py" = ["PLR0912"]
+"src/trading/risk/gateway.py" = ["PLR0911"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
