@@ -4,11 +4,17 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from decimal import Decimal
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from trading.data.config import QualityConfig, SessionConfig
 from trading.data.events import CanonicalMarketEvent
+from trading.data.prices import (
+    bar_close,
+    chain_spot,
+    positive_decimal,
+    quote_last,
+    resolve_last_price,
+)
 from trading.domain.contracts import DataQualityReport
 from trading.domain.enums import DataQuality, ReasonCode
 
@@ -239,48 +245,13 @@ def in_session(now: datetime, session: SessionConfig) -> bool:
     return start <= local.time() <= end
 
 
-def _decimal(value: Any) -> Decimal | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float, Decimal, str)):
-        parsed = Decimal(str(value))
-        return parsed if parsed > 0 else None
-    return None
-
-
-def _chain_spot(chain: CanonicalMarketEvent) -> Decimal | None:
-    strikes = chain.payload.get("strikes", [])
-    if not isinstance(strikes, list):
-        return None
-    for row in strikes:
-        if isinstance(row, dict) and row.get("option_type") in {"", None}:
-            return _decimal(row.get("ltp", row.get("fp")))
-    if strikes and isinstance(strikes[0], dict):
-        return _decimal(strikes[0].get("ltp", strikes[0].get("fp")))
-    return None
-
-
-def _quote_last(quote: CanonicalMarketEvent) -> Decimal | None:
-    quotes = quote.payload.get("quotes", [])
-    if isinstance(quotes, list) and quotes and isinstance(quotes[0], dict):
-        return _decimal(quotes[0].get("lp", quotes[0].get("ltp")))
-    return None
-
-
-def _bar_close(bar: CanonicalMarketEvent) -> Decimal | None:
-    bars = bar.payload.get("bars", [])
-    if isinstance(bars, list) and bars and isinstance(bars[-1], dict):
-        return _decimal(bars[-1].get("close"))
-    return None
-
-
 def _quote_spread_bps(quote: CanonicalMarketEvent) -> Decimal | None:
     quotes = quote.payload.get("quotes", [])
     if not (isinstance(quotes, list) and quotes and isinstance(quotes[0], dict)):
         return None
-    bid = _decimal(quotes[0].get("bid"))
-    ask = _decimal(quotes[0].get("ask"))
-    last = _decimal(quotes[0].get("lp", quotes[0].get("ltp")))
+    bid = positive_decimal(quotes[0].get("bid"))
+    ask = positive_decimal(quotes[0].get("ask"))
+    last = positive_decimal(quotes[0].get("lp", quotes[0].get("ltp")))
     if bid is None or ask is None or last is None or last == 0:
         return None
     return (ask - bid) / last * Decimal(10_000)
@@ -324,6 +295,17 @@ def assess_combined_snapshot(
         max_age_ms=chain_max_age_ms,
         warmup_complete=True,
     )
+    if resolve_last_price(chain=chain, quote=quote, bar=bar) is None:
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.INVALID,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="price_unavailable",
+                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
+            ),
+        )
     if session is not None and not session.verified:
         quality = _merge(
             quality,
@@ -451,15 +433,15 @@ def assess_combined_snapshot(
                 ),
             )
     prices: list[Decimal] = []
-    spot = _chain_spot(chain)
+    spot = chain_spot(chain)
     if spot is not None:
         prices.append(spot)
     if quote is not None:
-        last = _quote_last(quote)
+        last = quote_last(quote)
         if last is not None:
             prices.append(last)
     if bar is not None:
-        close = _bar_close(bar)
+        close = bar_close(bar)
         if close is not None:
             prices.append(close)
     if len(prices) >= _MIN_PRICES_FOR_CROSS_CHECK:

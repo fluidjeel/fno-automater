@@ -8,6 +8,7 @@ storage:
   canonical_subdir: canonical
   duckdb_path: data/catalog.duckdb
   parquet_subdir: parquet
+  snapshot_subdir: snapshots
 
 # Fyers hybrid model: REST quotes/bars/chain/depth on a schedule; websocket
 # ticks via `trading data stream` (optional --daemon).
@@ -29,13 +30,45 @@ fyers:
   ws_reconnect_attempts: 5
   ws_reconnect_backoff_seconds: 1.0
 
+# Instrument reference data. The public symbol master is the authority for lot
+# and tick sizes; nothing here may be a remembered value.
+reference:
+  instrument_subdir: reference/instruments
+  symbol_master_url_template: "https://public.fyers.in/sym_details/{segment}_sym_master.json"
+  segments: ["NSE_CM", "NSE_FO"]
+  timeout_seconds: 60.0
+  # Fyers `exInstType` for a cash-segment index row, observed on
+  # NSE:NIFTY50-INDEX in NSE_CM_sym_master.json.
+  index_instrument_type: 10
+  # Per-request window from the official v3 history documentation: 100 days for
+  # the listed minute resolutions, 366 days for 1D. Seconds resolutions are
+  # omitted because only an availability window (30 trading days) is published,
+  # not a per-request cap, so a seconds backfill fails closed.
+  history_max_days_by_resolution:
+    "1": 100
+    "2": 100
+    "3": 100
+    "5": 100
+    "10": 100
+    "15": 100
+    "20": 100
+    "30": 100
+    "45": 100
+    "60": 100
+    "120": 100
+    "180": 100
+    "240": 100
+    "D": 366
+    "1D": 366
+
 # Exchange-local cash/FO window. Hours must match current official NSE
-# documentation; verified=false fails closed (no new exposure).
+# documentation; an unrecorded verified_at fails closed (no new exposure).
 session:
   timezone: Asia/Kolkata
   open_local: "09:15"
   close_local: "15:30"
-  verified: true
+  verified_source: "https://www.nseindia.com/resources/exchange-communication-holidays-price-bands"
+  verified_at: "2026-09-13"
   segment: NSE_FO
 
 quality:

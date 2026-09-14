@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -78,6 +78,49 @@ class CatalogWriter:
             quoted = str(incoming_path).replace("'", "''")
             connection.execute(
                 "INSERT OR REPLACE INTO canonical_events "
+                f"SELECT * FROM read_parquet('{quoted}')"
+            )
+        finally:
+            connection.close()
+            incoming_path.unlink(missing_ok=True)
+        return path
+
+    def append_snapshots(self, rows: Sequence[Mapping[str, Any]]) -> Path | None:
+        """Index decision-cycle metadata. The snapshot JSONL keeps the payload."""
+        if not rows:
+            return None
+        try:
+            import duckdb
+            import polars as pl
+        except ImportError:
+            return None
+        first_as_of = str(rows[0]["as_of"])
+        day = first_as_of[:10]
+        path = self._parquet / f"snapshots-{day}.parquet"
+        incoming = pl.DataFrame([dict(row) for row in rows])
+        if path.is_file():
+            existing = pl.read_parquet(path)
+            merged = pl.concat([existing, incoming], how="vertical").unique(
+                subset=["as_of", "symbol"],
+                keep="last",
+            )
+        else:
+            merged = incoming
+        merged.write_parquet(path)
+        incoming_path = self._parquet / f"snapshots-{day}.incoming.parquet"
+        incoming.write_parquet(incoming_path)
+        connection = duckdb.connect(str(self._duckdb_path))
+        try:
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS decision_snapshots ("
+                "snapshot_id VARCHAR, symbol VARCHAR, as_of VARCHAR, "
+                "decision VARCHAR, quality_state VARCHAR, "
+                "permits_new_exposure BOOLEAN, reason_codes VARCHAR, "
+                "PRIMARY KEY (symbol, as_of))"
+            )
+            quoted = str(incoming_path).replace("'", "''")
+            connection.execute(
+                "INSERT OR REPLACE INTO decision_snapshots "
                 f"SELECT * FROM read_parquet('{quoted}')"
             )
         finally:

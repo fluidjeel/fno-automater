@@ -13,6 +13,7 @@ from trading.data.config import (
     UnderlyingConfig,
     load_data_pipeline_config,
 )
+from trading.data.cycle import build_cycle_snapshot
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed
 from trading.data.macro_news import (
@@ -34,10 +35,11 @@ from trading.data.quality import assess_combined_snapshot
 from trading.data.settings import FyersSettings
 from trading.data.snapshot_builder import MarketSnapshotBuilder
 from trading.data.storage.catalog import CatalogWriter
+from trading.data.storage.instrument_store import InstrumentSpecStore
+from trading.data.storage.snapshot_store import SnapshotRecord, SnapshotStore
 from trading.data.storage.parquet_store import JsonlEventStore
 from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import FeatureSnapshot
-from trading.domain.enums import DataQuality
 
 __all__ = ["DataPipeline", "PipelineResult"]
 
@@ -91,6 +93,16 @@ class DataPipeline:
         self._macro_news_feed = JsonlMacroNewsFeed(
             repo_root / pipeline_config.macro_news.input_file
         )
+        self._instruments = InstrumentSpecStore(
+            repo_root
+            / pipeline_config.storage.root
+            / pipeline_config.reference.instrument_subdir
+        )
+        self._snapshots = SnapshotStore(
+            repo_root
+            / pipeline_config.storage.root
+            / pipeline_config.storage.snapshot_subdir
+        )
 
     def run_once(
         self,
@@ -100,6 +112,9 @@ class DataPipeline:
     ) -> PipelineResult:
         symbol = underlying.symbol
         fyers = self._pipeline_config.fyers
+        # None until `data backfill instruments` has run, which keeps tick and
+        # lot size absent rather than guessed.
+        spec = self._instruments.find(symbol)
         chain_capture = self._feed.fetch_option_chain(symbol)
         quote_capture = self._feed.fetch_quotes((symbol,))
         depth_capture: RawMarketCapture | None = None
@@ -173,6 +188,7 @@ class DataPipeline:
             raw_ref=expiry_ref if expiry_capture is not None else chain_ref,
             quote_capture=quote_capture,
             expiry_capture=expiry_capture,
+            instrument_spec=spec,
         )
         news_items = self._macro_news_feed.items()
         load_result = self._macro_news_feed.last_load
@@ -237,16 +253,30 @@ class DataPipeline:
             session=self._pipeline_config.session,
             quality_config=self._pipeline_config.quality,
         )
-        snapshot: FeatureSnapshot | None = None
-        if quality.state is not DataQuality.INVALID:
-            builder = MarketSnapshotBuilder(
-                underlying,
-                config_version=self._config_version,
-                config_checksum=self._config_checksum,
-                code_version=self._code_version,
-                greeks_calculation_version=fyers.greeks_calculation_version,
-            )
-            snapshot = builder.build(events, as_of=instant, quality=quality)
+        builder = MarketSnapshotBuilder(
+            underlying,
+            config_version=self._config_version,
+            config_checksum=self._config_checksum,
+            code_version=self._code_version,
+            greeks_calculation_version=fyers.greeks_calculation_version,
+            instrument_spec=spec,
+        )
+        snapshot = build_cycle_snapshot(
+            events,
+            quality=quality,
+            as_of=instant,
+            builder=builder,
+        )
+        record = SnapshotRecord.for_cycle(
+            symbol=symbol,
+            as_of=instant,
+            quality=quality,
+            event_ids=tuple(event.event_id for event in events),
+            snapshot=snapshot,
+        )
+        self._snapshots.append(record)
+        if self._catalog is not None:
+            self._catalog.append_snapshots([self._snapshots.index_rows(record)])
         return PipelineResult(
             symbol=symbol,
             events=tuple(events),

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
+from trading.domain.contracts import InstrumentSpec
 
 __all__ = [
     "normalize_fyers_depth",
@@ -272,6 +273,7 @@ def normalize_fyers_instrument_reference(
     raw_ref: str,
     quote_capture: RawMarketCapture | None = None,
     expiry_capture: RawMarketCapture | None = None,
+    instrument_spec: InstrumentSpec | None = None,
 ) -> CanonicalMarketEvent:
     """Build instrument/expiry reference from chain, quotes and optional expiry API."""
     data = _as_dict(chain_capture.payload.get("data", chain_capture.payload))
@@ -313,6 +315,13 @@ def normalize_fyers_instrument_reference(
                         lot = value.get("lot_size")
                         if isinstance(lot, int):
                             lot_size = lot
+    # The instrument master outranks the quote payload, which omits both fields
+    # for an index. An unfetched catalog leaves them None rather than guessing.
+    spec_source: str | None = None
+    if instrument_spec is not None:
+        tick_size = str(instrument_spec.tick_size)
+        lot_size = instrument_spec.lot_size
+        spec_source = instrument_spec.source
     source_time = _parse_epoch_seconds(data.get("timestamp"), chain_capture.received_at)
     payload = {
         "underlying_symbol": symbol,
@@ -321,6 +330,15 @@ def normalize_fyers_instrument_reference(
         "tick_size": tick_size,
         "lot_size": lot_size,
         "expiry_source": "expiry" if expiry_capture is not None else "chain",
+        "instrument_spec_source": spec_source,
+        "instrument_spec_verified_at": (
+            instrument_spec.verified_at.isoformat()
+            if instrument_spec is not None
+            else None
+        ),
+        "provider_token": (
+            instrument_spec.provider_token if instrument_spec is not None else None
+        ),
     }
     return CanonicalMarketEvent(
         event_id=_event_id("ref", chain_capture.capture_id),
