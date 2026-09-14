@@ -37,8 +37,13 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
 | L3-001 | DONE | Positional long call / long put | `src/trading/strategies/` (`base`, `macro`, `long_option`), `tests/test_l3_long_option.py` | Deterministic `TradeIntent`; ratio legs only; no lookahead; macro acceptance; eligibility rejections; mocked Layer 2 boundary | L2-001 |
 | L3-002 | DONE | Vertical debit spread (bull call / bear put) | `src/trading/strategies/debit_spread.py`, `tests/test_l3_debit_spread.py` | Two ratio legs (BUY long / SELL short); strike ordering; per-leg eligibility; deterministic id | L2-001 |
 | L3-003 | DONE | Directional commodity futures | `src/trading/strategies/commodity_futures.py`, `tests/test_l3_commodity_futures.py` | Single BUY/SELL leg; stop-bounded max loss; futures eligibility; deterministic id | L2-001 |
+| L3-004 | DONE | Close-auction (CAS) microstructure | `src/trading/strategies/cas_microstructure.py`, `tests/test_l3_cas_microstructure.py` | Versioned feature keys; absent feature is a gap, never a default; injected-clock session-window guard; mandatory short time exit; deterministic id | L2-001 |
+| L3-005 | DONE | Defined-risk multi-leg options (credit spreads) | `src/trading/strategies/multileg_options.py`, `tests/test_l3_multileg.py` | Bull put / bear call spread; strike-ordered ratio legs; short leg always covered; `ALL_OR_CANCEL`; `estimated_max_loss = requested_risk` | L2-001 |
 
-Deferred Layer 3 slices: L3-004 CAS/microstructure, L3-005 multi-leg options.
+Layer 3 slices L3-001..L3-005 are complete. An iron condor was considered for
+L3-005 and deliberately left out of `defined-risk-multileg-v1`: the two-leg
+credit spreads already deliver the defined-risk structure, and a four-leg
+variant needs a neutral-regime rule that is not yet specified.
 
 ## Prior milestones (complete)
 
