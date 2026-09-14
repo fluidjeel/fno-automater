@@ -66,7 +66,9 @@ def is_debit_spread(intent: TradeIntent) -> bool:
     option_type = buy.contract.option_type
     return (
         len(legs) == _DEBIT_SPREAD_LEG_COUNT
-        and all(contract.instrument_kind is InstrumentKind.OPTION for contract in contracts)
+        and all(
+            contract.instrument_kind is InstrumentKind.OPTION for contract in contracts
+        )
         and contracts[0].expiry == contracts[1].expiry
         and contracts[0].option_type == contracts[1].option_type
         and buy_strike is not None

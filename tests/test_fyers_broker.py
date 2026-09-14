@@ -36,7 +36,10 @@ NOW = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 
 
 def _load(name: str) -> dict[str, object]:
-    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    payload: dict[str, object] = json.loads(
+        (FIXTURES / name).read_text(encoding="utf-8")
+    )
+    return payload
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> FyersSettings:

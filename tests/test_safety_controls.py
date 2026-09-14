@@ -15,6 +15,7 @@ import pytest
 import tests.factories as f
 from trading.config import load_config
 from trading.domain.clock import FrozenClock
+from trading.domain.contracts import FeatureSnapshot
 from trading.domain.enums import (
     DataQuality,
     ReadinessLevel,
@@ -57,7 +58,7 @@ def _ready_request(
     *,
     system_state: SystemState = SystemState.READY,
     entries_blocked: bool = False,
-    feature: object | None = None,
+    feature: FeatureSnapshot | None = None,
     strategy_id: str | None = "positional_index_options_poc",
 ) -> ReadinessRequest:
     return ReadinessRequest(
