@@ -3,17 +3,26 @@
 # across strategies and structures without hard-coding limits in domain logic.
 
 schema_version: "1"
-policy_version: "1"
+policy_version: "2"
 
 strategy_allocations:
   positional_long_option:
     allocation_fraction: "0.20"
   positional_index_options_poc:
     allocation_fraction: "0.20"
+  commodity_futures_trend:
+    allocation_fraction: "0.20"
 
 underlying_concentration_fraction: "0.25"
 options_premium_budget_fraction: "0.15"
 slippage_buffer_fraction: "0.0025"
+
+# Naked short options stay disabled unconditionally. A single-leg commodity
+# futures short is a different risk class: its loss is bounded by the protective
+# stop that sized it (stop distance x lot value == the approved risk), which is
+# the same bound a long future already runs under. Enabling this admits only
+# that one structure; every other SELL leg must still be structurally capped.
+allow_stop_bounded_futures_short: true
 
 charges_per_lot:
   amount: "50"

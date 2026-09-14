@@ -99,7 +99,19 @@ def entry_snapshot(**overrides: object) -> FeatureSnapshot:
     return f.snapshot(**payload)
 
 
-def stop_exit_snapshot() -> FeatureSnapshot:
+def stop_exit_snapshot(side: Side = Side.BUY) -> FeatureSnapshot:
+    """A quote that breaches the protective stop for the given direction.
+
+    A long stops out when the market falls below entry; a short stops out when it
+    rises above it, so the two directions need opposite moves.
+    """
+    if side is Side.SELL:
+        return entry_snapshot(
+            market=f.quote(
+                bid=Price(Decimal("6899"), COMMODITY_TICK),
+                ask=Price(Decimal("6900"), COMMODITY_TICK),
+            ),
+        )
     return entry_snapshot(
         market=f.quote(
             bid=Price(Decimal("6799"), COMMODITY_TICK),
@@ -108,7 +120,7 @@ def stop_exit_snapshot() -> FeatureSnapshot:
     )
 
 
-def commodity_intent(snapshot_id: str) -> TradeIntent:
+def commodity_intent(snapshot_id: str, side: Side = Side.BUY) -> TradeIntent:
     return f.intent(
         snapshot_id=snapshot_id,
         strategy_id=STRATEGY_ID,
@@ -122,7 +134,7 @@ def commodity_intent(snapshot_id: str) -> TradeIntent:
             IntentLeg(
                 leg_id="leg-1",
                 contract=f.future_contract(),
-                side=Side.BUY,
+                side=side,
                 ratio=1,
             ),
         ),
@@ -150,6 +162,8 @@ def run_slice3(
     broker: PaperBroker,
     clock: FrozenClock,
     id_factory: SequentialIdFactory,
+    *,
+    side: Side = Side.BUY,
 ) -> Slice3Artifacts:
     reservations = CapitalReservationService(store, clock=clock, id_factory=id_factory)
     reconciler = PortfolioReconciler(
@@ -188,7 +202,7 @@ def run_slice3(
         )
     )
     assert readiness.levels[ReadinessLevel.ENTRY_READY]
-    intent = commodity_intent(entry_feature.snapshot_id)
+    intent = commodity_intent(entry_feature.snapshot_id, side)
     portfolio = build_broker_snapshot(
         broker,
         account_id=ACCOUNT_ID,
@@ -233,7 +247,7 @@ def run_slice3(
     trade_manager.register_protective_orders(
         trade_id, (plan.protective_orders[0].stub_id,)
     )
-    exit_feature = stop_exit_snapshot()
+    exit_feature = stop_exit_snapshot(side)
     evaluation = trade_manager.evaluate_exit(trade_id, exit_feature, intent)
     assert evaluation.kind is ExitKind.STOP
     trade_manager.apply_exit_evaluation(trade_id, evaluation)
@@ -273,8 +287,15 @@ def _build_exit_plan(
     id_factory: SequentialIdFactory,
 ) -> OrderPlan:
     leg = intent.legs[0]
+    # Closing a position always trades the opposite way to opening it, and pays
+    # the opposite side of the book: a long sells out at the bid, a short buys
+    # back at the ask.
+    closing_side = Side.BUY if leg.side is Side.SELL else Side.SELL
     bid = feature.market.bid
+    ask = feature.market.ask
     assert bid is not None
+    assert ask is not None
+    limit_price = ask if closing_side is Side.BUY else bid
     internal_order_id = id_factory.new_id("ORD")
     idempotency_key = derive_idempotency_key(
         account_id=account_id,
@@ -282,7 +303,7 @@ def _build_exit_plan(
         strategy_version=intent.strategy_version,
         intent_id=intent.intent_id,
         leg_id=f"{leg.leg_id}-exit",
-        side=Side.SELL.value,
+        side=closing_side.value,
         quantity_contracts=entry_event.filled_quantity,
     )
     now = clock.now_utc()
@@ -307,11 +328,11 @@ def _build_exit_plan(
                 ),
                 command=OrderCommand(
                     contract=leg.contract,
-                    side=Side.SELL,
+                    side=closing_side,
                     order_type=OrderType.LIMIT,
                     time_in_force=TimeInForce.DAY,
                     quantity_contracts=entry_event.filled_quantity,
-                    limit_price=bid,
+                    limit_price=limit_price,
                 ),
                 plan_state=OrderPlanState.RISK_APPROVED,
             ),
@@ -358,6 +379,24 @@ class TestSlice3CommodityFuture:
         artifacts = run_slice3(store, broker, clock, id_factory)
         assert ReasonCode.OK in artifacts.decision.reason_codes
         assert artifacts.exit_event.state is OrderState.FILLED
+
+    def test_short_future_paper_path_stops_out_and_closes(
+        self,
+        store: TradingStore,
+        broker: PaperBroker,
+        clock: FrozenClock,
+        id_factory: SequentialIdFactory,
+    ) -> None:
+        """A stop-bounded short future runs the same path as a long one.
+
+        The protective stop for a short sits above entry, so this proves the
+        exit layer places it on the correct side rather than reusing the long
+        geometry: only an upward move may close the position.
+        """
+        artifacts = run_slice3(store, broker, clock, id_factory, side=Side.SELL)
+        assert artifacts.decision.permits_submission
+        assert artifacts.exit_event.state is OrderState.FILLED
+        assert broker.get_positions() == ()
 
     def test_replay_is_deterministic(self, tmp_path: Path, clock: FrozenClock) -> None:
         """Invariant 21: identical inputs reproduce the same decision bytes."""

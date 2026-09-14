@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,7 @@ from tests.factories import (
     snapshot,
     snapshot_times,
 )
+from trading.config import load_risk_policy
 from trading.domain.contracts import (
     ContractRef,
     DerivativesContext,
@@ -50,7 +52,8 @@ from trading.domain.enums import (
 from trading.risk.gateway import (
     RiskGatewayRequest,
     _detect_structure,
-    _is_defined_risk,
+    _short_is_admissible,
+    _StructureKind,
 )
 from trading.risk.sizing import is_commodity_future
 from trading.strategies import (
@@ -373,13 +376,14 @@ def test_no_short_leg_is_ever_unclassifiable(case: _Case) -> None:
     assert _detect_structure(request) is not None
 
 
-def test_short_futures_are_refused_by_policy_not_by_unknown_instrument() -> None:
+def test_short_futures_are_classified_not_treated_as_unknown_instruments() -> None:
     """Regression: a bearish commodity read produced an unclassifiable intent.
 
-    A short future is a commodity future, so Layer 2 must classify it and then
-    refuse it through the naked-short policy: a stop-bounded structure is still
-    an uncapped short, and that decision belongs to the risk layer. Reporting
-    INSTRUMENT_UNKNOWN hid the policy behind a bad-symbol code.
+    A short future is a commodity future, so Layer 2 must classify it. It was
+    matching no structure at all and being refused as INSTRUMENT_UNKNOWN, which
+    reads like a bad symbol and hid the real question — whether the risk layer
+    admits a stop-bounded short. That question is now answered by policy, and
+    the classification is what makes the answer reachable.
     """
     case = next(c for c in CASES if c.label == "commodity_future_short")
     request, intent = _request(case)
@@ -388,9 +392,20 @@ def test_short_futures_are_refused_by_policy_not_by_unknown_instrument() -> None
     structure = _detect_structure(request)
     assert structure is not None, "a short future must not look like a bad symbol"
     assert structure.name == "COMMODITY_FUTURE"
-    # COMMODITY_FUTURE is not defined-risk, so the naked-short guard refuses it
-    # with RISK_LIMIT_TRADE / applied_limits=("naked_short_disabled",).
-    assert not _is_defined_risk(structure)
+
+
+def test_short_future_admissibility_follows_the_policy_switch() -> None:
+    """The seam resolves the structure; policy alone decides the short."""
+    root = Path(__file__).resolve().parent.parent
+    policy = load_risk_policy(root / "config" / "risk.yaml")
+    short = _StructureKind.COMMODITY_FUTURE
+    assert _short_is_admissible(short, policy.config) is (
+        policy.config.allow_stop_bounded_futures_short
+    )
+    disabled = policy.config.model_copy(
+        update={"allow_stop_bounded_futures_short": False}
+    )
+    assert not _short_is_admissible(short, disabled)
 
 
 def test_commodity_futures_are_classified_in_both_directions() -> None:

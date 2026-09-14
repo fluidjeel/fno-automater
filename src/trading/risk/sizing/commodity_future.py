@@ -56,10 +56,9 @@ def is_commodity_future(
     """Return True for a single-leg commodity future, in either direction.
 
     This detects the *structure*, not the admissibility of it. A short future is
-    still a commodity future, so it must be classified as one: the naked-short
-    policy in the risk gateway then refuses it with an accurate reason code,
-    instead of it falling through to "unknown instrument" and looking like a bad
-    symbol. Pricing a short is a separate concern, guarded in ``size`` below.
+    still a commodity future, so it must be classified as one: the risk gateway
+    then decides on it explicitly under the stop-bounded-short policy, instead of
+    it falling through to "unknown instrument" and looking like a bad symbol.
     """
     if len(intent.legs) != 1:
         return False
@@ -88,16 +87,11 @@ class CommodityFutureSizingEngine:
         """Compute lots from stop distance, lot value and the min() formula."""
         if not is_commodity_future(request.intent, instrument):
             raise ValueError("intent is not a commodity future entry")
-        if request.intent.legs[0].side is not Side.BUY:
-            raise ValueError(
-                "this engine prices long futures only: the margin preview below "
-                "requests a BUY, so sizing a short against long margin would "
-                "understate it. The naked-short policy refuses that direction."
-            )
         intent = request.intent
         leg = intent.legs[0]
+        side = leg.side
         feature = request.feature_snapshot
-        entry_price = self._entry_price(feature)
+        entry_price = self._entry_price(feature, side)
         lot_size = LotSize(instrument.lot_size)
         stop_distance_ticks = intent.exit_template.stop_distance_ticks
         tick = entry_price.tick
@@ -126,6 +120,7 @@ class CommodityFutureSizingEngine:
             contract=leg.contract,
             lot_size=lot_size,
             margin_available=request.limits.margin_available,
+            side=side,
         )
         portfolio_limit_lots = self._portfolio_limit_lots(
             request,
@@ -169,11 +164,17 @@ class CommodityFutureSizingEngine:
         )
 
     @staticmethod
-    def _entry_price(feature: FeatureSnapshot) -> Price:
-        ask = feature.market.ask
-        if ask is None:
-            raise ValueError("ask price is required to size a futures entry")
-        return ask
+    def _entry_price(feature: FeatureSnapshot, side: Side) -> Price:
+        """The price the entry trades at: bid when selling, ask when buying.
+
+        Taking the wrong side here would misprice the entry and the tick grid it
+        implies, so the side is required rather than defaulted.
+        """
+        quote = feature.market.bid if side is Side.SELL else feature.market.ask
+        if quote is None:
+            direction = "bid" if side is Side.SELL else "ask"
+            raise ValueError(f"{direction} price is required to size a futures entry")
+        return quote
 
     @staticmethod
     def _margin_lots(
@@ -184,6 +185,7 @@ class CommodityFutureSizingEngine:
         contract: ContractRef,
         lot_size: LotSize,
         margin_available: Money,
+        side: Side,
     ) -> tuple[int, Money]:
         quantity = Lots(1).to_quantity(lot_size)
         preview = margin_preview.preview_margin(
@@ -193,7 +195,7 @@ class CommodityFutureSizingEngine:
                 legs=(
                     MarginPreviewLeg(
                         contract=contract,
-                        side=Side.BUY,
+                        side=side,
                         quantity_contracts=quantity.contracts,
                     ),
                 ),

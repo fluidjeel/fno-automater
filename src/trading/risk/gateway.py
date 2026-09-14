@@ -154,9 +154,9 @@ class RiskGateway:
                 reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
                 decided_at=now,
             )
-        if any(leg.side is Side.SELL for leg in intent.legs) and not _is_defined_risk(
-            structure
-        ):
+        if any(
+            leg.side is Side.SELL for leg in intent.legs
+        ) and not _short_is_admissible(structure, policy):
             return self._reject(
                 intent,
                 portfolio,
@@ -193,6 +193,18 @@ class RiskGateway:
                 intent,
                 portfolio,
                 reason_codes=(ReasonCode.SNAPSHOT_MISMATCH,),
+                decided_at=now,
+            )
+
+        if not policy.has_allocation(intent.strategy_id):
+            # Fail closed: build_sizing_limits raises for an unlisted strategy,
+            # and a configuration gap must surface as a machine-readable
+            # rejection rather than an exception out of the decision path.
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(ReasonCode.CAPITAL_UNAVAILABLE,),
+                applied_limits=("no_strategy_allocation",),
                 decided_at=now,
             )
 
@@ -366,6 +378,27 @@ def _is_defined_risk(structure: _StructureKind) -> bool:
         _StructureKind.CREDIT_SPREAD,
         _StructureKind.IRON_CONDOR,
     }
+
+
+def _short_is_admissible(structure: _StructureKind, policy: RiskPolicyConfig) -> bool:
+    """Whether an intent carrying a SELL leg may be admitted.
+
+    Two ways a short is allowed, and nothing else:
+
+      - its worst case is capped by construction (spreads, iron condor); or
+      - it is a single-leg commodity future whose loss is bounded by the same
+        mandatory protective stop that sized it, so the position cannot lose
+        more than the risk already approved for it. This is a policy switch,
+        off by default, and it admits that one structure only.
+
+    Naked short options are never admissible on either path.
+    """
+    if _is_defined_risk(structure):
+        return True
+    return (
+        structure is _StructureKind.COMMODITY_FUTURE
+        and policy.allow_stop_bounded_futures_short
+    )
 
 
 def _is_multi_leg(structure: _StructureKind) -> bool:

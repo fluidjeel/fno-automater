@@ -15,6 +15,7 @@ from trading.config.loader import ConfigLoadError
 from trading.domain.contracts.base import (
     ExactDecimal,
     NonEmptyStr,
+    StrictBool,
     StrictInt,
     StrictModel,
     VersionedModel,
@@ -61,6 +62,17 @@ class RiskPolicyConfig(VersionedModel):
     charges_per_lot: MoneyAmount
     net_delta_limit: StrictInt = Field(gt=0)
     decision_ttl_seconds: StrictInt = Field(gt=0)
+    # Defaults to False so a policy that omits the key refuses stop-bounded
+    # futures shorts: the fail-closed direction for a new risk class.
+    allow_stop_bounded_futures_short: StrictBool = False
+
+    def has_allocation(self, strategy_id: str) -> bool:
+        """Whether policy scopes capital to this strategy.
+
+        Checked before sizing so an unlisted strategy is refused with a reason
+        code rather than raising out of the decision path.
+        """
+        return strategy_id in self.strategy_allocations
 
     def allocation_for(self, strategy_id: str) -> StrategyAllocation:
         if strategy_id not in self.strategy_allocations:
