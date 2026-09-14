@@ -1,0 +1,14 @@
+{
+  "previews": [
+    {
+      "key": "NIFTY26SEP24000CE|BUY|75",
+      "result": {
+        "request_id": "MARGIN-FIXTURE-1",
+        "as_of": "2026-09-14T04:00:00+00:00",
+        "margin_required": {"amount": "12000", "currency": "INR"},
+        "margin_available_after": {"amount": "688000", "currency": "INR"},
+        "confirmed": true
+      }
+    }
+  ]
+}

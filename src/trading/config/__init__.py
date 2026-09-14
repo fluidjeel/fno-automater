@@ -6,6 +6,12 @@ from trading.config.loader import (
     load_config,
     load_config_text,
 )
+from trading.config.risk_policy import (
+    LoadedRiskPolicy,
+    RiskPolicyConfig,
+    RiskPolicyLoadError,
+    load_risk_policy,
+)
 from trading.config.schema import (
     AppConfig,
     ConfigNotVerifiedError,
@@ -28,10 +34,14 @@ __all__ = [
     "FreshnessRules",
     "InstrumentRule",
     "LoadedConfig",
+    "LoadedRiskPolicy",
     "MarginRules",
     "RiskLimits",
+    "RiskPolicyConfig",
+    "RiskPolicyLoadError",
     "StorageRules",
     "VerifiedValue",
     "load_config",
     "load_config_text",
+    "load_risk_policy",
 ]

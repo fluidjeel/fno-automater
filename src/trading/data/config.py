@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ __all__ = [
     "DataPipelineConfig",
     "FyersPipelineConfig",
     "QualityConfig",
+    "ReferenceDataConfig",
     "SessionConfig",
     "StorageConfig",
     "UnderlyingConfig",
@@ -40,6 +42,7 @@ class StorageConfig(BaseModel):
     canonical_subdir: str = "canonical"
     duckdb_path: str = "data/catalog.duckdb"
     parquet_subdir: str = "parquet"
+    snapshot_subdir: str = "snapshots"
 
 
 class SessionConfig(BaseModel):
@@ -48,8 +51,16 @@ class SessionConfig(BaseModel):
     timezone: str
     open_local: str
     close_local: str
-    verified: bool = False
+    # Provenance mirroring VerifiedValue: a bare boolean lets someone assert
+    # verification with no evidence, which is the failure this shape prevents.
+    verified_source: str | None = None
+    verified_at: date | None = None
     segment: str = "NSE_FO"
+
+    @property
+    def verified(self) -> bool:
+        """True only when both the source and the verification date are recorded."""
+        return bool(self.verified_source) and self.verified_at is not None
 
 
 class QualityConfig(BaseModel):
@@ -84,6 +95,25 @@ class FyersPipelineConfig(BaseModel):
     ws_reconnect_backoff_seconds: float = Field(default=1.0, gt=0)
 
 
+class ReferenceDataConfig(BaseModel):
+    """Instrument-master source. Values must match current Fyers documentation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    instrument_subdir: str = "reference/instruments"
+    symbol_master_url_template: str
+    segments: tuple[str, ...] = ()
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    # Fyers `exInstType` for a cash-segment index row. Verify against the
+    # official symbol-master documentation before changing.
+    index_instrument_type: int
+    history_max_days_by_resolution: dict[str, int] = Field(default_factory=dict)
+
+    def max_days_for(self, resolution: str) -> int | None:
+        """Return the provider's per-request window, or None when unverified."""
+        return self.history_max_days_by_resolution.get(resolution)
+
+
 class MacroNewsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -100,6 +130,7 @@ class DataPipelineConfig(BaseModel):
     normalization_version: str
     storage: StorageConfig
     fyers: FyersPipelineConfig
+    reference: ReferenceDataConfig
     macro_news: MacroNewsConfig
     session: SessionConfig
     quality: QualityConfig
@@ -122,6 +153,7 @@ def load_data_pipeline_config(path: Path) -> DataPipelineConfig:
         normalization_version=str(raw["normalization_version"]),
         storage=StorageConfig.model_validate(raw["storage"]),
         fyers=FyersPipelineConfig.model_validate(raw["fyers"]),
+        reference=ReferenceDataConfig.model_validate(raw["reference"]),
         macro_news=MacroNewsConfig.model_validate(raw["macro_news"]),
         session=SessionConfig.model_validate(raw["session"]),
         quality=QualityConfig.model_validate(quality_raw),

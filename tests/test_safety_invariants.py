@@ -22,12 +22,14 @@ import pytest
 from pydantic import ValidationError
 
 import tests.factories as f
+from trading.broker.paper import PaperBroker
 from trading.config import (
     ConfigNotVerifiedError,
     Environment,
     load_config,
     load_config_text,
 )
+from trading.domain.clock import FrozenClock
 from trading.domain.contracts import (
     AIProposal,
     DataQualityReport,
@@ -58,19 +60,20 @@ from trading.domain.state import (
     TRADE_MACHINE,
     IllegalTransitionError,
 )
+from trading.portfolio import build_broker_snapshot
 
 SPEC = (
     Path(__file__).resolve().parent.parent / "docs" / "context" / "SAFETY_INVARIANTS.md"
 )
 BASE_CONFIG = Path(__file__).resolve().parent.parent / "config" / "base.yaml"
+BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
 
 # Invariants this module tests at Phase 0.
-COVERED = frozenset({2, 3, 4, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 23, 25})
+COVERED = frozenset({2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 23, 25})
 
 # Invariants that require a component Phase 0 does not build yet.
 DEFERRED: dict[int, str] = {
     1: "Phase 3: needs an OMS and a live decision path to constrain",
-    5: "Phase 2: needs a broker adapter to treat as external truth",
     8: "Phase 3: needs a running trade manager to keep protecting positions",
     10: "Phase 2: needs a durable store and a real clock-drift monitor",
     15: "Phase 3: needs an execution planner to invoke the repair policy",
@@ -156,6 +159,21 @@ class TestAuthority:
             f.risk_decision(recalculated_max_loss=None)
         with pytest.raises(ValidationError, match="own max-loss"):
             f.risk_decision(margin_required=None)
+
+    def test_invariant_05_broker_truth_is_external(self) -> None:
+        """Broker-reported funds and positions are the portfolio source of truth."""
+        clock = FrozenClock(f.NOW)
+        ids = SequentialIdFactory(clock.instant)
+        broker = PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids)
+        snapshot = build_broker_snapshot(
+            broker,
+            account_id="ACC-PAPER-1",
+            versions=f.versions(),
+            id_factory=ids,
+            reserved_capital=f.money("0"),
+        )
+        assert snapshot.exposure.equity == broker.get_funds().equity
+        assert snapshot.positions == broker.get_positions()
 
 
 class TestFailClosed:

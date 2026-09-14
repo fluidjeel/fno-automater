@@ -12,6 +12,7 @@ from trading.data.config import (
     UnderlyingConfig,
     load_data_pipeline_config,
 )
+from trading.data.cycle import build_cycle_snapshot
 from trading.data.events import CanonicalMarketEvent
 from trading.data.quality import assess_combined_snapshot
 from trading.data.snapshot_builder import MarketSnapshotBuilder
@@ -128,10 +129,14 @@ class ReplayEngine:
                 session=self._pipeline_config.session,
                 quality_config=self._pipeline_config.quality,
             )
-            if quality.permits_new_exposure:
-                snapshots.append(
-                    builder.build(group, as_of=calculation_time, quality=quality)
-                )
+            snapshot = build_cycle_snapshot(
+                group,
+                quality=quality,
+                as_of=calculation_time,
+                builder=builder,
+            )
+            if snapshot is not None:
+                snapshots.append(snapshot)
         return ReplayResult(symbol=underlying.symbol, snapshots=tuple(snapshots))
 
 

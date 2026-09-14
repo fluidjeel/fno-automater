@@ -7,11 +7,12 @@ Invariant 19: canonical events carry lineage and raw references.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from trading.config import load_config
 from trading.data.config import (
@@ -39,11 +40,18 @@ from trading.data.quality import (
     assess_option_chain,
     assess_quote_snapshot,
 )
+from trading.data.snapshot_builder import (
+    MarketSnapshotBuilder,
+    PriceUnavailableError,
+)
 from trading.data.storage.catalog import CatalogWriter
 from trading.data.replay import ReplayEngine
 from trading.data.settings import FyersSettings
 from trading.data.storage.parquet_store import JsonlEventStore
+from trading.data.storage.instrument_store import InstrumentSpecStore
+from trading.data.storage.snapshot_store import SnapshotStore
 from trading.domain.clock import FrozenClock
+from trading.domain.contracts import InstrumentSpec
 from trading.domain.enums import (
     AssetClass,
     DataQuality,
@@ -133,12 +141,49 @@ def _status_capture(now: datetime, status: str = "OPEN") -> RawMarketCapture:
     )
 
 
+def _stale_capture(now: datetime, *, age_seconds: int) -> RawMarketCapture:
+    """A chain received now but stamped in the past, so its age exceeds freshness."""
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    data = payload.get("data")
+    if isinstance(data, dict):
+        data["timestamp"] = int(now.timestamp()) - age_seconds
+    return RawMarketCapture(
+        capture_id="cap-stale-1",
+        provider="fyers",
+        endpoint="/data/options-chain-v3",
+        received_at=now,
+        payload=payload,
+        http_status=200,
+    )
+
+
+def _priceless_capture(now: datetime) -> RawMarketCapture:
+    """A populated chain whose rows carry no usable price."""
+    return RawMarketCapture(
+        capture_id="cap-priceless-1",
+        provider="fyers",
+        endpoint="/data/options-chain-v3",
+        received_at=now,
+        payload={
+            "data": {
+                "timestamp": int(now.timestamp()),
+                "optionsChain": [
+                    {"option_type": "CE", "strike_price": 24000, "ltp": 0},
+                    {"option_type": "PE", "strike_price": 24000, "ltp": 0},
+                ],
+            }
+        },
+        http_status=200,
+    )
+
+
 def _session(*, verified: bool = True) -> SessionConfig:
     return SessionConfig(
         timezone="Asia/Kolkata",
         open_local="09:15",
         close_local="15:30",
-        verified=verified,
+        verified_source="https://www.nseindia.com/" if verified else None,
+        verified_at=date(2026, 9, 13) if verified else None,
         segment="NSE_FO",
     )
 
@@ -292,6 +337,48 @@ class TestNormalizeAndQuality:
         assert report.state is DataQuality.INVALID
         assert not report.permits_new_exposure
 
+    def test_missing_authoritative_price_is_invalid(self) -> None:
+        """Invariant 6: a cycle with no real price must not be priced against."""
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        chain = normalize_fyers_option_chain(
+            _priceless_capture(now),
+            symbol="NSE:NIFTY50-INDEX",
+            normalization_version="1",
+            raw_ref="c.json",
+        )
+        report = assess_combined_snapshot(
+            chain=chain,
+            quote=None,
+            bar=None,
+            now=now,
+            chain_max_age_ms=120_000,
+            quote_max_age_ms=60_000,
+            bar_max_age_ms=300_000,
+            session=_session(),
+        )
+        assert report.state is DataQuality.INVALID
+        assert ReasonCode.PRICE_UNAVAILABLE in report.reason_codes
+        assert not report.permits_new_exposure
+
+    def test_builder_refuses_to_substitute_a_price(self) -> None:
+        """Invariant 6: the builder raises rather than inventing a quote."""
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        chain = normalize_fyers_option_chain(
+            _priceless_capture(now),
+            symbol="NSE:NIFTY50-INDEX",
+            normalization_version="1",
+            raw_ref="c.json",
+        )
+        builder = MarketSnapshotBuilder(
+            _underlying(),
+            config_version="1",
+            config_checksum="abc",
+            code_version="0.1.0",
+        )
+        quality = assess_option_chain(chain, now=now, max_age_ms=120_000)
+        with pytest.raises(PriceUnavailableError):
+            builder.build((chain,), as_of=now, quality=quality)
+
 
 class TestMacroNewsFactor:
     def test_factor_is_weighted_bounded_and_evidence_linked(self) -> None:
@@ -422,6 +509,30 @@ class TestMacroNewsFactor:
         assert ReasonCode.OUTSIDE_SESSION in report.reason_codes
         assert not report.permits_new_exposure
 
+    def test_unrecorded_session_verification_fails_closed(self) -> None:
+        """A bare claim of verification without source and date is not accepted."""
+        assert not _session(verified=False).verified
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        chain = normalize_fyers_option_chain(
+            _capture(now),
+            symbol="NSE:NIFTY50-INDEX",
+            normalization_version="1",
+            raw_ref="c.json",
+        )
+        report = assess_combined_snapshot(
+            chain=chain,
+            quote=None,
+            bar=None,
+            now=now,
+            chain_max_age_ms=120_000,
+            quote_max_age_ms=60_000,
+            bar_max_age_ms=300_000,
+            session=_session(verified=False),
+        )
+        assert report.state is DataQuality.INVALID
+        assert ReasonCode.CONFIG_UNVERIFIED in report.reason_codes
+        assert not report.permits_new_exposure
+
     def test_incomplete_warmup_blocks_exposure(self) -> None:
         """Invariant 6: incomplete warmup blocks new exposure."""
         now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
@@ -530,6 +641,53 @@ class TestPipelineAndReplay:
         canonical = list((tmp_path / "data" / "canonical").glob("*.jsonl"))
         assert canonical
 
+    def test_instrument_spec_supplies_tick_and_lot_size(self, tmp_path: Path) -> None:
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        catalog = InstrumentSpecStore(
+            tmp_path
+            / pipeline_config.storage.root
+            / pipeline_config.reference.instrument_subdir
+        )
+        catalog.write(
+            "NSE_CM",
+            (
+                InstrumentSpec(
+                    trading_symbol="NSE:NIFTY50-INDEX",
+                    exchange=Exchange.NSE,
+                    segment="NSE_CM",
+                    underlying="NIFTY",
+                    instrument_kind=InstrumentKind.INDEX,
+                    provider_token="101000000026000",
+                    exchange_token=26000,
+                    lot_size=0,
+                    tick_size=Decimal("0.05"),
+                    price_precision=2,
+                    trading_session="0915-1530",
+                    source="https://public.fyers.in/sym_details/NSE_CM_sym_master.json",
+                    verified_at=date(2026, 9, 11),
+                ),
+            ),
+        )
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeFeed(_capture(now)),
+            store=JsonlEventStore(tmp_path / "data"),
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        result = pipeline.run_once(_underlying(), now=now)
+        assert result.snapshot is not None
+        assert result.snapshot.features["lot_size"] == Decimal(0)
+        refs = [
+            event
+            for event in result.events
+            if event.event_type == "INSTRUMENT_REFERENCE"
+        ]
+        assert refs[0].payload["tick_size"] == "0.05"
+        assert refs[0].payload["lot_size"] == 0
+
     def test_macro_factor_enters_snapshot_and_replays_with_lineage(
         self, tmp_path: Path
     ) -> None:
@@ -636,6 +794,122 @@ class TestPipelineAndReplay:
         )
         assert len(result.snapshots) == 1
         assert result.snapshots[0].permits_new_exposure
+
+    def test_live_and_replay_agree_on_a_stale_cycle(self, tmp_path: Path) -> None:
+        """Replay must reproduce the stream live saw, including STALE cycles."""
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        store = JsonlEventStore(tmp_path / "data")
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeFeed(_stale_capture(now, age_seconds=600)),
+            store=store,
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        run = pipeline.run_once(_underlying(), now=now)
+        assert run.snapshot is not None
+        assert run.snapshot.quality.state is DataQuality.STALE
+        assert not run.snapshot.permits_new_exposure
+
+        loaded = load_config(BASE_CONFIG)
+        replay = ReplayEngine(
+            pipeline_config=pipeline_config,
+            store=store,
+            config_version=loaded.version,
+            config_checksum=loaded.checksum,
+        ).replay(
+            _underlying(),
+            start=now.replace(hour=0),
+            end=now.replace(hour=23),
+        )
+        assert len(replay.snapshots) == 1
+        assert replay.snapshots[0].quality.state is DataQuality.STALE
+        assert replay.snapshots[0].features == run.snapshot.features
+        again = ReplayEngine(
+            pipeline_config=pipeline_config,
+            store=store,
+            config_version=loaded.version,
+            config_checksum=loaded.checksum,
+        ).replay(
+            _underlying(),
+            start=now.replace(hour=0),
+            end=now.replace(hour=23),
+        )
+        assert [item.model_dump_json() for item in again.snapshots] == [
+            item.model_dump_json() for item in replay.snapshots
+        ]
+
+    def test_snapshot_store_reloads_byte_identical_records(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeFeed(_capture(now)),
+            store=JsonlEventStore(tmp_path / "data"),
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        run = pipeline.run_once(_underlying(), now=now)
+        assert run.snapshot is not None
+        store = SnapshotStore(
+            tmp_path / pipeline_config.storage.root / "snapshots",
+        )
+        records = store.read(symbol="NSE:NIFTY50-INDEX")
+        assert len(records) == 1
+        assert records[0].decision == "SNAPSHOT"
+        assert records[0].snapshot == run.snapshot
+        raw = store.path_for(now).read_text(encoding="utf-8").splitlines()[0]
+        assert records[0].model_dump_json() == raw
+
+    def test_rejected_cycle_is_persisted_with_its_reason_codes(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Invariant 6: the verdict that blocked exposure must stay recoverable."""
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeFeed(
+                _priceless_capture(now),
+                quotes_capture=RawMarketCapture(
+                    capture_id="cap-no-quotes",
+                    provider="fyers",
+                    endpoint="quotes",
+                    received_at=now,
+                    payload={"s": "ok", "d": []},
+                    http_status=200,
+                ),
+                history_capture=RawMarketCapture(
+                    capture_id="cap-no-history",
+                    provider="fyers",
+                    endpoint="history",
+                    received_at=now,
+                    payload={"s": "ok", "candles": []},
+                    http_status=200,
+                ),
+            ),
+            store=JsonlEventStore(tmp_path / "data"),
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        run = pipeline.run_once(_underlying(), now=now)
+        assert run.snapshot is None
+        records = SnapshotStore(
+            tmp_path / pipeline_config.storage.root / "snapshots",
+        ).read()
+        assert len(records) == 1
+        assert records[0].decision == "REJECTED"
+        assert records[0].snapshot is None
+        assert ReasonCode.PRICE_UNAVAILABLE in records[0].quality.reason_codes
+        assert records[0].event_ids
 
     def test_catalog_writes_parquet_and_duckdb(self, tmp_path: Path) -> None:
         """Invariant 19: derived catalog matches JSONL event ids."""

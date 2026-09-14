@@ -9,10 +9,12 @@ from typing import Any
 
 from trading.data.config import UnderlyingConfig
 from trading.data.events import CanonicalMarketEvent
+from trading.data.prices import positive_decimal as _positive
 from trading.domain.contracts import (
     ContractRef,
     DataQualityReport,
     FeatureSnapshot,
+    InstrumentSpec,
     Lineage,
     MarketQuote,
     SnapshotTimes,
@@ -20,7 +22,20 @@ from trading.domain.contracts import (
 )
 from trading.domain.primitives import Price, TickSize
 
-__all__ = ["MarketSnapshotBuilder", "OptionChainSnapshotBuilder"]
+__all__ = [
+    "DEFAULT_TICK_SIZE",
+    "MarketSnapshotBuilder",
+    "OptionChainSnapshotBuilder",
+    "PriceUnavailableError",
+]
+
+# Used only when neither the instrument master nor a captured reference event
+# supplies a tick size, which happens when replaying pre-catalog events.
+DEFAULT_TICK_SIZE = "0.05"
+
+
+class PriceUnavailableError(ValueError):
+    """Raised when no feed supplies an authoritative price for the cycle."""
 
 
 def _latest_event(
@@ -29,15 +44,6 @@ def _latest_event(
 ) -> CanonicalMarketEvent | None:
     matches = [event for event in events if event.event_type == event_type]
     return matches[-1] if matches else None
-
-
-def _positive(value: Any) -> Decimal | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float, Decimal, str)):
-        parsed = Decimal(str(value))
-        return parsed if parsed > 0 else None
-    return None
 
 
 def _signed(value: Any) -> Decimal | None:
@@ -83,14 +89,33 @@ class MarketSnapshotBuilder:
         config_checksum: str,
         code_version: str,
         greeks_calculation_version: str = "fyers_chain",
+        instrument_spec: InstrumentSpec | None = None,
     ) -> None:
         self._underlying = underlying
         self._greeks_calculation_version = greeks_calculation_version
+        self._instrument_spec = instrument_spec
         self._versions = Versions(
             code_version=code_version,
             config_version=config_version,
             config_checksum=config_checksum,
         )
+
+    def _tick_size(self, reference: CanonicalMarketEvent | None) -> TickSize:
+        """Prefer the instrument master, then the captured reference event.
+
+        Replay passes no spec and reads the tick recorded in the reference event
+        at capture time, which is what keeps a replay deterministic when the
+        master is later refreshed. The live path writes the spec tick into that
+        event, so the two agree. `DEFAULT_TICK_SIZE` is a last resort for events
+        captured before the instrument catalog existed; it is not an authority.
+        """
+        if self._instrument_spec is not None:
+            return TickSize.of(self._instrument_spec.tick_size)
+        if reference is not None:
+            ref_tick = reference.payload.get("tick_size")
+            if isinstance(ref_tick, str) and ref_tick:
+                return TickSize.of(ref_tick)
+        return TickSize.of(DEFAULT_TICK_SIZE)
 
     def build(
         self,
@@ -108,11 +133,7 @@ class MarketSnapshotBuilder:
         bar = _latest_event(events, "BAR_SNAPSHOT")
         reference = _latest_event(events, "INSTRUMENT_REFERENCE")
         depth = _latest_event(events, "DEPTH_SNAPSHOT")
-        tick = TickSize.of("0.05")
-        if reference is not None:
-            ref_tick = reference.payload.get("tick_size")
-            if isinstance(ref_tick, str) and ref_tick:
-                tick = TickSize.of(ref_tick)
+        tick = self._tick_size(reference)
         spot = Decimal("0")
         strikes = chain.payload.get("strikes", [])
         if isinstance(strikes, list):
@@ -169,15 +190,15 @@ class MarketSnapshotBuilder:
         if last is None and spot > 0:
             last = spot
         if last is None or last <= 0:
-            last = Decimal("24000")
-        if bid is None:
-            bid = last
-        if ask is None:
-            ask = last
+            raise PriceUnavailableError(
+                "no authoritative last price in quote, depth, bar or chain; the "
+                "quality gate must mark the cycle INVALID rather than pricing "
+                "against a substituted value"
+            )
         market = MarketQuote(
             last=Price.snap(last, tick),
-            bid=Price.snap(bid, tick),
-            ask=Price.snap(ask, tick),
+            bid=Price.snap(bid, tick) if bid is not None else None,
+            ask=Price.snap(ask, tick) if ask is not None else None,
             open=Price.snap(open_, tick) if open_ is not None else None,
             high=Price.snap(high, tick) if high is not None else None,
             low=Price.snap(low, tick) if low is not None else None,
@@ -234,6 +255,11 @@ class MarketSnapshotBuilder:
             features["expiry_count"] = Decimal(
                 int(reference.payload.get("expiry_count", 0))
             )
+            lot = reference.payload.get("lot_size")
+            if isinstance(lot, int) and not isinstance(lot, bool):
+                features["lot_size"] = Decimal(lot)
+        if self._instrument_spec is not None:
+            features["lot_size"] = Decimal(self._instrument_spec.lot_size)
         if depth is not None:
             buy = _int_qty(depth.payload.get("total_buy_qty"))
             sell = _int_qty(depth.payload.get("total_sell_qty"))
@@ -260,6 +286,8 @@ class MarketSnapshotBuilder:
         raw_refs = [event.raw_ref for event in events]
         if self._greeks_calculation_version:
             source_ids.append(self._greeks_calculation_version)
+        if self._instrument_spec is not None:
+            source_ids.append(self._instrument_spec.source)
         macro_ids = self._macro_source_ids(chain.payload)
         macro_refs = self._macro_source_refs(chain.payload)
         lineage = Lineage(
