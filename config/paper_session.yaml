@@ -14,7 +14,8 @@ strategy_stances:
   positional_long_option: PAPER
   debit_spread: PAPER
   defined_risk_multileg: SHADOW
-  cas_microstructure: SUSPENDED
+  # SHADOW so identification can pick CAS; L3 still rejects without cas-v1 features.
+  cas_microstructure: SHADOW
   commodity_futures_trend: SHADOW
 commodity_underlying: CRUDEOIL
 commodity_exchange: MCX

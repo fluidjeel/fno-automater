@@ -24,21 +24,25 @@ from trading.domain.contracts.snapshot import DerivativesContext, Greeks
 from trading.domain.enums import DataQuality, OptionType, ReasonCode
 from trading.identification import (
     BoundCandidates,
+    IvBucket,
+    SessionBucket,
+    allowed_families_for,
     bind_debit_spread,
     bind_long_option,
     build_market_state,
-    allowed_families_for,
-    load_identification_policy,
-    session_bucket_for,
-    IvBucket,
-    SessionBucket,
     iv_bucket_for,
+    load_identification_policy,
     route_nifty_options,
+    session_bucket_for,
 )
 
 ROOT = Path(__file__).parents[1]
 POLICY = load_identification_policy(ROOT / "config" / "identification.yaml")
+STRICT_POLICY = POLICY.model_copy(
+    update={"router": POLICY.router.model_copy(update={"paper_fail_fast": False})}
+)
 NOW = datetime(2026, 9, 19, 10, 0, tzinfo=UTC)
+CONTINUOUS = NOW.replace(hour=5, minute=0)
 
 
 def _market(**overrides: object) -> MarketState:
@@ -261,7 +265,7 @@ def test_synthetic_top_of_book_is_ineligible() -> None:
 
 def test_router_selects_low_iv_long_option_and_keeps_spread_shadow() -> None:
     route, opportunities = route_nifty_options(
-        _market(),
+        _market(calculated_at=CONTINUOUS),
         long_option=_bound("positional_long_option", "0.90"),
         debit_spread=_bound("debit_spread", "0.75"),
         policy=POLICY,
@@ -272,6 +276,7 @@ def test_router_selects_low_iv_long_option_and_keeps_spread_shadow() -> None:
 
 
 def test_router_abstains_on_tie_macro_conflict_and_cooldown() -> None:
+    """Live-strict identification still freezes; paper fail-fast is opt-in."""
     long_option = _bound("positional_long_option", "0.90")
     spread = _bound("debit_spread", "0.90")
 
@@ -279,19 +284,19 @@ def test_router_abstains_on_tie_macro_conflict_and_cooldown() -> None:
         _market(),
         long_option=long_option,
         debit_spread=spread,
-        policy=POLICY,
+        policy=STRICT_POLICY,
     )
     conflict, _ = route_nifty_options(
         _market(macro_status=MacroStatus.CONFLICT),
         long_option=long_option,
         debit_spread=spread,
-        policy=POLICY,
+        policy=STRICT_POLICY,
     )
     cooldown, _ = route_nifty_options(
         _market(),
         long_option=long_option,
         debit_spread=spread,
-        policy=POLICY,
+        policy=STRICT_POLICY,
         cooldown_active=True,
     )
 
@@ -302,12 +307,17 @@ def test_router_abstains_on_tie_macro_conflict_and_cooldown() -> None:
 
 def test_router_selects_debit_spread_when_iv_is_expensive() -> None:
     route, _ = route_nifty_options(
-        _market(iv_percentile=Decimal("70"), iv_rv_ratio=Decimal("1.3")),
+        _market(
+            iv_percentile=Decimal("70"),
+            iv_rv_ratio=Decimal("1.3"),
+            calculated_at=CONTINUOUS,
+        ),
         long_option=_bound("positional_long_option", "0.75"),
         debit_spread=_bound("debit_spread", "0.90"),
         policy=POLICY,
     )
     assert route.paper_winner == "debit_spread"
+
 
 def test_eligible_binds_always_attach_setup_features() -> None:
     candidates = (
@@ -331,15 +341,19 @@ def test_router_pass_records_failed_gate_ids_without_fake_features() -> None:
     spread = _bound("debit_spread", "0.90")
 
     route, opportunities = route_nifty_options(
-        _market(),
+        _market(calculated_at=CONTINUOUS),
         long_option=long_option,
         debit_spread=spread,
         policy=POLICY,
     )
 
-    assert route.paper_winner is None
-    assert route.failed_gate_ids == ("min_score_gap",)
-    assert all(item.setup_features is not None for item in opportunities)
+    assert route.paper_winner == "positional_long_option"
+    assert "min_score_gap" in route.failed_gate_ids
+    assert route.forced_choice is True
+    binder_ops = [item for item in opportunities if item.setup_features is not None]
+    assert binder_ops
+    assert all(item.setup_features is not None for item in binder_ops)
+
 
 def test_vix_history_populates_iv_percentile_and_rv_ratio() -> None:
     """Synthetic India VIX series fills iv_percentile and iv_rv_ratio."""
@@ -388,8 +402,6 @@ def test_resolve_vix_symbol_matches_instrument_master() -> None:
     assert resolve_vix_symbol(POLICY, instrument_root=root) == "NSE:INDIAVIX-INDEX"
 
 
-
-
 def test_allow_table_matrix_for_regime_buckets() -> None:
     """Six-to-eight regime cells: directional, multileg, CAS auction, commodity excluded."""
     # NOW is 10:00 UTC = 15:30 IST → AUCTION window in policy.
@@ -400,14 +412,70 @@ def test_allow_table_matrix_for_regime_buckets() -> None:
 
     cases = [
         # trend, iv, event, calculated_at, expect_superset, expect_absent
-        ("UP", "30", "NORMAL", NOW, {"positional_long_option", "debit_spread", "cas_microstructure"}, {"defined_risk_multileg", "commodity_futures_trend"}),
-        ("DOWN", "55", "CAUTION", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "defined_risk_multileg", "commodity_futures_trend"}),
-        ("RANGE", "80", "NORMAL", continuous, {"defined_risk_multileg", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
-        ("RANGE", "50", "NORMAL", continuous, set(), {"defined_risk_multileg", "cas_microstructure", "commodity_futures_trend"}),
-        ("UP", "30", "NORMAL", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
-        ("MIXED", "80", "NORMAL", NOW, {"cas_microstructure", "positional_long_option", "debit_spread"}, {"defined_risk_multileg", "commodity_futures_trend"}),
-        ("UP", "30", "BLOCK_NEW", continuous, set(), {"positional_long_option", "debit_spread", "cas_microstructure"}),
-        ("RANGE", "80", "NORMAL", NOW, {"defined_risk_multileg", "debit_spread", "cas_microstructure"}, {"commodity_futures_trend"}),
+        (
+            "UP",
+            "30",
+            "NORMAL",
+            NOW,
+            {"positional_long_option", "debit_spread", "cas_microstructure"},
+            {"defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "DOWN",
+            "55",
+            "CAUTION",
+            continuous,
+            {"positional_long_option", "debit_spread"},
+            {"cas_microstructure", "defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "RANGE",
+            "80",
+            "NORMAL",
+            continuous,
+            {"defined_risk_multileg", "debit_spread"},
+            {"cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "RANGE",
+            "50",
+            "NORMAL",
+            continuous,
+            set(),
+            {"defined_risk_multileg", "cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "UP",
+            "30",
+            "NORMAL",
+            continuous,
+            {"positional_long_option", "debit_spread"},
+            {"cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "MIXED",
+            "80",
+            "NORMAL",
+            NOW,
+            {"cas_microstructure", "positional_long_option", "debit_spread"},
+            {"defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "UP",
+            "30",
+            "BLOCK_NEW",
+            continuous,
+            set(),
+            {"positional_long_option", "debit_spread", "cas_microstructure"},
+        ),
+        (
+            "RANGE",
+            "80",
+            "NORMAL",
+            NOW,
+            {"defined_risk_multileg", "debit_spread", "cas_microstructure"},
+            {"commodity_futures_trend"},
+        ),
     ]
     for trend, iv, event, when, expect_has, expect_missing in cases:
         market = _market(
@@ -422,16 +490,18 @@ def test_allow_table_matrix_for_regime_buckets() -> None:
 
 
 def test_router_intersects_allow_table_blocking_preferred_family() -> None:
-    """Allow-table can block the preferred family even when binders are eligible."""
-    market = _market(event_state="BLOCK_NEW")
+    """Allow-table can be empty; paper fail-fast still names a fallback family."""
+    market = _market(event_state="BLOCK_NEW", calculated_at=CONTINUOUS)
     route, _ = route_nifty_options(
         market,
         long_option=_bound("positional_long_option", "0.90"),
         debit_spread=_bound("debit_spread", "0.75"),
         policy=POLICY,
     )
-    assert route.paper_winner is None
     assert allowed_families_for(market, POLICY) == frozenset()
+    assert route.paper_winner == "positional_long_option"
+    assert route.forced_choice is True
+    assert ReasonCode.EVENT_BLACKOUT in route.reason_codes
 
 
 def test_iv_bucket_boundaries_follow_router_and_allow_table() -> None:

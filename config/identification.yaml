@@ -3,7 +3,7 @@ schema_version: "1"
 policy_version: "nifty-identification-v1"
 feature_version: "nifty-market-state-v1"
 binding_version: "nifty-contract-binding-v1"
-router_version: "nifty-structure-router-v2"
+router_version: "nifty-structure-router-v3"
 # Verified in Fyers NSE_CM instrument master (token 26017).
 vix_symbol: "NSE:INDIAVIX-INDEX"
 
@@ -37,6 +37,8 @@ router:
   min_winner_score: "0.70"
   min_score_gap: "0.10"
   cooldown_minutes: 30
+  # Name a family even when live would freeze. Does not ENABLE live OMS.
+  paper_fail_fast: true
 
 
 allow_table:
@@ -68,3 +70,10 @@ allow_table:
       event: [NORMAL, CAUTION]
       session: [AUCTION]
       allowed_families: [cas_microstructure, positional_long_option, debit_spread]
+
+# Paper fail-fast still does not:
+# - route commodity_futures_trend on this NIFTY desk
+# - pick CAS outside auction windows
+# - submit through L2 when ENTRY_READY is false (runner/OMS freeze)
+# - auto-ENABLE live families or write production family_actions
+# Weekly L4 remains advisory; ABSTAIN there is promotion, not structure pick.
