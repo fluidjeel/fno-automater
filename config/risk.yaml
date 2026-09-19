@@ -40,3 +40,7 @@ decision_ttl_seconds: 300
 # PAPER-only SPAN substitute for live futures symbols. Not exchange SPAN.
 # Unset (null) refuses commodity paper sizing. Never used on a live broker.
 paper_future_margin_fraction: "0.15"
+
+# Open-position monitor-leg gap: HALT_ONLY freezes entries and alerts.
+# FLATTEN_REMAINING submits opposite LIMITs only for still-quoted legs.
+missing_monitor_resolution: HALT_ONLY

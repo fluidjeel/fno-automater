@@ -8,18 +8,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 from trading.broker.paper import PaperBroker
 from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
-from trading.config.risk_policy import LoadedRiskPolicy
+from trading.config.risk_policy import LoadedRiskPolicy, MissingMonitorResolution
 from trading.data.cas_features import with_cas_feature_set
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
+    EntryFreezeRecord,
     FeatureSnapshot,
     InstrumentSpec,
     OrderEvent,
+    PositionLifecycleRecord,
+    PositionReviewRecord,
+    ReconciliationEvent,
     RiskDecision,
     RouteDecision,
     SetupFeatures,
@@ -28,24 +32,40 @@ from trading.domain.contracts import (
 from trading.domain.contracts.common import Versions
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
+from trading.domain.contracts.portfolio import PositionRecord
 from trading.domain.contracts.position import PositionState
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
+    DifferenceClass,
+    Exchange,
     ExecutionMode,
+    ExitScope,
+    HoldingStyle,
     OrderPlanState,
     OrderState,
     OrderType,
     ReasonCode,
+    ReconciliationTrigger,
+    ReviewAction,
+    ReviewSlotId,
     RiskAction,
+    Severity,
     Side,
     SystemState,
     TimeInForce,
     TradeState,
+    Trigger,
 )
 from trading.domain.ids import IdFactory, derive_idempotency_key
 from trading.domain.primitives import Currency, Money
 from trading.news.contracts import EventRiskState
-from trading.oms import OmsEngine, OrderPlanPlanner, OrderPlanRequest, OrderRateLimiter
+from trading.oms import (
+    OmsEngine,
+    OrderFrozenError,
+    OrderPlanPlanner,
+    OrderPlanRequest,
+    OrderRateLimiter,
+)
 from trading.portfolio import (
     PortfolioReconciler,
     build_broker_snapshot,
@@ -53,18 +73,48 @@ from trading.portfolio import (
 )
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
 from trading.runtime.isolation import assert_paper_isolation
+from trading.runtime.review_schedule import ReviewSlot
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
 from trading.storage.trading_store import TradingEventType, TradingStore
 from trading.strategies import StrategyContext, build_strategy
 from trading.strategies.macro import MacroAssessment
-from trading.trade import TradeManager
+from trading.trade import (
+    TradeManager,
+    assert_stop_not_wider,
+    monitor_leg,
+)
+from trading.trade.exits import ExitEvaluation, ExitKind
+from trading.trade.review import ReviewEngine, ReviewEvaluation
 
 __all__ = [
+    "LifecycleAlert",
     "PaperCycleResult",
+    "PaperReviewResult",
     "PaperRunner",
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
+    "PositionRecoveryResult",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class LifecycleAlert:
+    """One unreconciled or unprotected open-position finding."""
+
+    trade_id: str
+    reason_code: ReasonCode
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class PositionRecoveryResult:
+    """Outcome of restoring persisted PAPER position lifecycles."""
+
+    restored_trade_ids: tuple[str, ...]
+    entries_blocked: bool
+    alerts: tuple[LifecycleAlert, ...]
+    unprotected_trade_ids: tuple[str, ...]
+    unreconciled_trade_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +162,29 @@ class PaperCycleResult:
     reconcile_id: str
     entries_blocked: bool
     route_decision: RouteDecision | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperReviewResult:
+    """Outcome of one scheduled positional review slot."""
+
+    slot_id: ReviewSlotId
+    session_date: date
+    decisions: tuple[PositionReviewRecord, ...]
+    slot_recorded: bool
+
+
+class _ProtectionKind:
+    OK = "OK"
+    MISSING_MONITOR = "MISSING_MONITOR"
+    STALE = "STALE"
+
+
+@dataclass(frozen=True, slots=True)
+class _ProtectionDiagnosis:
+    kind: str
+    reason_code: ReasonCode
+    detail: str
 
 
 @dataclass
@@ -196,12 +269,23 @@ class PaperRunner:
             reservations=reservations,
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
+        self._lifecycle_recovered = False
+        self._review_engine = ReviewEngine()
+        self._last_recovery = PositionRecoveryResult(
+            restored_trade_ids=(),
+            entries_blocked=False,
+            alerts=(),
+            unprotected_trade_ids=(),
+            unreconciled_trade_ids=(),
+        )
 
     def run_cycle(self, requests: Sequence[PaperStrategyRequest]) -> PaperCycleResult:
         """Reconcile, evaluate each strategy, and submit only approved paper orders."""
+        self.recover_lifecycle()
         boot = self._services.reconciler.boot_reconcile(self._account.config.account_id)
         system_state = boot.result.resulting_system_state
-        entries_blocked = boot.result.entries_blocked
+        self._maybe_release_entry_freeze(reconcile_blocked=boot.result.entries_blocked)
+        entries_blocked = self._entries_are_blocked(boot.result.entries_blocked)
         outcomes: list[PaperStrategyOutcome] = []
         for request in requests:
             assert_paper_isolation(
@@ -241,11 +325,133 @@ class PaperRunner:
     def trade_manager(self) -> TradeManager:
         return self._services.trade_manager
 
+    @property
+    def last_recovery(self) -> PositionRecoveryResult:
+        return self._last_recovery
+
+    def recover_lifecycle(self) -> PositionRecoveryResult:
+        """Restore persisted positions and block entries on unresolved gaps.
+
+        Invariant 9: restart begins in recovery; new entries wait. Protective
+        stub IDs are local software coverage, not broker-resident PAPER stops.
+        """
+        if self._lifecycle_recovered:
+            return self._last_recovery
+        self._restore_persisted_freeze()
+        broker_by_trade: dict[str, list[PositionRecord]] = {}
+        for broker_position in self._services.broker.get_positions():
+            broker_by_trade.setdefault(broker_position.trade_id, []).append(
+                broker_position
+            )
+        restored: list[str] = []
+        alerts: list[LifecycleAlert] = []
+        unprotected: list[str] = []
+        unreconciled: list[str] = []
+        active: list[PositionLifecycleRecord] = []
+        for persisted in self._services.store.list_position_lifecycle():
+            if persisted.position.state is TradeState.CLOSED:
+                continue
+            active.append(persisted)
+            self._services.trade_manager.restore_position(persisted.position)
+            self._open_book[persisted.trade_id] = (
+                persisted.intent,
+                persisted.risk_decision,
+            )
+            restored.append(persisted.trade_id)
+        active_ids = {item.trade_id for item in active}
+        for persisted in active:
+            broker_legs = tuple(broker_by_trade.get(persisted.trade_id, ()))
+            for alert in _lifecycle_issues(persisted, broker_legs):
+                alerts.append(alert)
+                if alert.reason_code is ReasonCode.PROTECTIVE_COVERAGE_MISSING:
+                    unprotected.append(persisted.trade_id)
+                else:
+                    unreconciled.append(persisted.trade_id)
+            for order_id in persisted.exit_order_ids:
+                event = self._exit_order_event(order_id)
+                if event is None or event.state is OrderState.UNKNOWN:
+                    alerts.append(
+                        LifecycleAlert(
+                            trade_id=persisted.trade_id,
+                            reason_code=ReasonCode.UNKNOWN_ORDER_STATUS,
+                            detail=(
+                                "exit order status is unknown; replacement is "
+                                "blocked until reconciliation"
+                            ),
+                        )
+                    )
+                    unreconciled.append(persisted.trade_id)
+                    break
+            if persisted.position.state is TradeState.EXIT_PENDING and not any(
+                alert.trade_id == persisted.trade_id
+                and alert.reason_code is ReasonCode.UNKNOWN_ORDER_STATUS
+                for alert in alerts
+            ):
+                alerts.append(
+                    LifecycleAlert(
+                        trade_id=persisted.trade_id,
+                        reason_code=ReasonCode.UNKNOWN_ORDER_STATUS,
+                        detail=(
+                            "trade is EXIT_PENDING; new entries stay blocked until "
+                            "the in-flight exit reconciles"
+                        ),
+                    )
+                )
+                unreconciled.append(persisted.trade_id)
+            if persisted.position.protection_degraded:
+                alerts.append(
+                    LifecycleAlert(
+                        trade_id=persisted.trade_id,
+                        reason_code=ReasonCode.PROTECTION_DEGRADED,
+                        detail=(
+                            persisted.position.unprotected_reason
+                            or (
+                                "persisted PROTECTION_DEGRADED; PAPER has no "
+                                "broker-resident stop"
+                            )
+                        ),
+                    )
+                )
+        for trade_id in sorted(set(broker_by_trade) - active_ids):
+            alerts.append(
+                LifecycleAlert(
+                    trade_id=trade_id,
+                    reason_code=ReasonCode.UNRECONCILED_POSITION,
+                    detail="broker position has no persisted exit lifecycle",
+                )
+            )
+            unreconciled.append(trade_id)
+        unique_alerts = tuple(_unique_alerts(alerts))
+        persisted_freeze = self._services.store.get_entry_freeze()
+        entries_blocked = bool(unique_alerts) or (
+            persisted_freeze is not None and persisted_freeze.entries_blocked
+        )
+        if unique_alerts:
+            primary = unique_alerts[0]
+            self._ensure_entries_blocked(primary.reason_code, primary.detail)
+            self._audit_lifecycle_alerts(unique_alerts)
+        result = PositionRecoveryResult(
+            restored_trade_ids=tuple(restored),
+            entries_blocked=entries_blocked,
+            alerts=unique_alerts,
+            unprotected_trade_ids=tuple(dict.fromkeys(unprotected)),
+            unreconciled_trade_ids=tuple(dict.fromkeys(unreconciled)),
+        )
+        self._last_recovery = result
+        self._lifecycle_recovered = True
+        return result
+
+    def flush_lifecycle(self) -> None:
+        """Persist the in-memory open book (EOD / process halt)."""
+        for trade_id in tuple(self._open_book):
+            self._write_lifecycle(trade_id)
+
     def manage_exits(
         self, snapshots: Mapping[str, FeatureSnapshot]
     ) -> tuple[OrderEvent, ...]:
-        """Evaluate stops/time exits and submit opposite LIMIT orders."""
+        """Evaluate frozen exit policy and submit opposite LIMIT orders."""
         events: list[OrderEvent] = []
+        events.extend(self._resume_inflight_exits(snapshots))
         for position in self._services.trade_manager.list_positions():
             if position.state is not TradeState.OPEN:
                 continue
@@ -253,34 +459,239 @@ class PaperRunner:
             if book is None:
                 continue
             intent, decision = book
-            feature = snapshots.get(position.legs[0].contract.symbol)
+            diagnosis = self._diagnose_protection(position, intent, snapshots)
+            if diagnosis.kind is _ProtectionKind.MISSING_MONITOR:
+                events.extend(
+                    self._handle_missing_monitor(
+                        position, intent, decision, snapshots, diagnosis
+                    )
+                )
+                continue
+            if diagnosis.kind is _ProtectionKind.STALE:
+                self._handle_stale_protection(position, diagnosis)
+                continue
+            self._clear_protection_degraded(position)
+            leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
+            if leg_snapshots is None:
+                continue
+            feature = _monitor_snapshot(intent, leg_snapshots)
             if feature is None:
                 continue
             evaluation = self._services.trade_manager.evaluate_exit(
-                position.trade_id, feature, intent
+                position.trade_id,
+                feature,
+                intent,
+                leg_snapshots=leg_snapshots,
             )
+            if not evaluation.should_exit and evaluation.updated_policy is None:
+                continue
             updated = self._services.trade_manager.apply_exit_evaluation(
                 position.trade_id, evaluation
             )
+            self._write_lifecycle(position.trade_id)
             if updated.state is not TradeState.EXIT_PENDING:
                 continue
-            plan = self._exit_plan(intent, decision, updated, snapshots)
-            if plan is None:
-                continue
-            submit = self._services.oms.submit_plan(
-                plan,
-                strategy_id=intent.strategy_id,
-                account_id=self._account.config.account_id,
-            )
-            events.extend(submit.events)
-            for event in submit.events:
-                closed = self._services.trade_manager.apply_exit_order_event(
-                    event,
-                    capital_reservation_id=decision.capital_reservation_id,
-                )
-                if closed.state is TradeState.CLOSED:
-                    self._open_book.pop(position.trade_id, None)
+            events.extend(self._submit_exit(intent, decision, updated, snapshots))
         return tuple(events)
+
+    def run_review_slot(
+        self,
+        slot: ReviewSlot,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        session_date: date,
+    ) -> PaperReviewResult:
+        """Review persisted positional opens for one due slot. Idempotent.
+
+        HEDGE/ROLL emit a structured proposal and do not submit. Stops stay
+        software-only; this does not place a broker-resident protective order.
+        """
+        if self._services.store.has_review_slot_run(slot.slot_id, session_date):
+            return PaperReviewResult(
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                decisions=(),
+                slot_recorded=False,
+            )
+        decisions = self._review_positions(slot, snapshots, session_date=session_date)
+        inserted = self._services.store.record_review_slot_run(
+            slot_id=slot.slot_id,
+            session_date=session_date,
+            venue=slot.venue,
+            as_of=self._clock.now_utc(),
+        )
+        return PaperReviewResult(
+            slot_id=slot.slot_id,
+            session_date=session_date,
+            decisions=decisions,
+            slot_recorded=inserted,
+        )
+
+    def recorded_review_slots(
+        self, session_date: date
+    ) -> frozenset[tuple[date, ReviewSlotId]]:
+        """Slots already persisted for an IST session date."""
+        return frozenset(
+            (day, slot_id)
+            for slot_id, day in self._services.store.list_review_slot_runs(session_date)
+        )
+
+    def _review_positions(
+        self,
+        slot: ReviewSlot,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        session_date: date,
+    ) -> tuple[PositionReviewRecord, ...]:
+        now = self._clock.now_utc()
+        decisions: list[PositionReviewRecord] = []
+        for position in self._services.trade_manager.list_positions():
+            book = self._open_book.get(position.trade_id)
+            if book is None:
+                continue
+            intent, decision = book
+            holding = _holding_style(intent)
+            if holding is not HoldingStyle.POSITIONAL:
+                continue
+            if not _matches_slot_venue(position, slot.venue):
+                continue
+            persisted = self._services.store.get_position_lifecycle(position.trade_id)
+            prior = persisted.reviews if persisted is not None else ()
+            if any(
+                item.slot_id is slot.slot_id and item.session_date == session_date
+                for item in prior
+            ):
+                continue
+            diagnosis = self._diagnose_protection(position, intent, snapshots)
+            if diagnosis.kind != _ProtectionKind.OK:
+                if diagnosis.kind == _ProtectionKind.MISSING_MONITOR:
+                    self._handle_missing_monitor(
+                        position, intent, decision, snapshots, diagnosis
+                    )
+                else:
+                    self._handle_stale_protection(position, diagnosis)
+                review = _unavailable_review(
+                    trade_id=position.trade_id,
+                    policy_id=position.exit_policy.policy_id,
+                    slot_id=slot.slot_id,
+                    session_date=session_date,
+                    review_id=self._ids.new_id("REV"),
+                    now=now,
+                    reason_code=diagnosis.reason_code,
+                    detail=diagnosis.detail,
+                )
+                self._write_lifecycle(position.trade_id, extra_reviews=(review,))
+                decisions.append(review)
+                continue
+            self._clear_protection_degraded(position)
+            leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
+            feature = (
+                _monitor_snapshot(intent, leg_snapshots)
+                if leg_snapshots is not None
+                else None
+            )
+            if feature is None:
+                review = _unavailable_review(
+                    trade_id=position.trade_id,
+                    policy_id=position.exit_policy.policy_id,
+                    slot_id=slot.slot_id,
+                    session_date=session_date,
+                    review_id=self._ids.new_id("REV"),
+                    now=now,
+                    reason_code=ReasonCode.UNPROTECTED_POSITION,
+                    detail=(
+                        "monitor leg quote missing; software stop cannot evaluate "
+                        "and PAPER has no broker-resident stop"
+                    ),
+                )
+                self._write_lifecycle(position.trade_id, extra_reviews=(review,))
+                decisions.append(review)
+                continue
+            evaluation = self._review_engine.evaluate(
+                position,
+                intent,
+                feature,
+                now=now,
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                holding_style=holding,
+                prior_reviews=prior,
+                leg_snapshots=leg_snapshots,
+            )
+            if evaluation.reason_code is ReasonCode.REVIEW_DUPLICATE_SLOT:
+                continue
+            submitted = self._apply_review(
+                evaluation,
+                intent=intent,
+                decision=decision,
+                position=position,
+                snapshots=snapshots,
+            )
+            review = _stamp_review(
+                evaluation,
+                trade_id=position.trade_id,
+                policy_id=position.exit_policy.policy_id,
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                review_id=self._ids.new_id("REV"),
+                submitted=submitted,
+                now=now,
+            )
+            self._write_lifecycle(position.trade_id, extra_reviews=(review,))
+            decisions.append(review)
+        return tuple(decisions)
+
+    def _apply_review(
+        self,
+        evaluation: ReviewEvaluation,
+        *,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> bool:
+        if evaluation.action is ReviewAction.TIGHTEN_STOP:
+            policy = evaluation.updated_policy
+            if policy is None:
+                return False
+            assert_stop_not_wider(
+                position.exit_policy, policy, monitor_leg(intent).side
+            )
+            self._services.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.NONE,
+                    reason_code=ReasonCode.OK,
+                    detail=evaluation.detail,
+                    updated_policy=policy,
+                ),
+            )
+            return False
+        if evaluation.action.is_proposal or evaluation.action is ReviewAction.HOLD:
+            return False
+        if not evaluation.should_submit_exit:
+            return False
+        self._services.trade_manager.apply_exit_evaluation(
+            position.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail=evaluation.detail,
+                updated_policy=evaluation.updated_policy,
+            ),
+        )
+        pending = self._services.trade_manager.get_position(position.trade_id)
+        if pending is None:
+            return False
+        events = self._submit_exit(
+            intent,
+            decision,
+            pending,
+            snapshots,
+            quantity_contracts=evaluation.exit_quantity_contracts,
+            remaining_stays_open=evaluation.action is ReviewAction.PARTIAL_EXIT,
+        )
+        return bool(events)
 
     def _exit_plan(
         self,
@@ -288,12 +699,24 @@ class PaperRunner:
         decision: RiskDecision,
         position: PositionState,
         snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        quantity_contracts: int | None = None,
+        allow_partial_structure: bool = False,
     ) -> OrderPlan | None:
         now = self._clock.now_utc()
         orders: list[PlannedOrder] = []
         for leg in position.legs:
             snapshot = snapshots.get(leg.contract.symbol)
             if snapshot is None:
+                if allow_partial_structure:
+                    continue
+                return None
+            qty = (
+                quantity_contracts
+                if quantity_contracts is not None
+                else leg.quantity_contracts
+            )
+            if qty <= 0 or qty > leg.quantity_contracts:
                 return None
             exit_side = Side.SELL if leg.side is Side.BUY else Side.BUY
             limit = (
@@ -302,7 +725,12 @@ class PaperRunner:
             if limit is None:
                 return None
             internal_order_id = self._ids.new_id("ORD")
-            exit_leg_id = f"{leg.leg_id}-exit"
+            partial = qty != leg.quantity_contracts
+            exit_leg_id = (
+                f"{leg.leg_id}-review-partial-{qty}"
+                if partial
+                else f"{leg.leg_id}-exit"
+            )
             orders.append(
                 PlannedOrder(
                     plan_leg_id=exit_leg_id,
@@ -317,7 +745,7 @@ class PaperRunner:
                             intent_id=intent.intent_id,
                             leg_id=exit_leg_id,
                             side=exit_side.value,
-                            quantity_contracts=leg.quantity_contracts,
+                            quantity_contracts=qty,
                         ),
                         intent_id=intent.intent_id,
                         risk_decision_id=decision.decision_id,
@@ -331,7 +759,7 @@ class PaperRunner:
                         side=exit_side,
                         order_type=OrderType.LIMIT,
                         time_in_force=TimeInForce.DAY,
-                        quantity_contracts=leg.quantity_contracts,
+                        quantity_contracts=qty,
                         limit_price=limit,
                     ),
                     plan_state=OrderPlanState.RISK_APPROVED,
@@ -351,6 +779,609 @@ class PaperRunner:
             expires_at=now + timedelta(minutes=5),
         )
 
+    def _resume_inflight_exits(
+        self, snapshots: Mapping[str, FeatureSnapshot]
+    ) -> tuple[OrderEvent, ...]:
+        events: list[OrderEvent] = []
+        for position in self._services.trade_manager.list_positions():
+            if position.state not in {TradeState.EXIT_PENDING, TradeState.CLOSING}:
+                continue
+            book = self._open_book.get(position.trade_id)
+            if book is None:
+                continue
+            intent, decision = book
+            record = self._services.store.get_position_lifecycle(position.trade_id)
+            if record is not None and record.exit_order_ids:
+                events.extend(self._adopt_existing_exit_orders(record))
+                continue
+            events.extend(self._submit_exit(intent, decision, position, snapshots))
+        return tuple(events)
+
+    def _submit_exit(
+        self,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        quantity_contracts: int | None = None,
+        remaining_stays_open: bool = False,
+        allow_partial_structure: bool = False,
+    ) -> tuple[OrderEvent, ...]:
+        record = self._services.store.get_position_lifecycle(position.trade_id)
+        live = self._services.trade_manager.get_position(position.trade_id)
+        if (
+            record is not None
+            and record.exit_order_ids
+            and live is not None
+            and live.state in {TradeState.EXIT_PENDING, TradeState.CLOSING}
+        ):
+            return self._adopt_existing_exit_orders(
+                record, remaining_stays_open=remaining_stays_open
+            )
+        plan = self._exit_plan(
+            intent,
+            decision,
+            position,
+            snapshots,
+            quantity_contracts=quantity_contracts,
+            allow_partial_structure=allow_partial_structure,
+        )
+        if plan is None:
+            return ()
+        try:
+            submit = self._services.oms.submit_plan(
+                plan,
+                strategy_id=intent.strategy_id,
+                account_id=self._account.config.account_id,
+            )
+        except OrderFrozenError:
+            self._freeze_unknown_exit(position.trade_id)
+            return ()
+        order_ids = tuple(event.identity.internal_order_id for event in submit.events)
+        persist_ids: tuple[str, ...] = () if remaining_stays_open else order_ids
+        self._write_lifecycle(position.trade_id, exit_order_ids=order_ids)
+        for event in submit.events:
+            if event.state is OrderState.UNKNOWN:
+                self._freeze_unknown_exit(position.trade_id)
+                return submit.events
+            self._services.trade_manager.apply_exit_order_event(
+                event,
+                capital_reservation_id=decision.capital_reservation_id,
+                remaining_stays_open=remaining_stays_open,
+            )
+        self._write_lifecycle(position.trade_id, exit_order_ids=persist_ids)
+        closed = self._services.trade_manager.get_position(position.trade_id)
+        if closed is not None and closed.state is TradeState.CLOSED:
+            self._open_book.pop(position.trade_id, None)
+        return submit.events
+
+    def _adopt_existing_exit_orders(
+        self,
+        record: PositionLifecycleRecord,
+        *,
+        remaining_stays_open: bool = False,
+    ) -> tuple[OrderEvent, ...]:
+        events: list[OrderEvent] = []
+        decision = record.risk_decision
+        for order_id in record.exit_order_ids:
+            event = self._exit_order_event(order_id)
+            if event is None or event.state is OrderState.UNKNOWN:
+                self._freeze_unknown_exit(record.trade_id)
+                return tuple(events)
+            events.append(event)
+            if event.state in {
+                OrderState.FILLED,
+                OrderState.REJECTED,
+                OrderState.CANCELLED,
+                OrderState.EXPIRED,
+            }:
+                self._services.trade_manager.apply_exit_order_event(
+                    event,
+                    capital_reservation_id=decision.capital_reservation_id,
+                    remaining_stays_open=remaining_stays_open,
+                )
+        persist_ids = () if remaining_stays_open else record.exit_order_ids
+        self._write_lifecycle(record.trade_id, exit_order_ids=persist_ids)
+        closed = self._services.trade_manager.get_position(record.trade_id)
+        if closed is not None and closed.state is TradeState.CLOSED:
+            self._open_book.pop(record.trade_id, None)
+        return tuple(events)
+
+    def _exit_order_event(self, order_id: str) -> OrderEvent | None:
+        broker_event = self._services.broker.get_order(order_id)
+        if broker_event is not None:
+            return broker_event
+        latest: OrderEvent | None = None
+        for stored in self._services.store.read_events():
+            if stored.event_type is not TradingEventType.ORDER_EVENT:
+                continue
+            event = stored.deserialize()
+            if not isinstance(event, OrderEvent):
+                continue
+            if event.identity.internal_order_id != order_id:
+                continue
+            if latest is None or event.received_at >= latest.received_at:
+                latest = event
+        return latest
+
+    def _exit_leg_snapshots(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> dict[str, FeatureSnapshot] | None:
+        mapping: dict[str, FeatureSnapshot] = {}
+        required_legs = position.legs
+        if position.exit_policy.scope is ExitScope.STRATEGY_PNL:
+            position_ids = {leg.leg_id for leg in position.legs}
+            if any(leg.leg_id not in position_ids for leg in intent.legs):
+                return None
+        for leg in required_legs:
+            snapshot = snapshots.get(leg.contract.symbol)
+            if snapshot is None or snapshot.quality.state.blocks_new_exposure:
+                return None
+            mapping[leg.leg_id] = snapshot
+        return mapping
+
+    def _write_lifecycle(
+        self,
+        trade_id: str,
+        *,
+        exit_order_ids: tuple[str, ...] | None = None,
+        extra_reviews: tuple[PositionReviewRecord, ...] = (),
+    ) -> None:
+        existing = self._services.store.get_position_lifecycle(trade_id)
+        position = self._services.trade_manager.get_position(trade_id)
+        book = self._open_book.get(trade_id)
+        if book is not None:
+            intent, decision = book
+        elif existing is not None:
+            intent, decision = existing.intent, existing.risk_decision
+        else:
+            return
+        if position is None:
+            if existing is None:
+                return
+            position = existing.position
+        ids = (
+            exit_order_ids
+            if exit_order_ids is not None
+            else (existing.exit_order_ids if existing is not None else ())
+        )
+        prior_reviews = existing.reviews if existing is not None else ()
+        record = PositionLifecycleRecord(
+            trade_id=trade_id,
+            position=position,
+            intent=intent,
+            risk_decision=decision,
+            holding_style=_holding_style(intent),
+            exit_order_ids=ids,
+            reviews=(*prior_reviews, *extra_reviews),
+            as_of=position.as_of,
+        )
+        if existing is not None and _lifecycle_unchanged(existing, record):
+            return
+        self._services.store.upsert_position_lifecycle(
+            record,
+            event_id=self._ids.new_id("PLC"),
+        )
+
+    def _freeze_unknown_exit(self, trade_id: str) -> None:
+        self._ensure_entries_blocked(
+            ReasonCode.UNKNOWN_ORDER_STATUS,
+            "exit order status is unknown; replacement is blocked until reconciliation",
+        )
+        self._audit_lifecycle_alerts(
+            (
+                LifecycleAlert(
+                    trade_id=trade_id,
+                    reason_code=ReasonCode.UNKNOWN_ORDER_STATUS,
+                    detail=(
+                        "exit order status is unknown; replacement is blocked "
+                        "until reconciliation"
+                    ),
+                ),
+            )
+        )
+
+    def _audit_lifecycle_alerts(self, alerts: tuple[LifecycleAlert, ...]) -> None:
+        now = self._clock.now_utc()
+        existing = {
+            (event.scope, event.reason_code)
+            for stored in self._services.store.read_events()
+            if stored.event_type is TradingEventType.RECONCILIATION_EVENT
+            for event in (_as_reconciliation(stored.deserialize()),)
+            if event is not None and not event.is_resolved
+        }
+        for alert in alerts:
+            scope = f"trade/{alert.trade_id}/lifecycle"
+            if (scope, alert.reason_code) in existing:
+                continue
+            difference = (
+                DifferenceClass.MISSING_LOCAL_EVENT
+                if "no persisted" in alert.detail
+                else DifferenceClass.UNEXPECTED_BROKER_STATE
+            )
+            event = ReconciliationEvent(
+                event_id=self._ids.new_id("REC"),
+                scope=f"trade/{alert.trade_id}/lifecycle",
+                trigger=ReconciliationTrigger.BOOT,
+                expected_local_ref=alert.trade_id,
+                difference_class=difference,
+                severity=Severity.CRITICAL,
+                reason_code=alert.reason_code,
+                repair_action=(
+                    "operator review; block new PAPER entries until the "
+                    "position lifecycle matches broker state"
+                ),
+                entries_blocked=True,
+                detected_at=now,
+            )
+            self._services.store.append(
+                TradingEventType.RECONCILIATION_EVENT,
+                event,
+                event_id=event.event_id,
+            )
+
+    def _restore_persisted_freeze(self) -> None:
+        persisted = self._services.store.get_entry_freeze()
+        if persisted is None or not persisted.entries_blocked:
+            return
+        if not self._services.controls.blocks_entry():
+            self._services.controls.freeze_entries(
+                actor="paper-lifecycle",
+                scope="paper/entry-freeze",
+                trigger=Trigger.RECONCILIATION,
+                incident_id=self._ids.new_id("INC"),
+            )
+
+    def _entries_are_blocked(self, reconcile_blocked: bool) -> bool:
+        persisted = self._services.store.get_entry_freeze()
+        persisted_blocked = persisted is not None and persisted.entries_blocked
+        derived = self._derived_block_reason() is not None
+        return (
+            reconcile_blocked
+            or persisted_blocked
+            or derived
+            or self._services.controls.blocks_entry()
+        )
+
+    def _derived_block_reason(self) -> tuple[ReasonCode, str] | None:
+        for position in self._services.trade_manager.list_positions():
+            if position.protection_degraded or position.software_stop_unavailable:
+                return (
+                    ReasonCode.PROTECTION_DEGRADED,
+                    position.unprotected_reason
+                    or (
+                        "required quotes are stale; software stop cannot evaluate "
+                        "and PAPER has no broker-resident stop"
+                    ),
+                )
+            if position.unprotected_reason:
+                return (ReasonCode.UNPROTECTED_POSITION, position.unprotected_reason)
+            if position.state is TradeState.EXIT_PENDING:
+                return (
+                    ReasonCode.UNKNOWN_ORDER_STATUS,
+                    "trade is EXIT_PENDING; new entries stay blocked until "
+                    "the in-flight exit reconciles",
+                )
+            if position.state is TradeState.REPAIR_REQUIRED:
+                return (
+                    ReasonCode.UNRECONCILED_POSITION,
+                    "partial or incomplete multi-leg fill requires repair",
+                )
+            if (
+                position.state.requires_protective_coverage
+                and not position.protective_order_ids
+            ):
+                return (
+                    ReasonCode.UNPROTECTED_POSITION,
+                    "open position has no local protective stub coverage; "
+                    "PAPER stops are software-only",
+                )
+        lifecycle_ids: set[str] = set()
+        for persisted in self._services.store.list_position_lifecycle():
+            if persisted.position.state is TradeState.CLOSED:
+                continue
+            lifecycle_ids.add(persisted.trade_id)
+            if persisted.position.protection_degraded:
+                return (
+                    ReasonCode.PROTECTION_DEGRADED,
+                    persisted.position.unprotected_reason
+                    or (
+                        "required quotes are stale; software stop cannot evaluate "
+                        "and PAPER has no broker-resident stop"
+                    ),
+                )
+            if persisted.position.state is TradeState.EXIT_PENDING:
+                return (
+                    ReasonCode.UNKNOWN_ORDER_STATUS,
+                    "trade is EXIT_PENDING; new entries stay blocked until "
+                    "the in-flight exit reconciles",
+                )
+            for order_id in persisted.exit_order_ids:
+                event = self._exit_order_event(order_id)
+                if event is None or event.state is OrderState.UNKNOWN:
+                    return (
+                        ReasonCode.UNKNOWN_ORDER_STATUS,
+                        "exit order status is unknown; replacement is blocked "
+                        "until reconciliation",
+                    )
+        broker_ids = {item.trade_id for item in self._services.broker.get_positions()}
+        extra = broker_ids - lifecycle_ids
+        if extra:
+            return (
+                ReasonCode.UNRECONCILED_POSITION,
+                "broker position has no persisted exit lifecycle",
+            )
+        return None
+
+    def _ensure_entries_blocked(self, reason: ReasonCode, detail: str) -> None:
+        if not self._services.controls.blocks_entry():
+            self._services.controls.freeze_entries(
+                actor="paper-lifecycle",
+                scope="paper/entry-freeze",
+                trigger=Trigger.RECONCILIATION,
+                incident_id=self._ids.new_id("INC"),
+            )
+        record = EntryFreezeRecord(
+            entries_blocked=True,
+            reason_code=reason,
+            detail=detail,
+            updated_at=self._clock.now_utc(),
+        )
+        self._services.store.upsert_entry_freeze(
+            record,
+            event_id=self._ids.new_id("FRZ"),
+        )
+        self._last_recovery = PositionRecoveryResult(
+            restored_trade_ids=self._last_recovery.restored_trade_ids,
+            entries_blocked=True,
+            alerts=self._last_recovery.alerts,
+            unprotected_trade_ids=self._last_recovery.unprotected_trade_ids,
+            unreconciled_trade_ids=self._last_recovery.unreconciled_trade_ids,
+        )
+
+    def _maybe_release_entry_freeze(self, *, reconcile_blocked: bool) -> None:
+        if reconcile_blocked:
+            return
+        controls = self._services.controls
+        if controls.state.global_halt or controls.state.daily_loss_kill_switch:
+            return
+        derived = self._derived_block_reason()
+        if derived is not None:
+            self._ensure_entries_blocked(derived[0], derived[1])
+            return
+        persisted = self._services.store.get_entry_freeze()
+        if persisted is None or not persisted.entries_blocked:
+            return
+        released = EntryFreezeRecord(
+            entries_blocked=False,
+            reason_code=None,
+            detail=None,
+            updated_at=self._clock.now_utc(),
+        )
+        self._services.store.upsert_entry_freeze(
+            released,
+            event_id=self._ids.new_id("FRZ"),
+        )
+        if controls.state.entry_frozen:
+            controls.release_entry_freeze(
+                actor="paper-lifecycle",
+                scope="paper/entry-freeze",
+                trigger=Trigger.RECONCILIATION,
+                incident_id=self._ids.new_id("INC"),
+            )
+        self._last_recovery = PositionRecoveryResult(
+            restored_trade_ids=self._last_recovery.restored_trade_ids,
+            entries_blocked=False,
+            alerts=(),
+            unprotected_trade_ids=self._last_recovery.unprotected_trade_ids,
+            unreconciled_trade_ids=self._last_recovery.unreconciled_trade_ids,
+        )
+
+    def _diagnose_protection(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> _ProtectionDiagnosis:
+        watched = monitor_leg(intent)
+        monitor_snap = snapshots.get(watched.contract.symbol)
+        if monitor_snap is None:
+            return _ProtectionDiagnosis(
+                kind=_ProtectionKind.MISSING_MONITOR,
+                reason_code=ReasonCode.UNPROTECTED_POSITION,
+                detail=(
+                    "monitor leg quote missing; software stop cannot evaluate "
+                    "and PAPER has no broker-resident stop"
+                ),
+            )
+        if self._quote_is_stale(monitor_snap):
+            return _ProtectionDiagnosis(
+                kind=_ProtectionKind.STALE,
+                reason_code=ReasonCode.PROTECTION_DEGRADED,
+                detail=(
+                    "required quotes are stale; software stop cannot evaluate "
+                    "and PAPER has no broker-resident stop"
+                ),
+            )
+        if position.exit_policy.scope is ExitScope.STRATEGY_PNL:
+            for leg in position.legs:
+                snap = snapshots.get(leg.contract.symbol)
+                if snap is None:
+                    return _ProtectionDiagnosis(
+                        kind=_ProtectionKind.MISSING_MONITOR,
+                        reason_code=ReasonCode.UNPROTECTED_POSITION,
+                        detail=(
+                            "structure leg quote missing; software stop cannot "
+                            "evaluate and PAPER has no broker-resident stop"
+                        ),
+                    )
+                if self._quote_is_stale(snap):
+                    return _ProtectionDiagnosis(
+                        kind=_ProtectionKind.STALE,
+                        reason_code=ReasonCode.PROTECTION_DEGRADED,
+                        detail=(
+                            "required quotes are stale; software stop cannot "
+                            "evaluate and PAPER has no broker-resident stop"
+                        ),
+                    )
+        return _ProtectionDiagnosis(
+            kind=_ProtectionKind.OK,
+            reason_code=ReasonCode.OK,
+            detail="protection quotes are fresh",
+        )
+
+    def _quote_is_stale(self, snapshot: FeatureSnapshot) -> bool:
+        if snapshot.quality.state.blocks_new_exposure:
+            return True
+        max_age_ms = self._account.config.freshness.quote_max_age_ms
+        if max_age_ms is None:
+            return True
+        age = snapshot.times.age_at(self._clock.now_utc())
+        return int(age.total_seconds() * 1000) > max_age_ms
+
+    def _handle_missing_monitor(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        snapshots: Mapping[str, FeatureSnapshot],
+        diagnosis: _ProtectionDiagnosis,
+    ) -> tuple[OrderEvent, ...]:
+        self._mark_protection(
+            position,
+            degraded=False,
+            unavailable=True,
+            reason=diagnosis.detail,
+        )
+        self._ensure_entries_blocked(diagnosis.reason_code, diagnosis.detail)
+        self._audit_lifecycle_alerts(
+            (
+                LifecycleAlert(
+                    trade_id=position.trade_id,
+                    reason_code=diagnosis.reason_code,
+                    detail=diagnosis.detail,
+                ),
+            )
+        )
+        resolution = self._risk_policy.config.missing_monitor_resolution
+        if resolution is not MissingMonitorResolution.FLATTEN_REMAINING:
+            return ()
+        quoted = {
+            symbol: snap
+            for symbol, snap in snapshots.items()
+            if any(leg.contract.symbol == symbol for leg in position.legs)
+        }
+        if not quoted:
+            return ()
+        pending = self._services.trade_manager.apply_exit_evaluation(
+            position.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.UNPROTECTED_POSITION,
+                detail=diagnosis.detail,
+            ),
+        )
+        return self._submit_exit(
+            intent,
+            decision,
+            pending,
+            quoted,
+            allow_partial_structure=True,
+        )
+
+    def _handle_stale_protection(
+        self,
+        position: PositionState,
+        diagnosis: _ProtectionDiagnosis,
+    ) -> None:
+        now = self._clock.now_utc()
+        since = position.protection_degraded_since or now
+        self._mark_protection(
+            position,
+            degraded=True,
+            unavailable=True,
+            reason=diagnosis.detail,
+            since=since,
+        )
+        self._ensure_entries_blocked(diagnosis.reason_code, diagnosis.detail)
+        self._audit_lifecycle_alerts(
+            (
+                LifecycleAlert(
+                    trade_id=position.trade_id,
+                    reason_code=diagnosis.reason_code,
+                    detail=diagnosis.detail,
+                ),
+            )
+        )
+        escalate_after = (
+            self._account.config.freshness.protection_stale_escalate_after_ms
+        )
+        if escalate_after is None:
+            return
+        age_ms = int((now - since).total_seconds() * 1000)
+        if age_ms < escalate_after:
+            return
+        self._audit_lifecycle_alerts(
+            (
+                LifecycleAlert(
+                    trade_id=position.trade_id,
+                    reason_code=ReasonCode.PROTECTION_DEGRADED,
+                    detail=(
+                        "stale protection did not recover within "
+                        f"{escalate_after}ms; software stop remains unavailable "
+                        "and is not broker-resident"
+                    ),
+                ),
+            )
+        )
+
+    def _clear_protection_degraded(self, position: PositionState) -> None:
+        if (
+            not position.protection_degraded
+            and not position.software_stop_unavailable
+            and position.unprotected_reason is None
+        ):
+            return
+        cleared = position.model_copy(
+            update={
+                "protection_degraded": False,
+                "software_stop_unavailable": False,
+                "protection_degraded_since": None,
+                "unprotected_reason": None,
+                "as_of": self._clock.now_utc(),
+            }
+        )
+        self._services.trade_manager.restore_position(cleared)
+        self._write_lifecycle(position.trade_id)
+
+    def _mark_protection(
+        self,
+        position: PositionState,
+        *,
+        degraded: bool,
+        unavailable: bool,
+        reason: str,
+        since: datetime | None = None,
+    ) -> None:
+        now = self._clock.now_utc()
+        updated = position.model_copy(
+            update={
+                "protection_degraded": degraded,
+                "software_stop_unavailable": unavailable,
+                "protection_degraded_since": (
+                    since or position.protection_degraded_since or now
+                ),
+                "unprotected_reason": reason,
+                "as_of": now,
+            }
+        )
+        self._services.trade_manager.restore_position(updated)
+        self._write_lifecycle(position.trade_id)
+
     def _run_strategy(
         self,
         request: PaperStrategyRequest,
@@ -365,6 +1396,7 @@ class PaperRunner:
                 entries_blocked=entries_blocked,
                 feature_snapshot=request.underlying,
                 safety_controls=self._services.controls,
+                open_positions=self._services.trade_manager.list_positions(),
                 strategy_id=request.strategy_id,
                 max_clock_drift_ms=self._account.config.freshness.max_clock_drift_ms,
             )
@@ -557,22 +1589,31 @@ class PaperRunner:
             strategy_id=intent.strategy_id,
             account_id=self._account.config.account_id,
         )
+        filled = False
         for event in submit.events:
-            if event.state is OrderState.FILLED:
-                position = self._services.trade_manager.apply_order_event(
-                    event,
-                    intent=intent,
-                    capital_reservation_id=risk.capital_reservation_id,
-                )
-                if (
+            if event.state not in {OrderState.FILLED, OrderState.PARTIAL}:
+                continue
+            position = self._services.trade_manager.apply_order_event(
+                event,
+                intent=intent,
+                capital_reservation_id=risk.capital_reservation_id,
+            )
+            filled = True
+            if (
+                event.state is OrderState.FILLED
+                and (
                     position.state is TradeState.OPENING
                     or position.state.requires_protective_coverage
-                ) and plan.protective_orders:
-                    self._services.trade_manager.register_protective_orders(
-                        trade_id,
-                        tuple(stub.stub_id for stub in plan.protective_orders),
-                    )
-                self._open_book[trade_id] = (intent, risk)
+                )
+                and plan.protective_orders
+            ):
+                self._services.trade_manager.register_protective_orders(
+                    trade_id,
+                    tuple(stub.stub_id for stub in plan.protective_orders),
+                )
+            self._open_book[trade_id] = (intent, risk)
+        if filled:
+            self._write_lifecycle(trade_id)
         return submit.events
 
     def _publish_quotes(
@@ -626,6 +1667,11 @@ def _priced_snapshot(
 def _leg_snapshots(
     intent: TradeIntent, request: PaperStrategyRequest
 ) -> dict[str, FeatureSnapshot]:
+    """Map each intent leg to its own candidate quote snapshot.
+
+    Do not copy `intent.snapshot_id` onto option legs: that destroys quote
+    provenance. Layer 2 validates freshness, skew and identity separately.
+    """
     by_symbol = {snap.contract.symbol: snap for snap in request.candidates}
     mapping: dict[str, FeatureSnapshot] = {}
     for leg in intent.legs:
@@ -641,3 +1687,192 @@ def _versions_from(account_config: LoadedConfig) -> Versions:
         config_version=account_config.version,
         config_checksum=account_config.checksum,
     )
+
+
+def _holding_style(intent: TradeIntent) -> HoldingStyle:
+    if intent.exit_template.time_exit is not None:
+        return HoldingStyle.INTRADAY
+    return HoldingStyle.POSITIONAL
+
+
+def _monitor_snapshot(
+    intent: TradeIntent, leg_snapshots: Mapping[str, FeatureSnapshot]
+) -> FeatureSnapshot | None:
+    watched = monitor_leg(intent)
+    return leg_snapshots.get(watched.leg_id)
+
+
+def _lifecycle_unchanged(
+    existing: PositionLifecycleRecord, updated: PositionLifecycleRecord
+) -> bool:
+    comparable = existing.position.model_copy(update={"as_of": updated.position.as_of})
+    return (
+        comparable == updated.position
+        and existing.intent == updated.intent
+        and existing.risk_decision == updated.risk_decision
+        and existing.holding_style == updated.holding_style
+        and existing.exit_order_ids == updated.exit_order_ids
+        and existing.reviews == updated.reviews
+    )
+
+
+def _lifecycle_issues(
+    record: PositionLifecycleRecord,
+    broker_legs: tuple[PositionRecord, ...],
+) -> tuple[LifecycleAlert, ...]:
+    alerts: list[LifecycleAlert] = []
+    position = record.position
+    if (
+        position.state.requires_protective_coverage
+        and not position.protective_order_ids
+    ):
+        alerts.append(
+            LifecycleAlert(
+                trade_id=record.trade_id,
+                reason_code=ReasonCode.PROTECTIVE_COVERAGE_MISSING,
+                detail=(
+                    "open position has no local protective stub coverage; "
+                    "PAPER stops are software-only"
+                ),
+            )
+        )
+    if position.state is TradeState.REPAIR_REQUIRED:
+        alerts.append(
+            LifecycleAlert(
+                trade_id=record.trade_id,
+                reason_code=ReasonCode.PARTIAL_FILL_UNREPAIRED,
+                detail="partial or incomplete multi-leg fill requires repair",
+            )
+        )
+    elif len(position.legs) != len(record.intent.legs):
+        alerts.append(
+            LifecycleAlert(
+                trade_id=record.trade_id,
+                reason_code=ReasonCode.PARTIAL_FILL_UNREPAIRED,
+                detail="persisted legs do not match the frozen intent structure",
+            )
+        )
+    local_keys = {
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in position.legs
+    }
+    broker_keys = {
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in broker_legs
+    }
+    if local_keys != broker_keys:
+        alerts.append(
+            LifecycleAlert(
+                trade_id=record.trade_id,
+                reason_code=ReasonCode.UNRECONCILED_POSITION,
+                detail="persisted position legs do not match PAPER broker state",
+            )
+        )
+    return tuple(alerts)
+
+
+def _unique_alerts(alerts: list[LifecycleAlert]) -> tuple[LifecycleAlert, ...]:
+    seen: set[tuple[str, str, str]] = set()
+    unique: list[LifecycleAlert] = []
+    for alert in alerts:
+        key = (alert.trade_id, alert.reason_code.value, alert.detail)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(alert)
+    return tuple(unique)
+
+
+def _matches_slot_venue(position: PositionState, venue: Exchange) -> bool:
+    nse = {Exchange.NSE, Exchange.NFO}
+    for leg in position.legs:
+        if venue is Exchange.MCX:
+            if leg.contract.exchange is not Exchange.MCX:
+                return False
+        elif leg.contract.exchange not in nse:
+            return False
+    return True
+
+
+def _stamp_review(
+    evaluation: ReviewEvaluation,
+    *,
+    trade_id: str,
+    policy_id: str,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    review_id: str,
+    submitted: bool,
+    now: datetime,
+) -> PositionReviewRecord:
+    tightened = (
+        evaluation.updated_policy.stop_price
+        if evaluation.action is ReviewAction.TIGHTEN_STOP
+        and evaluation.updated_policy is not None
+        else None
+    )
+    return PositionReviewRecord(
+        review_id=review_id,
+        trade_id=trade_id,
+        slot_id=slot_id,
+        session_date=session_date,
+        action=evaluation.action,
+        reason_code=evaluation.reason_code,
+        detail=evaluation.detail,
+        submitted=submitted and not evaluation.action.is_proposal,
+        frozen_policy_id=policy_id,
+        tightened_stop_price=tightened,
+        exit_quantity_contracts=evaluation.exit_quantity_contracts,
+        as_of=now,
+    )
+
+
+def _hold_unavailable_review(
+    *,
+    trade_id: str,
+    policy_id: str,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    review_id: str,
+    now: datetime,
+) -> PositionReviewRecord:
+    return _unavailable_review(
+        trade_id=trade_id,
+        policy_id=policy_id,
+        slot_id=slot_id,
+        session_date=session_date,
+        review_id=review_id,
+        now=now,
+        reason_code=ReasonCode.UNPROTECTED_POSITION,
+        detail=(
+            "monitor leg quote missing; software stop cannot evaluate "
+            "and PAPER has no broker-resident stop"
+        ),
+    )
+
+
+def _unavailable_review(
+    *,
+    trade_id: str,
+    policy_id: str,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    review_id: str,
+    now: datetime,
+    reason_code: ReasonCode,
+    detail: str,
+) -> PositionReviewRecord:
+    return PositionReviewRecord(
+        review_id=review_id,
+        trade_id=trade_id,
+        slot_id=slot_id,
+        session_date=session_date,
+        action=ReviewAction.HOLD,
+        reason_code=reason_code,
+        detail=detail,
+        submitted=False,
+        frozen_policy_id=policy_id,
+        as_of=now,
+    )
+
+
+def _as_reconciliation(payload: object) -> ReconciliationEvent | None:
+    return payload if isinstance(payload, ReconciliationEvent) else None

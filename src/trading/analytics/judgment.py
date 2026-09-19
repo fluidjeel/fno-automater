@@ -1,4 +1,4 @@
-"""Offline judgment harness: label should_enter/should_pass from MAE/MFE − charges."""
+"""Offline judgment harness: label should_enter/should_pass from MAE/MFE - charges."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from trading.domain.contracts.evaluation import (
     JudgmentSignalResult,
 )
 from trading.domain.contracts.identification import ConfidenceKind
-from trading.domain.primitives import Currency, Money
+from trading.domain.primitives import Money
 
 __all__ = ["JudgmentError", "evaluate_judgment", "label_signal"]
 
@@ -35,9 +35,7 @@ def label_signal(
     net_mfe = signal.mfe.amount - charges
     if net_mfe < thresholds.min_net_mfe_amount:
         return False
-    if thresholds.require_mfe_beats_mae and net_mfe <= signal.mae.amount:
-        return False
-    return True
+    return not (thresholds.require_mfe_beats_mae and net_mfe <= signal.mae.amount)
 
 
 def evaluate_judgment(
@@ -50,9 +48,7 @@ def evaluate_judgment(
     """Score offline enter/pass labels and desk precision/capture/Brier."""
     if not package.experiment.parameters_frozen:
         raise JudgmentError("unfrozen experiment cannot be judged")
-    charges_per_lot = fill_model.charges_per_lot.require(
-        "fill_model.charges_per_lot"
-    )
+    charges_per_lot = fill_model.charges_per_lot.require("fill_model.charges_per_lot")
     currency = thresholds.currency
 
     rows: list[JudgmentSignalResult] = []
@@ -62,7 +58,7 @@ def evaluate_judgment(
             charges_per_lot=charges_per_lot,
             thresholds=thresholds,
         )
-        entered = bool(
+        did_enter = bool(
             not signal.declined
             and signal.executed
             and signal.mae is not None
@@ -90,7 +86,7 @@ def evaluate_judgment(
             JudgmentSignalResult(
                 signal_id=signal.signal_id,
                 should_enter=label,
-                entered=entered,
+                entered=did_enter,
                 confidence=confidence,
                 mae=signal.mae,
                 mfe=signal.mfe,
@@ -100,15 +96,15 @@ def evaluate_judgment(
         )
 
     labeled = [row for row in rows if row.should_enter is not None]
-    should_enter = [row for row in labeled if row.should_enter]
-    should_pass = [row for row in labeled if not row.should_enter]
-    entered = [row for row in labeled if row.entered]
-    true_positive = [row for row in entered if row.should_enter]
-    false_positive = [row for row in entered if not row.should_enter]
-    false_negative = [row for row in should_enter if not row.entered]
+    should_enter_rows = [row for row in labeled if row.should_enter]
+    should_pass_rows = [row for row in labeled if not row.should_enter]
+    entered_rows = [row for row in labeled if row.entered]
+    true_positive = [row for row in entered_rows if row.should_enter]
+    false_positive = [row for row in entered_rows if not row.should_enter]
+    false_negative = [row for row in should_enter_rows if not row.entered]
 
-    precision = _ratio(len(true_positive), len(entered))
-    capture = _ratio(len(true_positive), len(should_enter))
+    precision = _ratio(len(true_positive), len(entered_rows))
+    capture = _ratio(len(true_positive), len(should_enter_rows))
     brier = _brier(labeled)
 
     gates: list[str] = []
@@ -126,9 +122,9 @@ def evaluate_judgment(
         as_of=as_of,
         fill_model_version=fill_model.version,
         labeled_count=len(labeled),
-        should_enter_count=len(should_enter),
-        should_pass_count=len(should_pass),
-        entered_count=len(entered),
+        should_enter_count=len(should_enter_rows),
+        should_pass_count=len(should_pass_rows),
+        entered_count=len(entered_rows),
         true_positive_count=len(true_positive),
         false_positive_count=len(false_positive),
         false_negative_count=len(false_negative),
@@ -147,15 +143,13 @@ def _ratio(numerator: int, denominator: int) -> Decimal | None:
 
 
 def _brier(rows: list[JudgmentSignalResult]) -> Decimal | None:
-    scored = [
-        row
-        for row in rows
-        if row.should_enter is not None and row.confidence is not None
-    ]
-    if not scored:
+    squares: list[Decimal] = []
+    for row in rows:
+        if row.should_enter is None or row.confidence is None:
+            continue
+        outcome = Decimal(1) if row.should_enter else Decimal(0)
+        squares.append((row.confidence - outcome) ** 2)
+    if not squares:
         return None
-    total = sum(
-        (row.confidence - (Decimal(1) if row.should_enter else Decimal(0))) ** 2
-        for row in scored
-    )
-    return (total / Decimal(len(scored))).quantize(Decimal("0.0001"))
+    total = sum(squares, start=Decimal(0))
+    return (total / Decimal(len(squares))).quantize(Decimal("0.0001"))

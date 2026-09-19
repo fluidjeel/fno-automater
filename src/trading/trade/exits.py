@@ -8,20 +8,23 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, unique
 
-from trading.domain.contracts.intent import ExitTemplate, TradeIntent
+from trading.domain.contracts.intent import ExitTemplate, IntentLeg, TradeIntent
 from trading.domain.contracts.position import (
     ExitPolicy,
+    PositionLegState,
     PositionState,
 )
 from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import ExitScope, ReasonCode, Side, TradeState
 from trading.domain.primitives import Currency, Money, Price, Rounding
+from trading.risk.sizing.credit_spread import is_credit_spread
 
 __all__ = [
     "ExitEngine",
     "ExitEvaluation",
     "ExitKind",
     "build_exit_policy",
+    "monitor_leg",
     "strategy_unrealized_pnl",
 ]
 
@@ -75,13 +78,17 @@ class ExitEngine:
             )
         if scope is not ExitScope.LEG_PRICE:
             raise ValueError(f"unsupported exit scope {scope}")
-        leg = position.legs[0]
-        monitor = _monitor_price(feature, leg.side)
-        if monitor is None:
+        leg = _price_exit_leg(position, intent)
+        monitor = None if leg is None else _monitor_price(feature, leg.side)
+        if leg is None or monitor is None:
             return ExitEvaluation(
                 kind=ExitKind.NONE,
                 reason_code=ReasonCode.PRICE_UNAVAILABLE,
-                detail="exit monitor price unavailable",
+                detail=(
+                    "monitor leg is not present on the position"
+                    if leg is None
+                    else "exit monitor price unavailable"
+                ),
             )
 
         tightened = tighten_exit_policy(
@@ -234,6 +241,26 @@ def build_exit_policy(
         exit_before_expiry_days=template.exit_before_expiry_days,
         initialized_at=initialized_at,
     )
+
+
+def monitor_leg(intent: TradeIntent) -> IntentLeg:
+    """Return the leg whose price drives LEG_PRICE exit monitoring."""
+    if is_credit_spread(intent):
+        return next(leg for leg in intent.legs if leg.side is Side.SELL)
+    buy_legs = [leg for leg in intent.legs if leg.side is Side.BUY]
+    if buy_legs:
+        return buy_legs[0]
+    return intent.legs[0]
+
+
+def _price_exit_leg(
+    position: PositionState, intent: TradeIntent
+) -> PositionLegState | None:
+    watched = monitor_leg(intent)
+    for leg in position.legs:
+        if leg.leg_id == watched.leg_id:
+            return leg
+    return None
 
 
 def strategy_unrealized_pnl(

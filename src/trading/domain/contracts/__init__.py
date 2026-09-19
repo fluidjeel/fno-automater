@@ -1,5 +1,11 @@
 """Typed, versioned contracts. Semantics and authority are fixed here."""
 
+from trading.domain.contracts.advice import (
+    AdviceStance,
+    RankedStructure,
+    StructureAdvice,
+    StructureChoice,
+)
 from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
@@ -14,14 +20,15 @@ from trading.domain.contracts.common import (
     Lineage,
     Versions,
 )
+from trading.domain.contracts.entry_freeze import EntryFreezeRecord
 from trading.domain.contracts.evaluation import (
     CohortPackage,
-    JudgmentReport,
-    JudgmentSignalResult,
     CohortScorecard,
     CohortSignal,
     ExperimentDefinition,
     FillSimulation,
+    JudgmentReport,
+    JudgmentSignalResult,
     PromotionEligibilityResult,
     ReasonCount,
 )
@@ -44,6 +51,10 @@ from trading.domain.contracts.intent import (
     IntentLeg,
     TradeIntent,
 )
+from trading.domain.contracts.lifecycle import (
+    PositionLifecycleRecord,
+    PositionReviewRecord,
+)
 from trading.domain.contracts.order import OrderCommand, OrderEvent, OrderIdentity
 from trading.domain.contracts.order_plan import (
     OrderPlan,
@@ -62,12 +73,6 @@ from trading.domain.contracts.position import (
     PositionLegState,
     PositionState,
 )
-from trading.domain.contracts.advice import (
-    AdviceStance,
-    RankedStructure,
-    StructureAdvice,
-    StructureChoice,
-)
 from trading.domain.contracts.proposal import (
     AIProposal,
     EvidenceRef,
@@ -78,7 +83,7 @@ from trading.domain.contracts.proposal import (
 from trading.domain.contracts.reconciliation import ReconciliationEvent
 from trading.domain.contracts.reconciliation_result import ReconciliationResult
 from trading.domain.contracts.reservation import CapitalReservation
-from trading.domain.contracts.risk import ApprovedLeg, RiskDecision
+from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
 from trading.domain.contracts.sizing import (
     SizingDecision,
     SizingLegResult,
@@ -97,16 +102,11 @@ __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
-    "RankedStructure",
-    "StructureAdvice",
-    "StructureChoice",
     "ApprovedLeg",
     "AttentionRequest",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
-    "JudgmentReport",
-    "JudgmentSignalResult",
     "CohortScorecard",
     "CohortSignal",
     "ConfidenceKind",
@@ -114,6 +114,7 @@ __all__ = [
     "ContractRef",
     "DataQualityReport",
     "DerivativesContext",
+    "EntryFreezeRecord",
     "EntryPolicy",
     "EvidenceRef",
     "ExitPolicy",
@@ -127,6 +128,9 @@ __all__ = [
     "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
+    "JudgmentReport",
+    "JudgmentSignalResult",
+    "LegQuoteRef",
     "Lineage",
     "MacroStatus",
     "MarketQuote",
@@ -142,10 +146,13 @@ __all__ = [
     "PortfolioSnapshot",
     "PortfolioView",
     "PositionLegState",
+    "PositionLifecycleRecord",
     "PositionRecord",
+    "PositionReviewRecord",
     "PositionState",
     "PromotionEligibilityResult",
     "ProtectiveOrderStub",
+    "RankedStructure",
     "ReasonCount",
     "ReconciliationEvent",
     "ReconciliationResult",
@@ -158,6 +165,8 @@ __all__ = [
     "SizingRequest",
     "SnapshotTimes",
     "StrictModel",
+    "StructureAdvice",
+    "StructureChoice",
     "StructureKind",
     "TradeIntent",
     "TrendState",

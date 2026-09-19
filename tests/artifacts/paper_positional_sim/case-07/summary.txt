@@ -1,0 +1,3 @@
+PASS
+trade=TRD-1789357800000000-00000011 frozen_stop=90.00 exit_limit=85.00 fill=84.95
+

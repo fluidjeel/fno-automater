@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
 
 from pydantic import Field, field_validator, model_validator
 
@@ -34,7 +31,7 @@ class StructureChoice(StrEnum):
     DEFINED_RISK_MULTILEG = "defined_risk_multileg"
     CAS_MICROSTRUCTURE = "cas_microstructure"
     COMMODITY_FUTURES_TREND = "commodity_futures_trend"
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105 - structure token, not a password
 
 
 ALLOWED_STRUCTURES: frozenset[str] = frozenset(item.value for item in StructureChoice)
@@ -46,7 +43,7 @@ class AdviceStance(StrEnum):
     PAPER = "PAPER"
     SHADOW = "SHADOW"
     SUSPENDED = "SUSPENDED"
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105 - stance token, not a password
 
 
 class RankedStructure(StrictModel):
@@ -85,8 +82,14 @@ class StructureAdvice(VersionedModel):
 
     @model_validator(mode="after")
     def _pass_is_coherent(self) -> StructureAdvice:
-        if self.preferred_structure is StructureChoice.PASS and self.stance is not AdviceStance.PASS:
+        if (
+            self.preferred_structure is StructureChoice.PASS
+            and self.stance is not AdviceStance.PASS
+        ):
             raise ValueError("PASS structure requires stance PASS")
-        if self.stance is AdviceStance.PASS and self.preferred_structure is not StructureChoice.PASS:
+        if (
+            self.stance is AdviceStance.PASS
+            and self.preferred_structure is not StructureChoice.PASS
+        ):
             raise ValueError("stance PASS requires preferred_structure PASS")
         return self

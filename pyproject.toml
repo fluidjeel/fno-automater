@@ -71,6 +71,7 @@ ignore = [
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
 "tests/**" = ["S101", "S105", "S106", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401"]
+"tests/paper_positional_sim/**" = ["E501"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
 "tests/test_data_pipeline.py" = ["I001"]
 "src/trading/data/replay.py" = ["I001"]
@@ -82,7 +83,8 @@ ignore = [
 "src/trading/data/fyers/auth.py" = ["PLC0415", "PLR0911"]
 "src/trading/data/fyers/ws.py" = ["PLC0415", "PLR0912", "PLR0915"]
 "src/trading/cli.py" = ["PLR0912", "PLR0915", "PLC0415"]
-"src/trading/runtime/paper_runner.py" = ["PLR0912", "PLR0915"]
+"src/trading/runtime/paper_runner.py" = ["PLR0911", "PLR0912", "PLR0915"]
+"src/trading/risk/snapshot_bundle.py" = ["PLR0911"]
 "src/trading/ai/tools.py" = ["PLR0912", "PLR2004"]
 "src/trading/ai/loop.py" = ["PLR0911"]
 "src/trading/data/cas_features.py" = ["PLR2004"]

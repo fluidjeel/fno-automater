@@ -12,13 +12,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from trading.ai.advise import run_advise_agent
 from trading.ai.history_ports import (
     SnapshotMarketPort,
     StaticNewsPort,
     history_evidence,
 )
 from trading.ai.llm_settings import load_llm_settings
-from trading.ai.advise import run_advise_agent
 from trading.ai.loop import run_weekly_agent
 from trading.ai.openai_compat import OpenAICompatLlm
 from trading.ai.ports import LlmTimeoutError, LlmTurn
@@ -870,7 +870,6 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
     return 0
 
 
-
 def _trial_history_port(
     root: Path,
     *,
@@ -1227,7 +1226,6 @@ def main(argv: list[str] | None = None) -> int:
     advise.add_argument("--resolution", default="D")
     advise.add_argument("--out-dir", default="data/paper/agent_runs")
     advise.set_defaults(func=_cmd_agent_advise)
-
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)

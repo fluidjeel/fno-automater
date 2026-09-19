@@ -1,0 +1,3 @@
+PASS
+partial_state=REPAIR_REQUIRED false_protected=False; missing_monitor open=OPEN unprotected=True silent_hold=False sells=0 freeze=schema_version='1' entries_blocked=True reason_code=<ReasonCode.UNPROTECTED_POSITION: 'UNPROTECTED_POSITION'> detail='monitor leg quote missing; software stop cannot evaluate and PAPER has no broker-resident stop' updated_at=datetime.datetime(2026, 9, 14, 5, 0, tzinfo=datetime.timezone.utc)
+

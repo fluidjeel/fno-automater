@@ -8,9 +8,11 @@ from pathlib import Path
 
 import tests.factories as f
 from trading.data.events import CanonicalMarketEvent
+from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.domain.contracts import (
     CandidateBinding,
     FeatureSnapshot,
+    InstrumentSpec,
     MarketState,
     SetupFeatures,
 )
@@ -21,20 +23,27 @@ from trading.domain.contracts.identification import (
     VolatilityState,
 )
 from trading.domain.contracts.snapshot import DerivativesContext, Greeks
-from trading.domain.enums import DataQuality, OptionType, ReasonCode
+from trading.domain.enums import (
+    DataQuality,
+    Exchange,
+    InstrumentKind,
+    OptionType,
+    ReasonCode,
+)
 from trading.identification import (
     BoundCandidates,
+    IvBucket,
+    SessionBucket,
+    allowed_families_for,
     bind_debit_spread,
     bind_long_option,
     build_market_state,
-    allowed_families_for,
-    load_identification_policy,
-    session_bucket_for,
-    IvBucket,
-    SessionBucket,
     iv_bucket_for,
+    load_identification_policy,
     route_nifty_options,
+    session_bucket_for,
 )
+from trading.identification.vix import resolve_vix_symbol
 
 ROOT = Path(__file__).parents[1]
 POLICY = load_identification_policy(ROOT / "config" / "identification.yaml")
@@ -215,8 +224,8 @@ def test_market_state_uses_completed_bars_and_is_reproducible() -> None:
         "as_of": NOW,
         "policy": POLICY,
     }
-    first = build_market_state(_bars(), **kwargs)
-    second = build_market_state(_bars(), **kwargs)
+    first = build_market_state(_bars(), **kwargs)  # type: ignore[arg-type]
+    second = build_market_state(_bars(), **kwargs)  # type: ignore[arg-type]
 
     assert first == second
     assert first.completed_bar_count == 60
@@ -309,6 +318,7 @@ def test_router_selects_debit_spread_when_iv_is_expensive() -> None:
     )
     assert route.paper_winner == "debit_spread"
 
+
 def test_eligible_binds_always_attach_setup_features() -> None:
     candidates = (
         _option("NIFTY-23900-CE", strike="23900", delta="0.62", bid="140", ask="141"),
@@ -340,6 +350,7 @@ def test_router_pass_records_failed_gate_ids_without_fake_features() -> None:
     assert route.paper_winner is None
     assert route.failed_gate_ids == ("min_score_gap",)
     assert all(item.setup_features is not None for item in opportunities)
+
 
 def test_vix_history_populates_iv_percentile_and_rv_ratio() -> None:
     """Synthetic India VIX series fills iv_percentile and iv_rv_ratio."""
@@ -380,18 +391,34 @@ def test_missing_vix_is_fail_visible() -> None:
     assert ReasonCode.DATA_GAP in state.reason_codes
 
 
-def test_resolve_vix_symbol_matches_instrument_master() -> None:
-    from trading.identification.vix import resolve_vix_symbol
-
-    root = Path("data/reference/instruments")
-    assert root.exists()
-    assert resolve_vix_symbol(POLICY, instrument_root=root) == "NSE:INDIAVIX-INDEX"
-
-
+def test_resolve_vix_symbol_matches_instrument_master(tmp_path: Path) -> None:
+    """Configured VIX ticker must exist in the instrument master; never invent one."""
+    store = InstrumentSpecStore(tmp_path)
+    store.write(
+        "NSE_CM",
+        (
+            InstrumentSpec(
+                trading_symbol=POLICY.vix_symbol,
+                exchange=Exchange.NSE,
+                segment="NSE_CM",
+                underlying="INDIAVIX",
+                instrument_kind=InstrumentKind.INDEX,
+                provider_token="1",
+                exchange_token=1,
+                lot_size=0,
+                tick_size=Decimal("0.01"),
+                price_precision=2,
+                trading_session="0915-1530",
+                source="test",
+                verified_at=date(2026, 9, 11),
+            ),
+        ),
+    )
+    assert resolve_vix_symbol(POLICY, instrument_root=tmp_path) == "NSE:INDIAVIX-INDEX"
 
 
 def test_allow_table_matrix_for_regime_buckets() -> None:
-    """Six-to-eight regime cells: directional, multileg, CAS auction, commodity excluded."""
+    """Regime cells: directional, multileg, CAS auction; commodity excluded."""
     # NOW is 10:00 UTC = 15:30 IST → AUCTION window in policy.
     assert session_bucket_for(NOW, POLICY) is SessionBucket.AUCTION
 
@@ -400,14 +427,70 @@ def test_allow_table_matrix_for_regime_buckets() -> None:
 
     cases = [
         # trend, iv, event, calculated_at, expect_superset, expect_absent
-        ("UP", "30", "NORMAL", NOW, {"positional_long_option", "debit_spread", "cas_microstructure"}, {"defined_risk_multileg", "commodity_futures_trend"}),
-        ("DOWN", "55", "CAUTION", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "defined_risk_multileg", "commodity_futures_trend"}),
-        ("RANGE", "80", "NORMAL", continuous, {"defined_risk_multileg", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
-        ("RANGE", "50", "NORMAL", continuous, set(), {"defined_risk_multileg", "cas_microstructure", "commodity_futures_trend"}),
-        ("UP", "30", "NORMAL", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
-        ("MIXED", "80", "NORMAL", NOW, {"cas_microstructure", "positional_long_option", "debit_spread"}, {"defined_risk_multileg", "commodity_futures_trend"}),
-        ("UP", "30", "BLOCK_NEW", continuous, set(), {"positional_long_option", "debit_spread", "cas_microstructure"}),
-        ("RANGE", "80", "NORMAL", NOW, {"defined_risk_multileg", "debit_spread", "cas_microstructure"}, {"commodity_futures_trend"}),
+        (
+            "UP",
+            "30",
+            "NORMAL",
+            NOW,
+            {"positional_long_option", "debit_spread", "cas_microstructure"},
+            {"defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "DOWN",
+            "55",
+            "CAUTION",
+            continuous,
+            {"positional_long_option", "debit_spread"},
+            {"cas_microstructure", "defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "RANGE",
+            "80",
+            "NORMAL",
+            continuous,
+            {"defined_risk_multileg", "debit_spread"},
+            {"cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "RANGE",
+            "50",
+            "NORMAL",
+            continuous,
+            set(),
+            {"defined_risk_multileg", "cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "UP",
+            "30",
+            "NORMAL",
+            continuous,
+            {"positional_long_option", "debit_spread"},
+            {"cas_microstructure", "commodity_futures_trend"},
+        ),
+        (
+            "MIXED",
+            "80",
+            "NORMAL",
+            NOW,
+            {"cas_microstructure", "positional_long_option", "debit_spread"},
+            {"defined_risk_multileg", "commodity_futures_trend"},
+        ),
+        (
+            "UP",
+            "30",
+            "BLOCK_NEW",
+            continuous,
+            set(),
+            {"positional_long_option", "debit_spread", "cas_microstructure"},
+        ),
+        (
+            "RANGE",
+            "80",
+            "NORMAL",
+            NOW,
+            {"defined_risk_multileg", "debit_spread", "cas_microstructure"},
+            {"commodity_futures_trend"},
+        ),
     ]
     for trend, iv, event, when, expect_has, expect_missing in cases:
         market = _market(

@@ -75,6 +75,10 @@ class PositionState(VersionedModel):
     protective_order_ids: tuple[NonEmptyStr, ...] = ()
     opened_at: UtcDatetime | None = None
     as_of: UtcDatetime
+    protection_degraded: StrictBool = False
+    software_stop_unavailable: StrictBool = False
+    protection_degraded_since: UtcDatetime | None = None
+    unprotected_reason: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def _state_matches_coverage_requirement(self) -> PositionState:

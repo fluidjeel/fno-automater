@@ -24,6 +24,7 @@ from trading.config.loader import (
 )
 from trading.config.risk_policy import (
     LoadedRiskPolicy,
+    MissingMonitorResolution,
     RiskPolicyConfig,
     RiskPolicyLoadError,
     load_risk_policy,
@@ -60,6 +61,7 @@ __all__ = [
     "LoadedEvaluationConfig",
     "LoadedRiskPolicy",
     "MarginRules",
+    "MissingMonitorResolution",
     "RiskLimits",
     "RiskPolicyConfig",
     "RiskPolicyLoadError",

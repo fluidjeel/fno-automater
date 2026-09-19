@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum, unique
+from typing import TypedDict
 
 from trading.broker.ports import MarginPreviewPort
 from trading.config.loader import LoadedConfig
@@ -16,7 +17,7 @@ from trading.domain.clock import Clock
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.portfolio import PortfolioSnapshot
-from trading.domain.contracts.risk import ApprovedLeg, RiskDecision
+from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
 from trading.domain.contracts.sizing import SizingRequest
 from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
@@ -56,6 +57,7 @@ from trading.risk.sizing.iron_condor import (
     is_iron_condor,
 )
 from trading.risk.sizing.long_option import LongOptionSizingEngine, LotBounds
+from trading.risk.snapshot_bundle import validate_leg_snapshot_bundle
 
 __all__ = ["RiskGateway", "RiskGatewayRequest"]
 
@@ -97,6 +99,12 @@ class RiskGatewayRequest:
     event_risk_state: EventRiskState | None = None
 
 
+class _SnapshotAudit(TypedDict):
+    decision_snapshot_id: str
+    decision_timestamp: datetime
+    leg_quotes: tuple[LegQuoteRef, ...]
+
+
 class RiskGateway:
     """Deterministic pre-trade gate: size, limit-check, reserve, decide."""
 
@@ -131,6 +139,7 @@ class RiskGateway:
         policy = self._risk_policy.config
         account_risk = self._account_config.config.risk
         pre_trade = portfolio.exposure
+        audit = _primary_audit(intent, feature, request.leg_snapshots, now)
 
         if not intent.is_live_at(now):
             return self._reject(
@@ -138,6 +147,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(ReasonCode.DECISION_EXPIRED,),
                 decided_at=now,
+                audit=audit,
             )
         if intent.snapshot_id != feature.snapshot_id:
             return self._reject(
@@ -145,10 +155,17 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(ReasonCode.SNAPSHOT_MISMATCH,),
                 decided_at=now,
+                audit=audit,
             )
         if not feature.permits_new_exposure:
             code = _quality_reason(feature.quality.state)
-            return self._reject(intent, portfolio, reason_codes=(code,), decided_at=now)
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(code,),
+                decided_at=now,
+                audit=audit,
+            )
 
         constraint_reason = _constraint_reason(request, now=now)
         if constraint_reason is not None:
@@ -157,6 +174,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(constraint_reason,),
                 decided_at=now,
+                audit=audit,
             )
 
         structure = _detect_structure(request)
@@ -166,6 +184,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
                 decided_at=now,
+                audit=audit,
             )
         if any(
             leg.side is Side.SELL for leg in intent.legs
@@ -176,6 +195,7 @@ class RiskGateway:
                 reason_codes=(ReasonCode.RISK_LIMIT_TRADE,),
                 applied_limits=("naked_short_disabled",),
                 decided_at=now,
+                audit=audit,
             )
         if _is_multi_leg(structure):
             spread_reason = _multi_leg_spread_reason(
@@ -190,6 +210,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(spread_reason,),
                 decided_at=now,
+                audit=audit,
             )
         instrument_reason = _instrument_reason(request.instrument, structure)
         if instrument_reason is not None:
@@ -198,16 +219,28 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(instrument_reason,),
                 decided_at=now,
+                audit=audit,
             )
-        if _is_multi_leg(structure) and not _leg_snapshots_complete(
-            intent, request.leg_snapshots
-        ):
-            return self._reject(
+        if _is_multi_leg(structure):
+            bundle = validate_leg_snapshot_bundle(
                 intent,
-                portfolio,
-                reason_codes=(ReasonCode.SNAPSHOT_MISMATCH,),
-                decided_at=now,
+                request.leg_snapshots,
+                now=now,
+                freshness=self._account_config.config.freshness,
             )
+            audit = _SnapshotAudit(
+                decision_snapshot_id=bundle.decision_snapshot_id,
+                decision_timestamp=bundle.decision_timestamp,
+                leg_quotes=bundle.leg_quotes,
+            )
+            if bundle.reason is not None:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(bundle.reason,),
+                    decided_at=now,
+                    audit=audit,
+                )
 
         if not policy.has_allocation(intent.strategy_id):
             # Fail closed: build_sizing_limits raises for an unlisted strategy,
@@ -219,6 +252,7 @@ class RiskGateway:
                 reason_codes=(ReasonCode.CAPITAL_UNAVAILABLE,),
                 applied_limits=("no_strategy_allocation",),
                 decided_at=now,
+                audit=audit,
             )
 
         limits = build_sizing_limits(
@@ -259,6 +293,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
                 decided_at=now,
+                audit=audit,
             )
         if sizing.approved_lots <= 0:
             reason = _zero_lot_reason(sizing.bounds)
@@ -267,6 +302,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(reason,),
                 decided_at=now,
+                audit=audit,
             )
 
         limit_check = evaluate_pre_trade_limits(
@@ -285,6 +321,7 @@ class RiskGateway:
                 reason_codes=limit_check.reason_codes,
                 applied_limits=limit_check.applied_limits,
                 decided_at=now,
+                audit=audit,
             )
 
         decision_id = self._ids.new_id("DEC")
@@ -306,6 +343,7 @@ class RiskGateway:
                 portfolio,
                 reason_codes=(reason,),
                 decided_at=now,
+                audit=audit,
             )
 
         post_trade = project_post_trade_exposure(
@@ -340,6 +378,9 @@ class RiskGateway:
             reason_codes=limit_check.reason_codes,
             decided_at=now,
             expires_at=expires_at,
+            decision_snapshot_id=audit["decision_snapshot_id"],
+            decision_timestamp=audit["decision_timestamp"],
+            leg_quotes=audit["leg_quotes"],
         )
 
     def _reject(
@@ -350,9 +391,13 @@ class RiskGateway:
         reason_codes: tuple[ReasonCode, ...],
         decided_at: datetime,
         applied_limits: tuple[str, ...] = (),
+        audit: _SnapshotAudit | None = None,
     ) -> RiskDecision:
         policy = self._risk_policy.config
         expires_at = decided_at + timedelta(seconds=policy.decision_ttl_seconds)
+        extra_snapshot_id = audit["decision_snapshot_id"] if audit is not None else None
+        extra_timestamp = audit["decision_timestamp"] if audit is not None else None
+        extra_quotes = audit["leg_quotes"] if audit is not None else ()
         return RiskDecision(
             decision_id=self._ids.new_id("DEC"),
             intent_id=intent.intent_id,
@@ -367,6 +412,9 @@ class RiskGateway:
             reason_codes=reason_codes,
             decided_at=decided_at,
             expires_at=expires_at,
+            decision_snapshot_id=extra_snapshot_id,
+            decision_timestamp=extra_timestamp,
+            leg_quotes=extra_quotes,
         )
 
 
@@ -822,21 +870,41 @@ def _spread_net_delta_delta(
     return int(total)
 
 
-def _leg_snapshots_complete(
+def _primary_audit(
     intent: TradeIntent,
+    feature: FeatureSnapshot,
     leg_snapshots: Mapping[str, FeatureSnapshot],
-) -> bool:
-    if len(leg_snapshots) != len(intent.legs):
-        return False
+    now: datetime,
+) -> _SnapshotAudit:
+    quotes: list[LegQuoteRef] = []
     for leg in intent.legs:
         snapshot = leg_snapshots.get(leg.leg_id)
         if snapshot is None:
-            return False
-        if snapshot.snapshot_id != intent.snapshot_id:
-            return False
-        if snapshot.contract.symbol != leg.contract.symbol:
-            return False
-    return True
+            continue
+        quotes.append(
+            LegQuoteRef(
+                leg_id=leg.leg_id,
+                snapshot_id=snapshot.snapshot_id,
+                symbol=snapshot.contract.symbol,
+                event_time=snapshot.times.event_time,
+                calculation_time=snapshot.times.calculation_time,
+            )
+        )
+    if not quotes:
+        quotes.append(
+            LegQuoteRef(
+                leg_id=intent.legs[0].leg_id if intent.legs else "primary",
+                snapshot_id=feature.snapshot_id,
+                symbol=feature.contract.symbol,
+                event_time=feature.times.event_time,
+                calculation_time=feature.times.calculation_time,
+            )
+        )
+    return _SnapshotAudit(
+        decision_snapshot_id=intent.snapshot_id,
+        decision_timestamp=now,
+        leg_quotes=tuple(quotes),
+    )
 
 
 def _multi_leg_spread_reason(

@@ -1,0 +1,3 @@
+PASS
+FULL_EXIT timeout; unknown_store=1; restart_pid={'pid': 2886, 'restored_trade_ids': ['TRD-1789357800000000-00000011'], 'entries_blocked': True}; sells=0; states=['EXIT_PENDING']
+

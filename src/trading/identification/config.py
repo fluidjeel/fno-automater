@@ -8,7 +8,13 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["AllowRule", "AllowTablePolicy", "IdentificationPolicy", "TimeWindow", "load_identification_policy"]
+__all__ = [
+    "AllowRule",
+    "AllowTablePolicy",
+    "IdentificationPolicy",
+    "TimeWindow",
+    "load_identification_policy",
+]
 
 
 class _Frozen(BaseModel):
@@ -48,7 +54,6 @@ class RouterPolicy(_Frozen):
     min_winner_score: Decimal = Field(ge=0, le=1)
     min_score_gap: Decimal = Field(ge=0, le=1)
     cooldown_minutes: int = Field(ge=0)
-
 
 
 class TimeWindow(_Frozen):

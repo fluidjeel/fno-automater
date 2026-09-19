@@ -1,7 +1,7 @@
 """Layer 4 agentic research loop. Proposal-only; no live authority."""
 
-from trading.ai.history_ports import SnapshotMarketPort, StaticNewsPort
 from trading.ai.advise import ADVISE_SYSTEM_PROMPT, run_advise_agent
+from trading.ai.history_ports import SnapshotMarketPort, StaticNewsPort
 from trading.ai.loop import SYSTEM_PROMPT, run_weekly_agent
 from trading.ai.openai_compat import OpenAICompatLlm, parse_openai_chat_completion
 from trading.ai.ports import (

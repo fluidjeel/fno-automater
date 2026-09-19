@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
@@ -20,12 +20,20 @@ from typing import Any
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
     CapitalReservation,
+    EntryFreezeRecord,
     OrderEvent,
+    PositionLifecycleRecord,
     ReconciliationEvent,
     RiskDecision,
     VersionedModel,
 )
-from trading.domain.enums import ReasonCode, ReservationState, SystemState
+from trading.domain.enums import (
+    Exchange,
+    ReasonCode,
+    ReservationState,
+    ReviewSlotId,
+    SystemState,
+)
 from trading.domain.primitives import Currency, Money
 
 __all__ = [
@@ -49,6 +57,8 @@ class TradingEventType(StrEnum):
     RISK_DECISION = "risk_decision"
     RECONCILIATION_EVENT = "reconciliation_event"
     CAPITAL_RESERVATION = "capital_reservation"
+    POSITION_LIFECYCLE = "position_lifecycle"
+    ENTRY_FREEZE = "entry_freeze"
 
 
 _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
@@ -56,6 +66,8 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.RISK_DECISION: RiskDecision,
     TradingEventType.RECONCILIATION_EVENT: ReconciliationEvent,
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
+    TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
+    TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
 }
 
 
@@ -360,6 +372,175 @@ class TradingStore:
             return SystemState.STARTING, None
         ref = row["last_reconciliation_ref"]
         return SystemState(row["state"]), ref if isinstance(ref, str) else None
+
+    def upsert_position_lifecycle(
+        self,
+        record: PositionLifecycleRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> None:
+        """Replace the current lifecycle snapshot and append an audit event."""
+        stamp = _utc_iso(recorded_at or record.as_of)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO position_lifecycle "
+                "(trade_id, state, payload, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(trade_id) DO UPDATE SET "
+                "state = excluded.state, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    record.trade_id,
+                    record.position.state.value,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.POSITION_LIFECYCLE,
+                    payload=record,
+                    event_id=event_id,
+                ),
+                stamp,
+            )
+
+    def get_position_lifecycle(self, trade_id: str) -> PositionLifecycleRecord | None:
+        """Load the latest persisted lifecycle for one trade."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM position_lifecycle WHERE trade_id = ?",
+                (trade_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
+
+    def list_position_lifecycle(self) -> tuple[PositionLifecycleRecord, ...]:
+        """Return every persisted position lifecycle snapshot."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM position_lifecycle ORDER BY trade_id ASC"
+            ).fetchall()
+        return tuple(
+            PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
+            for row in rows
+        )
+
+    def record_review_slot_run(
+        self,
+        *,
+        slot_id: ReviewSlotId,
+        session_date: date,
+        venue: Exchange,
+        as_of: datetime,
+    ) -> bool:
+        """Persist that a review slot ran. Returns False on a duplicate day+slot."""
+        stamp = _utc_iso(as_of)
+        with self._transaction():
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO review_slot_runs "
+                "(slot_id, session_date, venue, as_of) VALUES (?, ?, ?, ?)",
+                (slot_id.value, session_date.isoformat(), venue.value, stamp),
+            )
+            return cursor.rowcount == 1
+
+    def has_review_slot_run(self, slot_id: ReviewSlotId, session_date: date) -> bool:
+        """Whether this NSE/MCX slot already ran on the IST session date."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM review_slot_runs WHERE slot_id = ? AND session_date = ?",
+                (slot_id.value, session_date.isoformat()),
+            ).fetchone()
+        return row is not None
+
+    def list_review_slot_runs(
+        self, session_date: date | None = None
+    ) -> tuple[tuple[ReviewSlotId, date], ...]:
+        """Return recorded (slot, session_date) pairs, optionally one day."""
+        with self._lock:
+            if session_date is None:
+                rows = self._conn.execute(
+                    "SELECT slot_id, session_date FROM review_slot_runs "
+                    "ORDER BY session_date ASC, slot_id ASC"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT slot_id, session_date FROM review_slot_runs "
+                    "WHERE session_date = ? ORDER BY slot_id ASC",
+                    (session_date.isoformat(),),
+                ).fetchall()
+        return tuple(
+            (
+                ReviewSlotId(str(row["slot_id"])),
+                date.fromisoformat(str(row["session_date"])),
+            )
+            for row in rows
+        )
+
+    def get_entry_freeze(self) -> EntryFreezeRecord | None:
+        """Load the persisted entry-freeze latch, if any."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM entry_freeze WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return EntryFreezeRecord.model_validate(json.loads(row["payload"]))
+
+    def upsert_entry_freeze(
+        self,
+        record: EntryFreezeRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> bool:
+        """Persist the freeze latch. Returns True when an audit event was written.
+
+        Unchanged blocked/reason/detail combinations skip the audit append so
+        restart recovery and duplicate freeze calls stay idempotent.
+        """
+        existing = self.get_entry_freeze()
+        unchanged = (
+            existing is not None
+            and existing.entries_blocked == record.entries_blocked
+            and existing.reason_code == record.reason_code
+            and existing.detail == record.detail
+        )
+        stamp = _utc_iso(recorded_at or record.updated_at)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO entry_freeze "
+                "(singleton, entries_blocked, reason_code, detail, payload, "
+                "updated_at) "
+                "VALUES (1, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(singleton) DO UPDATE SET "
+                "entries_blocked = excluded.entries_blocked, "
+                "reason_code = excluded.reason_code, "
+                "detail = excluded.detail, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    1 if record.entries_blocked else 0,
+                    None if record.reason_code is None else record.reason_code.value,
+                    record.detail,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            if unchanged:
+                return False
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.ENTRY_FREEZE,
+                    payload=record,
+                    event_id=event_id,
+                ),
+                stamp,
+            )
+            return True
 
     def _initialize(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")

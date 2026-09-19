@@ -1,0 +1,3 @@
+PASS
+entry opened; 10:30+14:30 HOLD; target fill=96.15 (stop=90.00 target=96.00); isolation=PAPER isolation refused a Fyers transaction adapter
+
