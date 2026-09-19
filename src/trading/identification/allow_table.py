@@ -16,6 +16,7 @@ __all__ = [
     "SessionBucket",
     "allowed_families_for",
     "iv_bucket_for",
+    "paper_fallback_families",
     "session_bucket_for",
 ]
 
@@ -83,8 +84,31 @@ def allowed_families_for(
             allowed.update(rule.allowed_families)
 
     return frozenset(
+        _apply_hard_filters(allowed, trend=trend, iv_bucket=iv_bucket, session=session)
+    )
+
+
+def paper_fallback_families(
+    market: MarketState, policy: IdentificationPolicy
+) -> frozenset[str]:
+    """Regime families when the YAML table is empty. Paper identification only."""
+    session = session_bucket_for(market.calculated_at, policy)
+    iv_bucket = iv_bucket_for(market.iv_percentile, policy)
+    trend = market.trend.value
+    families = {
+        StructureChoice.POSITIONAL_LONG_OPTION.value,
+        StructureChoice.DEBIT_SPREAD.value,
+        StructureChoice.DEFINED_RISK_MULTILEG.value,
+    }
+    if session is SessionBucket.AUCTION:
+        families.add(StructureChoice.CAS_MICROSTRUCTURE.value)
+    return frozenset(
         _apply_hard_filters(
-            allowed, trend=trend, iv_bucket=iv_bucket, session=session
+            families,
+            trend=trend,
+            iv_bucket=iv_bucket,
+            session=session,
+            paper_fail_fast=True,
         )
     )
 
@@ -95,12 +119,16 @@ def _apply_hard_filters(
     trend: str,
     iv_bucket: IvBucket,
     session: SessionBucket,
+    paper_fail_fast: bool = False,
 ) -> set[str]:
     out = set(families) - _NIFTY_EXCLUDED
-    if not (iv_bucket is IvBucket.HIGH and trend == "RANGE"):
-        out.discard(StructureChoice.DEFINED_RISK_MULTILEG.value)
     if session is not SessionBucket.AUCTION:
         out.discard(StructureChoice.CAS_MICROSTRUCTURE.value)
+    keep_multileg = iv_bucket is IvBucket.HIGH and trend == "RANGE"
+    if paper_fail_fast and trend in {"RANGE", "MIXED", "UNKNOWN"}:
+        keep_multileg = True
+    if not keep_multileg:
+        out.discard(StructureChoice.DEFINED_RISK_MULTILEG.value)
     return out
 
 
