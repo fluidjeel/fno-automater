@@ -53,7 +53,11 @@ from trading.runtime.candidates import (
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.event_risk import collect_event_risk
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.notify import format_eod_report, format_lifecycle_alert, format_post_trade
+from trading.runtime.notify import (
+    format_eod_report,
+    format_lifecycle_alert,
+    format_post_trade,
+)
 from trading.runtime.paper_runner import (
     PaperCycleResult,
     PaperRunner,

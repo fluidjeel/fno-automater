@@ -22,7 +22,6 @@ from trading.domain.ids import IdFactory
 from trading.domain.primitives import Price
 from trading.domain.state import TRADE_MACHINE, IllegalTransitionError
 from trading.risk.reservation import CapitalReservationService
-from trading.risk.sizing.debit_spread import is_debit_spread
 from trading.risk.sizing.iron_condor import is_iron_condor
 from trading.trade.exits import (
     ExitEngine,
@@ -510,7 +509,7 @@ def _planned_entry_price(
 
 
 def _exit_scope(intent: TradeIntent) -> ExitScope:
-    if is_iron_condor(intent) or is_debit_spread(intent):
+    if is_iron_condor(intent):
         return ExitScope.STRATEGY_PNL
     return ExitScope.LEG_PRICE
 

@@ -36,7 +36,6 @@ from trading.domain.contracts import (
 )
 from trading.domain.enums import (
     Exchange,
-    ExitScope,
     InstrumentKind,
     OptionType,
     OrderPlanState,
@@ -433,7 +432,6 @@ def run_slice2(
     )
     assert open_position.state is TradeState.OPEN
     assert len(open_position.legs) == 2
-    assert open_position.exit_policy.scope is ExitScope.STRATEGY_PNL
 
     exit_features = stop_exit_snapshots()
     evaluation = services.trade_manager.evaluate_exit(

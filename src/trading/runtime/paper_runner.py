@@ -300,35 +300,40 @@ class PaperRunner:
         if self._lifecycle_recovered:
             return self._last_recovery
         broker_by_trade: dict[str, list[PositionRecord]] = {}
-        for record in self._services.broker.get_positions():
-            broker_by_trade.setdefault(record.trade_id, []).append(record)
+        for broker_position in self._services.broker.get_positions():
+            broker_by_trade.setdefault(broker_position.trade_id, []).append(
+                broker_position
+            )
         restored: list[str] = []
         alerts: list[LifecycleAlert] = []
         unprotected: list[str] = []
         unreconciled: list[str] = []
         active: list[PositionLifecycleRecord] = []
-        for record in self._services.store.list_position_lifecycle():
-            if record.position.state is TradeState.CLOSED:
+        for persisted in self._services.store.list_position_lifecycle():
+            if persisted.position.state is TradeState.CLOSED:
                 continue
-            active.append(record)
-            self._services.trade_manager.restore_position(record.position)
-            self._open_book[record.trade_id] = (record.intent, record.risk_decision)
-            restored.append(record.trade_id)
-        active_ids = {record.trade_id for record in active}
-        for record in active:
-            broker_legs = tuple(broker_by_trade.get(record.trade_id, ()))
-            for alert in _lifecycle_issues(record, broker_legs):
+            active.append(persisted)
+            self._services.trade_manager.restore_position(persisted.position)
+            self._open_book[persisted.trade_id] = (
+                persisted.intent,
+                persisted.risk_decision,
+            )
+            restored.append(persisted.trade_id)
+        active_ids = {item.trade_id for item in active}
+        for persisted in active:
+            broker_legs = tuple(broker_by_trade.get(persisted.trade_id, ()))
+            for alert in _lifecycle_issues(persisted, broker_legs):
                 alerts.append(alert)
                 if alert.reason_code is ReasonCode.PROTECTIVE_COVERAGE_MISSING:
-                    unprotected.append(record.trade_id)
+                    unprotected.append(persisted.trade_id)
                 else:
-                    unreconciled.append(record.trade_id)
-            for order_id in record.exit_order_ids:
+                    unreconciled.append(persisted.trade_id)
+            for order_id in persisted.exit_order_ids:
                 event = self._exit_order_event(order_id)
                 if event is None or event.state is OrderState.UNKNOWN:
                     alerts.append(
                         LifecycleAlert(
-                            trade_id=record.trade_id,
+                            trade_id=persisted.trade_id,
                             reason_code=ReasonCode.RECONCILIATION_UNRESOLVED,
                             detail=(
                                 "exit order status is unknown; replacement is "
@@ -336,7 +341,7 @@ class PaperRunner:
                             ),
                         )
                     )
-                    unreconciled.append(record.trade_id)
+                    unreconciled.append(persisted.trade_id)
                     break
         for trade_id in sorted(set(broker_by_trade) - active_ids):
             alerts.append(
@@ -390,6 +395,8 @@ class PaperRunner:
             if leg_snapshots is None:
                 continue
             feature = _monitor_snapshot(intent, leg_snapshots)
+            if feature is None:
+                continue
             evaluation = self._services.trade_manager.evaluate_exit(
                 position.trade_id,
                 feature,
@@ -404,9 +411,7 @@ class PaperRunner:
             self._write_lifecycle(position.trade_id)
             if updated.state is not TradeState.EXIT_PENDING:
                 continue
-            events.extend(
-                self._submit_exit(intent, decision, updated, snapshots)
-            )
+            events.extend(self._submit_exit(intent, decision, updated, snapshots))
         return tuple(events)
 
     def _exit_plan(
@@ -518,9 +523,7 @@ class PaperRunner:
         except OrderFrozenError:
             self._freeze_unknown_exit(position.trade_id)
             return ()
-        order_ids = tuple(
-            event.identity.internal_order_id for event in submit.events
-        )
+        order_ids = tuple(event.identity.internal_order_id for event in submit.events)
         self._write_lifecycle(position.trade_id, exit_order_ids=order_ids)
         for event in submit.events:
             if event.state is OrderState.UNKNOWN:
@@ -557,9 +560,7 @@ class PaperRunner:
                     event,
                     capital_reservation_id=decision.capital_reservation_id,
                 )
-        self._write_lifecycle(
-            record.trade_id, exit_order_ids=record.exit_order_ids
-        )
+        self._write_lifecycle(record.trade_id, exit_order_ids=record.exit_order_ids)
         closed = self._services.trade_manager.get_position(record.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
             self._open_book.pop(record.trade_id, None)
@@ -588,20 +589,17 @@ class PaperRunner:
         intent: TradeIntent,
         snapshots: Mapping[str, FeatureSnapshot],
     ) -> dict[str, FeatureSnapshot] | None:
+        mapping: dict[str, FeatureSnapshot] = {}
+        required_legs = position.legs
         if position.exit_policy.scope is ExitScope.STRATEGY_PNL:
-            required = intent.legs
             position_ids = {leg.leg_id for leg in position.legs}
             if any(leg.leg_id not in position_ids for leg in intent.legs):
                 return None
-        else:
-            watched = monitor_leg(intent)
-            required = (watched,)
-        mapping: dict[str, FeatureSnapshot] = {}
-        for intent_leg in required:
-            snapshot = snapshots.get(intent_leg.contract.symbol)
+        for leg in required_legs:
+            snapshot = snapshots.get(leg.contract.symbol)
             if snapshot is None or snapshot.quality.state.blocks_new_exposure:
                 return None
-            mapping[intent_leg.leg_id] = snapshot
+            mapping[leg.leg_id] = snapshot
         return mapping
 
     def _write_lifecycle(
@@ -996,20 +994,15 @@ def _holding_style(intent: TradeIntent) -> HoldingStyle:
 
 def _monitor_snapshot(
     intent: TradeIntent, leg_snapshots: Mapping[str, FeatureSnapshot]
-) -> FeatureSnapshot:
+) -> FeatureSnapshot | None:
     watched = monitor_leg(intent)
-    snapshot = leg_snapshots.get(watched.leg_id)
-    if snapshot is not None:
-        return snapshot
-    return next(iter(leg_snapshots.values()))
+    return leg_snapshots.get(watched.leg_id)
 
 
 def _lifecycle_unchanged(
     existing: PositionLifecycleRecord, updated: PositionLifecycleRecord
 ) -> bool:
-    comparable = existing.position.model_copy(
-        update={"as_of": updated.position.as_of}
-    )
+    comparable = existing.position.model_copy(update={"as_of": updated.position.as_of})
     return (
         comparable == updated.position
         and existing.intent == updated.intent
@@ -1056,12 +1049,10 @@ def _lifecycle_issues(
             )
         )
     local_keys = {
-        (leg.contract.symbol, leg.side, leg.quantity_contracts)
-        for leg in position.legs
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in position.legs
     }
     broker_keys = {
-        (leg.contract.symbol, leg.side, leg.quantity_contracts)
-        for leg in broker_legs
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in broker_legs
     }
     if local_keys != broker_keys:
         alerts.append(

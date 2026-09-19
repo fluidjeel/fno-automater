@@ -21,12 +21,17 @@ from tests.test_paper_runner import BROKER_FIXTURES, ROOT, _paper_config, _reque
 from trading.broker.paper import PaperBroker
 from trading.config import load_risk_policy
 from trading.domain.clock import FrozenClock
-from trading.domain.contracts import IntentLeg, PositionLifecycleRecord
+from trading.domain.contracts import (
+    DerivativesContext,
+    FeatureSnapshot,
+    IntentLeg,
+    PositionLifecycleRecord,
+)
 from trading.domain.enums import (
     DataQuality,
-    ExecutionMode,
     ExitScope,
     HoldingStyle,
+    OptionType,
     OrderState,
     ReasonCode,
     Side,
@@ -75,9 +80,7 @@ def _runner(
 ) -> PaperRunner:
     ids = SequentialIdFactory(clock.instant)
     if broker is None:
-        broker = PaperBroker.from_fixtures(
-            BROKER_FIXTURES, clock=clock, id_factory=ids
-        )
+        broker = PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids)
     return PaperRunner(
         account_config=_paper_config(),  # type: ignore[arg-type]
         risk_policy=load_risk_policy(ROOT / "config" / "risk.yaml"),
@@ -86,6 +89,21 @@ def _runner(
         clock=clock,
         id_factory=ids,
     )
+
+
+def _option_snapshot(contract: object, **overrides: object) -> FeatureSnapshot:
+    payload: dict[str, object] = {
+        "contract": contract,
+        "market": f.quote(bid=f.price("91.95"), ask=f.price("92.00")),
+        "derivatives": DerivativesContext(
+            days_to_expiry=10,
+            open_interest=5000,
+            option_type=OptionType.CALL,
+            underlying_price=f.price("24000"),
+        ),
+    }
+    payload.update(overrides)
+    return f.snapshot(**payload)
 
 
 def _open_long(store: TradingStore, clock: FrozenClock) -> PaperRunner:
@@ -99,11 +117,11 @@ def _open_long(store: TradingStore, clock: FrozenClock) -> PaperRunner:
     return runner
 
 
-def _restart(store: TradingStore, clock: FrozenClock, broker: PaperBroker) -> PaperRunner:
+def _restart(
+    store: TradingStore, clock: FrozenClock, broker: PaperBroker
+) -> PaperRunner:
     ids = SequentialIdFactory(clock.instant)
-    restored = PaperBroker.from_fixtures(
-        BROKER_FIXTURES, clock=clock, id_factory=ids
-    )
+    restored = PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids)
     restored.load_state(broker.dump_state())
     return PaperRunner(
         account_config=_paper_config(),  # type: ignore[arg-type]
@@ -170,9 +188,7 @@ class TestUnknownExitStatus:
                 quantity_contracts=opened.legs[0].quantity_contracts,
             ),
         )
-        store.append(
-            TradingEventType.ORDER_EVENT, unknown, event_id=unknown.event_id
-        )
+        store.append(TradingEventType.ORDER_EVENT, unknown, event_id=unknown.event_id)
         store.upsert_position_lifecycle(
             record.model_copy(
                 update={
@@ -195,8 +211,10 @@ class TestUnknownExitStatus:
             for alert in recovery.alerts
         )
         symbol = opened.legs[0].contract.symbol
-        snapshot = _request().candidates[0].model_copy(
-            update={"contract": opened.legs[0].contract}
+        snapshot = (
+            _request()
+            .candidates[0]
+            .model_copy(update={"contract": opened.legs[0].contract})
         )
         second.manage_exits({symbol: snapshot})
         sells_after = sum(
@@ -260,8 +278,8 @@ class TestStaleWhileOpen:
         runner = _open_long(store, clock)
         opened = runner.trade_manager.list_positions()[0]
         symbol = opened.legs[0].contract.symbol
-        stale = f.snapshot(
-            contract=opened.legs[0].contract,
+        stale = _option_snapshot(
+            opened.legs[0].contract,
             market=f.quote(bid=f.price("1.00"), ask=f.price("1.05")),
             quality=f.quality(
                 state=DataQuality.STALE, reason_codes=(ReasonCode.DATA_STALE,)
@@ -363,8 +381,8 @@ class TestIdempotentRecovery:
         first = _open_long(store, clock)
         opened = first.trade_manager.list_positions()[0]
         symbol = opened.legs[0].contract.symbol
-        stop = f.snapshot(
-            contract=opened.legs[0].contract,
+        stop = _option_snapshot(
+            opened.legs[0].contract,
             market=f.quote(bid=f.price("1.00"), ask=f.price("1.05")),
         )
         first_exit = first.manage_exits({symbol: stop})
@@ -400,8 +418,10 @@ class TestIdempotentRecovery:
 
 
 class TestSpreadValuation:
-    def test_debit_spread_requires_all_legs_not_first_leg_only(self) -> None:
-        """Corrected path: debit spreads use frozen STRATEGY_PNL, not first-leg price."""
+    def test_debit_spread_uses_frozen_monitor_leg_not_first_position_leg(
+        self,
+    ) -> None:
+        """Corrected path: frozen LEG_PRICE on the debit long, not position.legs[0]."""
         long_contract = f.option_contract()
         short_contract = f.option_contract(
             symbol="NIFTY26SEP24200CE", strike=Decimal("24200")
@@ -423,18 +443,12 @@ class TestSpreadValuation:
             policy_id="EXIT-POL-SPREAD",
             entry_price=f.price("92.00"),
             initialized_at=NOW,
-            scope=ExitScope.STRATEGY_PNL,
-            quantity_contracts=75,
+            monitor_side=Side.BUY,
         )
         position = f.position_state(
             trade_id="TRD-SPREAD-1",
             intent_id=intent.intent_id,
             legs=(
-                f.position_leg_state(
-                    leg_id="long",
-                    contract=long_contract,
-                    average_entry_price=f.price("92.00"),
-                ),
                 f.position_leg_state(
                     leg_id="short",
                     contract=short_contract,
@@ -442,38 +456,27 @@ class TestSpreadValuation:
                     average_entry_price=f.price("45.00"),
                     current_stop_price=None,
                 ),
+                f.position_leg_state(
+                    leg_id="long",
+                    contract=long_contract,
+                    average_entry_price=f.price("92.00"),
+                ),
             ),
             exit_policy=policy,
         )
         engine = ExitEngine()
-        long_only = {
-            "long": f.snapshot(
-                contract=long_contract,
-                market=f.quote(bid=f.price("80.00"), ask=f.price("80.05")),
-            )
-        }
-        missing = engine.evaluate(
-            position,
-            long_only["long"],
-            intent,
-            now=NOW,
-            leg_snapshots=long_only,
+        long_hit = _option_snapshot(
+            long_contract,
+            market=f.quote(bid=f.price("89.95"), ask=f.price("89.95")),
         )
+        monitor = engine.evaluate(position, long_hit, intent, now=NOW)
+        assert monitor.kind is ExitKind.STOP
+        assert monitor.should_exit
+
+        short_only = position.model_copy(update={"legs": (position.legs[0],)})
+        missing = engine.evaluate(short_only, long_hit, intent, now=NOW)
         assert missing.kind is ExitKind.NONE
         assert missing.reason_code is ReasonCode.PRICE_UNAVAILABLE
-
-        both = {
-            **long_only,
-            "short": f.snapshot(
-                contract=short_contract,
-                market=f.quote(bid=f.price("44.95"), ask=f.price("45.00")),
-            ),
-        }
-        complete = engine.evaluate(
-            position, both["long"], intent, now=NOW, leg_snapshots=both
-        )
-        assert complete.kind is ExitKind.STOP
-        assert complete.should_exit
 
 
 class TestIntradayCloseRule:
@@ -522,14 +525,16 @@ class TestIntradayCloseRule:
         ]
         broker.load_state(payload)
         runner = _runner(store, clock, broker=broker)
-        runner.recover_lifecycle()
-        symbol = position.legs[0].contract.symbol
-        snapshot = f.snapshot(
-            contract=position.legs[0].contract,
+        recovery = runner.recover_lifecycle()
+        assert position.trade_id in recovery.restored_trade_ids
+        restored = runner.trade_manager.get_position(position.trade_id)
+        assert restored is not None
+        snapshot = _option_snapshot(
+            position.legs[0].contract,
             market=f.quote(bid=f.price("101.00"), ask=f.price("101.05")),
         )
-        events = runner.manage_exits({symbol: snapshot})
-        assert events
-        closed = runner.trade_manager.get_position(position.trade_id)
-        assert closed is not None
-        assert closed.state is TradeState.CLOSED
+        evaluation = runner.trade_manager.evaluate_exit(
+            position.trade_id, snapshot, intent
+        )
+        assert evaluation.kind is ExitKind.TIME
+        assert restored.exit_policy.time_exit is not None

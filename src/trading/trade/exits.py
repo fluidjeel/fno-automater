@@ -79,12 +79,16 @@ class ExitEngine:
         if scope is not ExitScope.LEG_PRICE:
             raise ValueError(f"unsupported exit scope {scope}")
         leg = _price_exit_leg(position, intent)
-        monitor = _monitor_price(feature, leg.side)
-        if monitor is None:
+        monitor = None if leg is None else _monitor_price(feature, leg.side)
+        if leg is None or monitor is None:
             return ExitEvaluation(
                 kind=ExitKind.NONE,
                 reason_code=ReasonCode.PRICE_UNAVAILABLE,
-                detail="exit monitor price unavailable",
+                detail=(
+                    "monitor leg is not present on the position"
+                    if leg is None
+                    else "exit monitor price unavailable"
+                ),
             )
 
         tightened = tighten_exit_policy(
@@ -249,12 +253,14 @@ def monitor_leg(intent: TradeIntent) -> IntentLeg:
     return intent.legs[0]
 
 
-def _price_exit_leg(position: PositionState, intent: TradeIntent) -> PositionLegState:
+def _price_exit_leg(
+    position: PositionState, intent: TradeIntent
+) -> PositionLegState | None:
     watched = monitor_leg(intent)
     for leg in position.legs:
         if leg.leg_id == watched.leg_id:
             return leg
-    return position.legs[0]
+    return None
 
 
 def strategy_unrealized_pnl(

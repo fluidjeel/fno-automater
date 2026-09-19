@@ -229,9 +229,7 @@ class TestSupportingTables:
         store.upsert_position_lifecycle(first, event_id="PLC-1")
         tightened = first.model_copy(
             update={
-                "position": first.position.model_copy(
-                    update={"as_of": LATER}
-                ),
+                "position": first.position.model_copy(update={"as_of": LATER}),
                 "as_of": LATER,
             }
         )

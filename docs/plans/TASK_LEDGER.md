@@ -104,6 +104,7 @@ CAS-001 Layer 1 cas-microstructure-v1 producer done; live CAS cohort is next.
 PAPER-003 versioned paper evidence store done.
 PAPER-004 isolation/stale/event-risk/restart drills done.
 PAPER-006 PAPER positional lifecycle persistence/recovery done.
+  Debit spreads keep frozen LEG_PRICE on the monitor long; not STRATEGY_PNL.
 Identification stack (market state, binders, router) wired into paper session.
 L4 weekly agent DeepSeek OpenAI-compat client landed; config/agent.yaml enabled:false.
 Next: PAPER-005 after verified charges_per_lot + live paper evidence; Monday live CAS depth window; optional trading agent weekly --trial.
