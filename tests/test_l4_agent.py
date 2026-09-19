@@ -6,6 +6,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import tests.factories as f
 from trading.ai import (
     LlmTimeoutError,
@@ -222,4 +224,40 @@ def test_iteration_cap_abstains() -> None:
 
 
 def test_cli_weekly_disabled_prints_abstain() -> None:
-    assert main(["agent", "weekly"]) == 0
+    """Disabled weekly still runs when a cohort is explicitly allowed."""
+    assert main(["agent", "weekly", "--allow-fixture"]) == 0
+
+
+def test_cli_weekly_refuses_missing_cohort(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Invariant: ask/weekly must not silently default to fixture cohorts."""
+    assert main(["agent", "weekly"]) == 1
+    err = capsys.readouterr().err
+    assert "refusing fixture/default cohort" in err
+    assert main(["agent", "weekly", "--enable"]) == 1
+    err = capsys.readouterr().err
+    assert "refusing fixture/default cohort" in err
+
+
+def test_cli_weekly_refuses_fixture_path_without_flag(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Explicit tests/fixtures paths still require --allow-fixture."""
+    path = "tests/fixtures/l4_cohort/long_option.json"
+    assert main(["agent", "weekly", path]) == 1
+    err = capsys.readouterr().err
+    assert "refusing fixture/default cohort" in err
+
+
+def test_cli_weekly_allow_fixture_runs() -> None:
+    """--allow-fixture loads the demo cohort; disabled agent abstains offline."""
+    assert main(["agent", "weekly", "--allow-fixture"]) == 0
+
+
+def test_cli_weekly_paper_cohort_path(tmp_path: Path) -> None:
+    """Non-fixture cohort paths load without --allow-fixture."""
+    src = ROOT / "tests/fixtures/l4_cohort/long_option.json"
+    paper = tmp_path / "cohort.json"
+    paper.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    assert main(["agent", "weekly", str(paper)]) == 0

@@ -593,19 +593,49 @@ class _UnavailableLlm:
         raise LlmTimeoutError("no production LLM client is wired")
 
 
+_FIXTURE_REFUSE_MSG = (
+    "refusing fixture/default cohort; pass a data/paper/cohorts/... JSON "
+    "or --allow-fixture"
+)
+_DEFAULT_FIXTURE_COHORT = "tests/fixtures/l4_cohort/long_option.json"
+
+
+def _is_fixture_cohort_path(root: Path, cohort_path: str) -> bool:
+    """True when the resolved path sits under tests/fixtures/."""
+    resolved = _resolve_repo_path(cohort_path).resolve()
+    fixtures_root = (root / "tests" / "fixtures").resolve()
+    return resolved == fixtures_root or fixtures_root in resolved.parents
+
+
+def _resolve_weekly_cohort(
+    root: Path, *, cohort: str, allow_fixture: bool
+) -> tuple[str, str]:
+    """Return (cohort_path, cohort_source). Raises ValueError to refuse."""
+    cohort_path = cohort.strip()
+    if not cohort_path:
+        if not allow_fixture:
+            raise ValueError(_FIXTURE_REFUSE_MSG)
+        return _DEFAULT_FIXTURE_COHORT, "fixture"
+    if _is_fixture_cohort_path(root, cohort_path):
+        if not allow_fixture:
+            raise ValueError(_FIXTURE_REFUSE_MSG)
+        return cohort_path, "fixture"
+    return cohort_path, "paper"
+
+
 def _cmd_agent_weekly(args: argparse.Namespace) -> int:
     root = _repo_root()
     try:
         evaluation = load_evaluation_config(_resolve_repo_path(args.config))
         agent_loaded = load_agent_config(_resolve_repo_path(args.agent_config))
-        package = None
-        cohort_path = args.cohort
-        if not cohort_path and args.enable:
-            cohort_path = str(root / "tests/fixtures/l4_cohort/long_option.json")
-        if cohort_path:
-            package = CohortPackage.model_validate_json(
-                _resolve_repo_path(cohort_path).read_text(encoding="utf-8")
-            )
+        cohort_path, cohort_source = _resolve_weekly_cohort(
+            root,
+            cohort=args.cohort or "",
+            allow_fixture=bool(args.allow_fixture),
+        )
+        package = CohortPackage.model_validate_json(
+            _resolve_repo_path(cohort_path).read_text(encoding="utf-8")
+        )
     except (OSError, ValidationError, ValueError, AgentConfigError) as exc:
         print(f"agent: {exc}", file=sys.stderr)
         return 1
@@ -690,6 +720,7 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
                 "history_days": args.history_days,
                 "resolution": args.resolution,
                 "cohort": cohort_path,
+                "cohort_source": cohort_source,
             },
             attention=tuple(ctx.attention_requests),
         )
@@ -1016,6 +1047,11 @@ def main(argv: list[str] | None = None) -> int:
         "--enable",
         action="store_true",
         help="in-memory enable plus DeepSeek; shipped agent.yaml stays disabled",
+    )
+    weekly.add_argument(
+        "--allow-fixture",
+        action="store_true",
+        help="explicitly allow tests/fixtures/** cohorts (demo only)",
     )
     weekly.add_argument("--symbol", default="NSE:NIFTY50-INDEX")
     weekly.add_argument("--history-days", type=int, default=20)
