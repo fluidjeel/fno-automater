@@ -2,10 +2,12 @@
 
 from trading.runtime.isolation import PaperIsolationError, assert_paper_isolation
 from trading.runtime.paper_runner import (
+    LifecycleAlert,
     PaperCycleResult,
     PaperRunner,
     PaperStrategyOutcome,
     PaperStrategyRequest,
+    PositionRecoveryResult,
 )
 from trading.runtime.paper_session import (
     PaperSession,
@@ -15,6 +17,7 @@ from trading.runtime.paper_session import (
 )
 
 __all__ = [
+    "LifecycleAlert",
     "PaperCycleResult",
     "PaperIsolationError",
     "PaperRunner",
@@ -22,6 +25,7 @@ __all__ = [
     "PaperSessionConfig",
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
+    "PositionRecoveryResult",
     "assert_paper_isolation",
     "load_paper_session_config",
     "run_paper_session",

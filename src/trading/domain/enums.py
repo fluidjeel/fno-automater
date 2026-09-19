@@ -20,6 +20,7 @@ __all__ = [
     "ExitScope",
     "FamilyStance",
     "FillOutcome",
+    "HoldingStyle",
     "InstrumentKind",
     "IntentState",
     "OptionType",
@@ -225,6 +226,14 @@ class ExitScope(StrEnum):
     LEG_PRICE = "LEG_PRICE"
     UNDERLYING = "UNDERLYING"
     SPREAD_VALUE = "SPREAD_VALUE"
+
+
+@unique
+class HoldingStyle(StrEnum):
+    """Whether an open trade is held overnight or closed the same session."""
+
+    POSITIONAL = "POSITIONAL"
+    INTRADAY = "INTRADAY"
 
 
 @unique

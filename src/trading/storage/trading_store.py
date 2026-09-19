@@ -21,6 +21,7 @@ from trading.domain.clock import Clock
 from trading.domain.contracts import (
     CapitalReservation,
     OrderEvent,
+    PositionLifecycleRecord,
     ReconciliationEvent,
     RiskDecision,
     VersionedModel,
@@ -49,6 +50,7 @@ class TradingEventType(StrEnum):
     RISK_DECISION = "risk_decision"
     RECONCILIATION_EVENT = "reconciliation_event"
     CAPITAL_RESERVATION = "capital_reservation"
+    POSITION_LIFECYCLE = "position_lifecycle"
 
 
 _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
@@ -56,6 +58,7 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.RISK_DECISION: RiskDecision,
     TradingEventType.RECONCILIATION_EVENT: ReconciliationEvent,
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
+    TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
 }
 
 
@@ -360,6 +363,62 @@ class TradingStore:
             return SystemState.STARTING, None
         ref = row["last_reconciliation_ref"]
         return SystemState(row["state"]), ref if isinstance(ref, str) else None
+
+    def upsert_position_lifecycle(
+        self,
+        record: PositionLifecycleRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> None:
+        """Replace the current lifecycle snapshot and append an audit event."""
+        stamp = _utc_iso(recorded_at or record.as_of)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO position_lifecycle "
+                "(trade_id, state, payload, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(trade_id) DO UPDATE SET "
+                "state = excluded.state, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    record.trade_id,
+                    record.position.state.value,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.POSITION_LIFECYCLE,
+                    payload=record,
+                    event_id=event_id,
+                ),
+                stamp,
+            )
+
+    def get_position_lifecycle(self, trade_id: str) -> PositionLifecycleRecord | None:
+        """Load the latest persisted lifecycle for one trade."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM position_lifecycle WHERE trade_id = ?",
+                (trade_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
+
+    def list_position_lifecycle(self) -> tuple[PositionLifecycleRecord, ...]:
+        """Return every persisted position lifecycle snapshot."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM position_lifecycle ORDER BY trade_id ASC"
+            ).fetchall()
+        return tuple(
+            PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
+            for row in rows
+        )
 
     def _initialize(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")

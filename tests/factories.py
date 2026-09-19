@@ -39,6 +39,7 @@ from trading.domain.contracts import (
     PortfolioSnapshot,
     PortfolioView,
     PositionLegState,
+    PositionLifecycleRecord,
     PositionRecord,
     PositionState,
     ProtectiveOrderStub,
@@ -61,6 +62,7 @@ from trading.domain.enums import (
     Exchange,
     ExecutionMode,
     ExitScope,
+    HoldingStyle,
     InstrumentKind,
     OptionType,
     OrderPlanState,
@@ -676,6 +678,22 @@ def position_state(**overrides: Any) -> PositionState:
             **overrides,
         }
     )
+
+
+def position_lifecycle_record(**overrides: Any) -> PositionLifecycleRecord:
+    position = overrides.get("position", position_state())
+    if not isinstance(position, PositionState):
+        position = position_state()
+    payload: dict[str, Any] = {
+        "trade_id": position.trade_id,
+        "position": position,
+        "intent": intent(intent_id=position.intent_id),
+        "risk_decision": risk_decision(intent_id=position.intent_id),
+        "holding_style": HoldingStyle.POSITIONAL,
+        "as_of": position.as_of,
+    }
+    payload.update(overrides)
+    return PositionLifecycleRecord.model_validate(payload)
 
 
 def reconciliation_result(**overrides: Any) -> ReconciliationResult:

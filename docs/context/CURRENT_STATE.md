@@ -24,6 +24,12 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
 - Unattended `trading paper session`: Telegram Fyers login, live L1, master-backed
   option/future candidates, news `EventRiskState`, five strategies, paper OMS,
   exits, Telegram post-trade/EOD, `data/paper/cohorts/` (PAPER-003).
+- PAPER positional fills persist frozen exit policy and restore it on restart
+  against paper broker state before new entries (PAPER-006). Protective STOP
+  stubs remain local software coverage, not broker-resident orders. Debit-spread
+  exits keep frozen `LEG_PRICE` on the strategy monitor long (not first
+  `position.legs[0]`, not remapped to `STRATEGY_PNL`). Iron condors stay
+  `STRATEGY_PNL`.
 - Paper broker synthetic margin for live weekly symbols. Isolation still refuses
   Fyers transaction adapters (PAPER-004).
 - Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.
@@ -32,8 +38,8 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
 
 - `uv run ruff check .` and `uv run mypy --strict` are required after this
   change.
-- Offline tests include `tests/test_paper_session.py` and
-  `tests/test_candidates.py`.
+- Offline tests include `tests/test_paper_session.py`,
+  `tests/test_paper_lifecycle.py` and `tests/test_candidates.py`.
 
 ## Blocking gaps
 

@@ -22,9 +22,13 @@ from trading.domain.ids import IdFactory
 from trading.domain.primitives import Price
 from trading.domain.state import TRADE_MACHINE, IllegalTransitionError
 from trading.risk.reservation import CapitalReservationService
-from trading.risk.sizing.credit_spread import is_credit_spread
 from trading.risk.sizing.iron_condor import is_iron_condor
-from trading.trade.exits import ExitEngine, ExitEvaluation, build_exit_policy
+from trading.trade.exits import (
+    ExitEngine,
+    ExitEvaluation,
+    build_exit_policy,
+    monitor_leg,
+)
 
 __all__ = [
     "TradeManager",
@@ -297,6 +301,11 @@ class TradeManager:
     def list_positions(self) -> tuple[PositionState, ...]:
         return tuple(self._positions.values())
 
+    def restore_position(self, position: PositionState) -> PositionState:
+        """Rehydrate a persisted position after restart. Invariant 9."""
+        self._positions[position.trade_id] = position
+        return position
+
     def _finalize_entry_if_complete(
         self,
         trade_id: str,
@@ -320,7 +329,7 @@ class TradeManager:
     ) -> PositionState:
         pending = self._pending.get(trade_id)
         entry_price = _planned_entry_price(pending, intent)
-        monitor_leg = _monitor_leg(intent)
+        watched = monitor_leg(intent)
         return PositionState(
             trade_id=trade_id,
             intent_id=intent.intent_id,
@@ -331,9 +340,9 @@ class TradeManager:
             state=TradeState.OPENING,
             legs=(
                 PositionLegState(
-                    leg_id=monitor_leg.leg_id,
-                    contract=monitor_leg.contract,
-                    side=monitor_leg.side,
+                    leg_id=watched.leg_id,
+                    contract=watched.contract,
+                    side=watched.side,
                     quantity_contracts=1,
                     average_entry_price=entry_price,
                 ),
@@ -487,26 +496,16 @@ def _planned_entry_price(
 ) -> Price:
     if pending is None:
         raise TradeManagerError("missing pending entry for trade")
-    monitor_leg = _monitor_leg(intent)
+    watched = monitor_leg(intent)
     for order in pending.plan.orders:
-        if order.leg_id == monitor_leg.leg_id:
+        if order.leg_id == watched.leg_id:
             limit_price = order.command.limit_price
             if limit_price is None:
                 raise TradeManagerError("planned entry order is missing a limit price")
             return limit_price
     raise TradeManagerError(
-        f"planned entry order missing for monitor leg {monitor_leg.leg_id}"
+        f"planned entry order missing for monitor leg {watched.leg_id}"
     )
-
-
-def _monitor_leg(intent: TradeIntent) -> IntentLeg:
-    """Return the leg whose price drives exit monitoring for this structure."""
-    if is_credit_spread(intent):
-        return next(leg for leg in intent.legs if leg.side is Side.SELL)
-    buy_legs = [leg for leg in intent.legs if leg.side is Side.BUY]
-    if buy_legs:
-        return buy_legs[0]
-    return intent.legs[0]
 
 
 def _exit_scope(intent: TradeIntent) -> ExitScope:
@@ -525,7 +524,7 @@ def _build_trade_exit_policy(
     quantity_contracts: int = 1,
 ) -> ExitPolicy:
     scope = _exit_scope(intent)
-    monitor_leg = _monitor_leg(intent)
+    watched = monitor_leg(intent)
     return build_exit_policy(
         intent.exit_template,
         trade_id=trade_id,
@@ -534,7 +533,7 @@ def _build_trade_exit_policy(
         initialized_at=initialized_at,
         scope=scope,
         quantity_contracts=quantity_contracts,
-        monitor_side=monitor_leg.side,
+        monitor_side=watched.side,
     )
 
 

@@ -5,6 +5,7 @@ from trading.trade.exits import (
     ExitEvaluation,
     ExitKind,
     build_exit_policy,
+    monitor_leg,
 )
 from trading.trade.manager import TradeManager, TradeManagerError, UnknownTradeError
 
@@ -16,4 +17,5 @@ __all__ = [
     "TradeManagerError",
     "UnknownTradeError",
     "build_exit_policy",
+    "monitor_leg",
 ]
