@@ -16,6 +16,7 @@ from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.portfolio import PortfolioSnapshot
 from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
 from trading.domain.contracts.sizing import SizingRequest
@@ -58,6 +59,7 @@ from trading.risk.sizing.iron_condor import (
 )
 from trading.risk.sizing.long_option import LongOptionSizingEngine, LotBounds
 from trading.risk.snapshot_bundle import validate_leg_snapshot_bundle
+from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 
 __all__ = ["RiskGateway", "RiskGatewayRequest"]
 
@@ -97,6 +99,8 @@ class RiskGatewayRequest:
     # None means the caller supplied no reviewed event state. A strategy that
     # requires a clear blackout must then fail closed.
     event_risk_state: EventRiskState | None = None
+    paper_requirements: PaperDataRequirements | None = None
+    broker_state_ok: bool = True
 
 
 class _SnapshotAudit(TypedDict):
@@ -305,6 +309,16 @@ class RiskGateway:
                 audit=audit,
             )
 
+        paper_block = _paper_p0_reason(request, now=now, margin=sizing.estimated_margin)
+        if paper_block is not None:
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=paper_block,
+                decided_at=now,
+                audit=audit,
+            )
+
         limit_check = evaluate_pre_trade_limits(
             intent,
             portfolio,
@@ -435,6 +449,48 @@ def _detect_structure(request: RiskGatewayRequest) -> _StructureKind | None:
     ):
         return _StructureKind.LONG_OPTION
     return None
+
+
+def _paper_p0_reason(
+    request: RiskGatewayRequest,
+    *,
+    now: datetime,
+    margin: Money,
+) -> tuple[ReasonCode, ...] | None:
+    """Fail closed when the caller asked for the PAPER P0 contract."""
+    requirements = request.paper_requirements
+    if requirements is None:
+        return None
+    if request.leg_snapshots:
+        snapshots = tuple(request.leg_snapshots.values())
+    else:
+        snapshots = (request.feature_snapshot,)
+    assessment = assess_paper_data(
+        requirements,
+        PaperDataInputs(
+            now=now,
+            snapshots=snapshots,
+            event_risk=request.event_risk_state,
+            portfolio=request.portfolio_snapshot,
+            broker_state_ok=request.broker_state_ok,
+            margin_confirmed=not margin.is_zero,
+            margin_required=margin,
+            instruments=_paper_instruments(request),
+        ),
+    )
+    if assessment.p0_ok:
+        return None
+    return assessment.p0_reason_codes or (ReasonCode.DATA_GAP,)
+
+
+def _paper_instruments(request: RiskGatewayRequest) -> dict[str, InstrumentSpec]:
+    mapped = {
+        request.instrument.trading_symbol: request.instrument,
+        request.feature_snapshot.contract.symbol: request.instrument,
+    }
+    for snapshot in request.leg_snapshots.values():
+        mapped[snapshot.contract.symbol] = request.instrument
+    return mapped
 
 
 def _constraint_reason(

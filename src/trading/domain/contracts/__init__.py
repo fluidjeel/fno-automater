@@ -61,6 +61,15 @@ from trading.domain.contracts.order_plan import (
     PlannedOrder,
     ProtectiveOrderStub,
 )
+from trading.domain.contracts.paper_data import (
+    PaperDataAssessment,
+    PaperDataField,
+    PaperDataFieldResult,
+    PaperDataFieldSpec,
+    PaperDataPresence,
+    PaperDataRequirements,
+    PaperDataTier,
+)
 from trading.domain.contracts.portfolio import (
     PendingOrderSummary,
     PortfolioSnapshot,
@@ -140,6 +149,13 @@ __all__ = [
     "OrderEvent",
     "OrderIdentity",
     "OrderPlan",
+    "PaperDataAssessment",
+    "PaperDataField",
+    "PaperDataFieldResult",
+    "PaperDataFieldSpec",
+    "PaperDataPresence",
+    "PaperDataRequirements",
+    "PaperDataTier",
     "ParameterProposal",
     "PendingOrderSummary",
     "PlannedOrder",

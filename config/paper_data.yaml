@@ -1,0 +1,62 @@
+# Two-tier PAPER market-data contract. P0 fails closed; P1 is observed-only.
+# Freshness SLAs align with config/paper.yaml quote_max_age_ms and
+# config/data_pipeline.yaml chain/bar/depth ages. Do not invent a universal
+# threshold.
+schema_version: "1"
+requirements_version: "paper-data-v1"
+
+fields:
+  # Priority 0 — required for every paper entry
+  - field: LTP
+    tier: P0
+    max_age_ms: 120000
+    zero_invalid: true
+  - field: BID_ASK
+    tier: P0
+    max_age_ms: 120000
+    zero_invalid: true
+  - field: QUOTE_FRESHNESS
+    tier: P0
+    max_age_ms: 120000
+  - field: VOLUME
+    tier: P0
+    max_age_ms: 120000
+    zero_invalid: false
+  - field: OPEN_INTEREST
+    tier: P0
+    max_age_ms: 120000
+    zero_invalid: true
+  - field: CONTRACT_METADATA
+    tier: P0
+  - field: MARGIN_ESTIMATE
+    tier: P0
+    zero_invalid: true
+  - field: POSITION_BROKER_STATE
+    tier: P0
+  - field: EVENT_STATE
+    tier: P0
+    max_age_ms: 300000
+
+  # Priority 1 — improve selection when observed; never invent
+  - field: IV_SURFACE
+    tier: P1
+    max_age_ms: 120000
+    min_points: 4
+  - field: IV_SKEW
+    tier: P1
+    max_age_ms: 120000
+  - field: TERM_STRUCTURE
+    tier: P1
+    max_age_ms: 120000
+    min_points: 2
+  - field: REALIZED_VOLATILITY
+    tier: P1
+    max_age_ms: 300000
+  - field: GREEKS
+    tier: P1
+    max_age_ms: 120000
+  - field: DEPTH
+    tier: P1
+    max_age_ms: 60000
+    # CAS already requires licensed depth; do not auto-ENABLE the family.
+    block_families: [cas_microstructure]

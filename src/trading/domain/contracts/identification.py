@@ -138,6 +138,8 @@ class SetupFeatures(VersionedModel):
     event_state: NonEmptyStr
     macro_status: MacroStatus
     rejected_alternatives: tuple[NonEmptyStr, ...] = ()
+    p1_fields_used: tuple[NonEmptyStr, ...] = ()
+    p1_fields_absent: tuple[NonEmptyStr, ...] = ()
 
 
 class RouteDecision(VersionedModel):

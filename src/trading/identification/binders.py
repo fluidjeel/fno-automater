@@ -8,8 +8,10 @@ from typing import cast
 
 from trading.domain.contracts import CandidateBinding, FeatureSnapshot, MarketState
 from trading.domain.contracts.identification import SetupFeatures, StructureKind
+from trading.domain.contracts.paper_data import PaperDataField
 from trading.domain.enums import InstrumentKind, OptionType, ReasonCode
 from trading.identification.config import IdentificationPolicy
+from trading.identification.p1_features import ObservedP1Features
 
 __all__ = ["BoundCandidates", "bind_debit_spread", "bind_long_option"]
 
@@ -29,6 +31,7 @@ def bind_long_option(
     *,
     market: MarketState,
     policy: IdentificationPolicy,
+    p1: ObservedP1Features | None = None,
 ) -> BoundCandidates:
     option_type = _direction_type(market)
     eligible = [
@@ -41,7 +44,10 @@ def bind_long_option(
         and _dte_ok(item, policy)
     ]
     ranked = sorted(
-        ((_candidate_score(item, candidates, policy), item) for item in eligible),
+        (
+            (_candidate_score(item, candidates, policy, p1=p1), item)
+            for item in eligible
+        ),
         key=lambda pair: (-pair[0], pair[1].contract.symbol),
     )
     rejected = tuple(
@@ -80,6 +86,7 @@ def bind_long_option(
             score=score,
             policy=policy,
             rejected=rejected,
+            p1=p1,
         ),
     )
 
@@ -89,6 +96,7 @@ def bind_debit_spread(
     *,
     market: MarketState,
     policy: IdentificationPolicy,
+    p1: ObservedP1Features | None = None,
 ) -> BoundCandidates:
     option_type = _direction_type(market)
     legs = [
@@ -119,6 +127,8 @@ def bind_debit_spread(
                     policy.contracts.long_delta_min,
                     policy.contracts.long_delta_max,
                 ),
+                p1=p1,
+                role="long",
             )
             short_score = _candidate_score(
                 short_leg,
@@ -128,6 +138,8 @@ def bind_debit_spread(
                     policy.contracts.short_delta_min,
                     policy.contracts.short_delta_max,
                 ),
+                p1=p1,
+                role="short",
             )
             score = (long_score + short_score) / 2
             pairs.append((_q(score), long_leg, short_leg))
@@ -180,6 +192,7 @@ def bind_debit_spread(
             score=score,
             policy=policy,
             rejected=rejected,
+            p1=p1,
         ),
     )
 
@@ -285,6 +298,8 @@ def _candidate_score(
     policy: IdentificationPolicy,
     *,
     delta_range: tuple[Decimal, Decimal] | None = None,
+    p1: ObservedP1Features | None = None,
+    role: str = "long",
 ) -> Decimal:
     derivatives = candidate.derivatives
     if derivatives is None:
@@ -319,12 +334,116 @@ def _candidate_score(
     dte_score = max(_ZERO, _ONE - abs(dte - target) / target)
     spread = _spread_fraction(candidate) or policy.contracts.max_spread_fraction
     spread_score = max(_ZERO, _ONE - spread / policy.contracts.max_spread_fraction)
-    return _q(
+    base = (
         Decimal("0.35") * liquidity
         + Decimal("0.25") * delta_score
         + Decimal("0.20") * dte_score
         + Decimal("0.20") * spread_score
     )
+    extra = _p1_score(candidate, p1, role=role)
+    if extra is None:
+        return _q(base)
+    return _q(Decimal("0.80") * base + Decimal("0.20") * extra)
+
+
+def _p1_score(
+    candidate: FeatureSnapshot,
+    p1: ObservedP1Features | None,
+    *,
+    role: str,
+) -> Decimal | None:
+    """Observed-only ranking tilt. Missing P1 series are skipped, never filled."""
+    if p1 is None:
+        return None
+    parts = [
+        score
+        for score in (
+            _p1_iv_score(candidate, p1, role=role),
+            _p1_skew_score(candidate, p1),
+            _p1_term_score(candidate, p1),
+            _p1_depth_score(candidate, p1),
+            _p1_theta_score(candidate, p1),
+        )
+        if score is not None
+    ]
+    if not parts:
+        return None
+    return sum(parts, _ZERO) / Decimal(len(parts))
+
+
+def _p1_iv_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features, *, role: str
+) -> Decimal | None:
+    if PaperDataField.IV_SURFACE not in p1.present:
+        return None
+    iv = _implied_vol(candidate)
+    atm = p1.atm_iv(candidate.contract.expiry)
+    if iv is None or atm is None or atm <= 0:
+        return None
+    relative = iv / atm
+    if role == "short":
+        return _clamp(_ONE - abs(relative - Decimal("1.10")), _ZERO, _ONE)
+    return _clamp(Decimal(2) - relative, _ZERO, _ONE)
+
+
+def _p1_skew_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.IV_SKEW not in p1.present or p1.iv_skew is None:
+        return None
+    option_type = candidate.contract.option_type
+    if option_type is OptionType.CALL:
+        return _ONE if p1.iv_skew > 0 else Decimal("0.5")
+    if option_type is OptionType.PUT:
+        return _ONE if p1.iv_skew < 0 else Decimal("0.5")
+    return None
+
+
+def _p1_term_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.TERM_STRUCTURE not in p1.present or not p1.term_atm_iv:
+        return None
+    cheapest = min(value for _expiry, value in p1.term_atm_iv)
+    atm = p1.atm_iv(candidate.contract.expiry)
+    if atm is None or atm <= 0:
+        return None
+    return _clamp(cheapest / atm, _ZERO, _ONE)
+
+
+def _p1_depth_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.DEPTH not in p1.present:
+        return None
+    bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
+    if bid_size is None or ask_size is None or min(bid_size, ask_size) <= 0:
+        return None
+    return _ONE
+
+
+def _p1_theta_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.GREEKS not in p1.present:
+        return None
+    if candidate.derivatives is None or candidate.derivatives.greeks is None:
+        return None
+    theta = candidate.derivatives.greeks.theta
+    if theta is None:
+        return None
+    return _clamp(_ONE - abs(theta), _ZERO, _ONE)
+
+
+def _implied_vol(candidate: FeatureSnapshot) -> Decimal | None:
+    derivatives = candidate.derivatives
+    if derivatives is None or derivatives.greeks is None:
+        return None
+    return derivatives.greeks.implied_volatility
+
+
+def _clamp(value: Decimal, low: Decimal, high: Decimal) -> Decimal:
+    return min(max(value, low), high)
 
 
 def _setup(
@@ -335,6 +454,7 @@ def _setup(
     score: Decimal,
     policy: IdentificationPolicy,
     rejected: tuple[str, ...],
+    p1: ObservedP1Features | None = None,
 ) -> SetupFeatures:
     derivatives = candidate.derivatives
     if derivatives is None:
@@ -366,6 +486,8 @@ def _setup(
         event_state=market.event_state,
         macro_status=market.macro_status,
         rejected_alternatives=rejected,
+        p1_fields_used=() if p1 is None else tuple(item.value for item in p1.present),
+        p1_fields_absent=() if p1 is None else tuple(item.value for item in p1.absent),
     )
 
 

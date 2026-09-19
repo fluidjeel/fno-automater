@@ -22,6 +22,7 @@ from trading.config.loader import (
     load_config,
     load_config_text,
 )
+from trading.config.paper_data import PaperDataConfigError, load_paper_data_requirements
 from trading.config.risk_policy import (
     LoadedRiskPolicy,
     MissingMonitorResolution,
@@ -62,6 +63,7 @@ __all__ = [
     "LoadedRiskPolicy",
     "MarginRules",
     "MissingMonitorResolution",
+    "PaperDataConfigError",
     "RiskLimits",
     "RiskPolicyConfig",
     "RiskPolicyLoadError",
@@ -73,5 +75,6 @@ __all__ = [
     "load_config",
     "load_config_text",
     "load_evaluation_config",
+    "load_paper_data_requirements",
     "load_risk_policy",
 ]
