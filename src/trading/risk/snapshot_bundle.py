@@ -20,6 +20,8 @@ from trading.domain.enums import ReasonCode
 
 __all__ = ["LegSnapshotBundle", "validate_leg_snapshot_bundle"]
 
+_SKEW_COMPARISON_LEGS = 2
+
 
 @dataclass(frozen=True, slots=True)
 class LegSnapshotBundle:
@@ -74,7 +76,7 @@ def validate_leg_snapshot_bundle(
         if age < timedelta(0) or _timedelta_ms(age) > max_age_ms:
             return _reject(audit, ReasonCode.DATA_STALE)
         event_times.append(snapshot.times.event_time)
-    if len(event_times) >= 2:
+    if len(event_times) >= _SKEW_COMPARISON_LEGS:
         skew = max(event_times) - min(event_times)
         if _timedelta_ms(skew) > max_skew_ms:
             return _reject(audit, ReasonCode.SNAPSHOT_MISMATCH)

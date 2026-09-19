@@ -28,7 +28,9 @@ from trading.domain.contracts import (
     DerivativesContext,
     EntryFreezeRecord,
     FeatureSnapshot,
+    Greeks,
     IntentLeg,
+    RiskDecision,
     TradeIntent,
 )
 from trading.domain.enums import (
@@ -86,12 +88,20 @@ def _option_quote(
     payload: dict[str, object] = {
         "snapshot_id": snapshot_id,
         "contract": contract,
-        "market": f.quote(bid=f.price(bid), ask=f.price(ask), bid_size=300, ask_size=300),
+        "market": f.quote(
+            bid=f.price(bid), ask=f.price(ask), bid_size=300, ask_size=300
+        ),
         "derivatives": DerivativesContext(
             days_to_expiry=10,
             open_interest=5000,
             option_type=OptionType.CALL,
             underlying_price=f.price("24000"),
+            greeks=Greeks(
+                model="bs",
+                calculation_version="1",
+                converged=True,
+                delta=Decimal("0.55"),
+            ),
         ),
     }
     payload.update(overrides)
@@ -118,6 +128,26 @@ def _debit_intent(snapshot_id: str) -> TradeIntent:
                 ratio=1,
             ),
         ),
+    )
+
+
+def _evaluate_debit(
+    store: TradingStore,
+    clock: FrozenClock,
+    *,
+    intent: TradeIntent,
+    feature: FeatureSnapshot,
+    leg_snapshots: dict[str, FeatureSnapshot],
+) -> RiskDecision:
+    return _gateway(store, clock).evaluate(
+        RiskGatewayRequest(
+            intent=intent,
+            feature_snapshot=feature,
+            portfolio_snapshot=f.portfolio_snapshot(),
+            instrument=instrument_spec(),
+            leg_snapshots=leg_snapshots,
+            event_risk_state=f.event_risk_state(),
+        )
     )
 
 
@@ -159,14 +189,12 @@ class TestDebitSpreadSnapshotBundle:
         )
         intent = _debit_intent("SNAP-CYCLE")
         feature = long_snap.model_copy(update={"snapshot_id": "SNAP-CYCLE"})
-        decision = _gateway(store, clock).evaluate(
-            RiskGatewayRequest(
-                intent=intent,
-                feature_snapshot=feature,
-                portfolio_snapshot=f.portfolio_snapshot(),
-                instrument=instrument_spec(),
-                leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
-            )
+        decision = _evaluate_debit(
+            store,
+            clock,
+            intent=intent,
+            feature=feature,
+            leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
         )
         assert decision.action in {RiskAction.APPROVE, RiskAction.RESIZE}
         ids = {item.snapshot_id for item in decision.leg_quotes}
@@ -189,14 +217,12 @@ class TestDebitSpreadSnapshotBundle:
         )
         intent = _debit_intent("SNAP-CYCLE")
         feature = long_snap.model_copy(update={"snapshot_id": "SNAP-CYCLE"})
-        decision = _gateway(store, clock).evaluate(
-            RiskGatewayRequest(
-                intent=intent,
-                feature_snapshot=feature,
-                portfolio_snapshot=f.portfolio_snapshot(),
-                instrument=instrument_spec(),
-                leg_snapshots={"leg-long": long_snap, "leg-short": wrong},
-            )
+        decision = _evaluate_debit(
+            store,
+            clock,
+            intent=intent,
+            feature=feature,
+            leg_snapshots={"leg-long": long_snap, "leg-short": wrong},
         )
         assert decision.action is RiskAction.REJECT
         assert ReasonCode.SNAPSHOT_MISMATCH in decision.reason_codes
@@ -226,14 +252,12 @@ class TestDebitSpreadSnapshotBundle:
         )
         intent = _debit_intent("SNAP-CYCLE")
         feature = long_snap.model_copy(update={"snapshot_id": "SNAP-CYCLE"})
-        decision = _gateway(store, clock).evaluate(
-            RiskGatewayRequest(
-                intent=intent,
-                feature_snapshot=feature,
-                portfolio_snapshot=f.portfolio_snapshot(),
-                instrument=instrument_spec(),
-                leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
-            )
+        decision = _evaluate_debit(
+            store,
+            clock,
+            intent=intent,
+            feature=feature,
+            leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
         )
         assert decision.action is RiskAction.REJECT
         assert ReasonCode.SNAPSHOT_MISMATCH in decision.reason_codes
@@ -263,14 +287,12 @@ class TestDebitSpreadSnapshotBundle:
         )
         intent = _debit_intent("SNAP-CYCLE")
         feature = long_snap.model_copy(update={"snapshot_id": "SNAP-CYCLE"})
-        decision = _gateway(store, clock).evaluate(
-            RiskGatewayRequest(
-                intent=intent,
-                feature_snapshot=feature,
-                portfolio_snapshot=f.portfolio_snapshot(),
-                instrument=instrument_spec(),
-                leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
-            )
+        decision = _evaluate_debit(
+            store,
+            clock,
+            intent=intent,
+            feature=feature,
+            leg_snapshots={"leg-long": long_snap, "leg-short": short_snap},
         )
         assert decision.action is RiskAction.REJECT
         assert ReasonCode.SNAPSHOT_MISMATCH in decision.reason_codes
@@ -395,14 +417,12 @@ class TestMissingMonitor:
         )
         intent = _debit_intent("SNAP-CYCLE")
         feature = long_snap.model_copy(update={"snapshot_id": "SNAP-CYCLE"})
-        decision = _gateway(store, clock).evaluate(
-            RiskGatewayRequest(
-                intent=intent,
-                feature_snapshot=feature,
-                portfolio_snapshot=f.portfolio_snapshot(),
-                instrument=instrument_spec(),
-                leg_snapshots={"leg-long": long_snap},
-            )
+        decision = _evaluate_debit(
+            store,
+            clock,
+            intent=intent,
+            feature=feature,
+            leg_snapshots={"leg-long": long_snap},
         )
         assert decision.action is RiskAction.REJECT
         assert ReasonCode.SNAPSHOT_MISMATCH in decision.reason_codes
@@ -553,14 +573,6 @@ class TestExitTemplateFixtures:
         assert evaluation.action is ReviewAction.PARTIAL_EXIT
         assert evaluation.exit_quantity_contracts is not None
         assert 0 < evaluation.exit_quantity_contracts < 75
-        assert evaluation.action is ReviewAction.TIGHTEN_STOP
-        assert evaluation.updated_policy is not None
-        assert evaluation.updated_policy.stop_price is not None
-        assert position.exit_policy.stop_price is not None
-        assert (
-            evaluation.updated_policy.stop_price.value
-            > position.exit_policy.stop_price.value
-        )
 
 
 def test_entry_freeze_upsert_is_idempotent(tmp_path: Path, clock: FrozenClock) -> None:

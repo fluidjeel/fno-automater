@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum, unique
-
 from typing import TypedDict
 
 from trading.broker.ports import MarginPreviewPort

@@ -1,8 +1,8 @@
 # Current State
 
 LAST_UPDATED: 2026-09-19
-CURRENT_MILESTONE: Phase 4–6 - Unattended PAPER session
-STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
+CURRENT_MILESTONE: Phase 4–6 - PAPER P0 safety hardening
+STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
 
@@ -47,11 +47,10 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
 
 ## Verification
 
-- `uv run ruff check .` and `uv run mypy --strict` are required after this
-  change.
-- Offline tests include `tests/test_paper_session.py`,
-  `tests/test_paper_lifecycle.py`, `tests/test_paper_review.py`,
-  `tests/test_paper_safety_hardening.py` and `tests/test_candidates.py`.
+- `uv run ruff check .` and `uv run mypy --strict src tests` are clean.
+- Focused PAPER-009 suite: 75 passed
+  (`tests/test_paper_safety_hardening.py`, lifecycle, review, runner,
+  debit-spread, risk gateway, trading store, positional e2e sim).
 
 ## Blocking gaps
 
@@ -66,8 +65,9 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
 
 ## Next action
 
-Sunday: `trading data backfill instruments`. Monday: start
-`trading paper session` (Telegram OAuth is the only human step).
+Sunday: `trading data backfill instruments`. Monday: supervised
+`trading paper session` (Telegram OAuth is the only human step). Do not
+treat software stops or the 60s poll as live-safe.
 
 ## Update rules
 

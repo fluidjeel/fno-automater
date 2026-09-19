@@ -425,6 +425,12 @@ class TestPaperSessionReviews:
         stop = _option_snapshot(
             opened.legs[0].contract,
             market=f.quote(bid=f.price("1.00"), ask=f.price("1.05")),
+            times=f.snapshot_times(
+                event_time=SLOT_1100,
+                source_time=SLOT_1100,
+                receive_time=SLOT_1100 + timedelta(milliseconds=50),
+                calculation_time=SLOT_1100 + timedelta(milliseconds=120),
+            ),
         )
         clock.set(SLOT_1100)
         events = runner.manage_exits({symbol: stop})

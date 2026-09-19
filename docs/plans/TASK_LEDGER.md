@@ -68,7 +68,7 @@ variant needs a neutral-regime rule that is not yet specified.
 | PAPER-006 | DONE | PAPER positional lifecycle persistence and restart recovery | `tests/test_paper_lifecycle.py`; software-only exits, 60s poll, no broker-resident PAPER stops |
 | PAPER-007 | DONE | Twice-daily PAPER positional review (10:30/14:30 IST) against persisted frozen policy | `tests/test_paper_review.py`; HOLD/TIGHTEN/PARTIAL/FULL; hedge/roll proposal-only; missed-slot restart |
 | PAPER-008 | DONE | Observational 12-case PAPER positional e2e sim (no production patch) | `tests/paper_positional_sim/`; debit-spread SNAPSHOT_MISMATCH recorded as P0 |
-| PAPER-009 | DONE | P0 safety hardening: multi-leg quote bundle, persistent entry freeze, missing-monitor UNPROTECTED_POSITION, stale PROTECTION_DEGRADED | `tests/test_paper_safety_hardening.py`; 60s poll documented as SAFETY not OK for live; production BE/trail still disabled |
+| PAPER-009 | DONE | P0 safety hardening: multi-leg quote bundle, persistent entry freeze, missing-monitor UNPROTECTED_POSITION, stale PROTECTION_DEGRADED | 75 focused tests pass; ruff/mypy clean; 60s poll is SAFETY not OK for live; unattended PAPER is not claimed ready |
 | PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
 | CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 

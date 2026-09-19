@@ -804,8 +804,7 @@ def case_10(workdir: Path) -> CaseResult:
     freeze = world.store.get_entry_freeze()
     false_claim = any(
         "software stops still apply" in review.detail
-        or "broker-resident" in review.detail
-        and "still apply" in review.detail
+        or ("broker-resident" in review.detail and "still apply" in review.detail)
         for row in world.store.list_position_lifecycle()
         for review in row.reviews
     )
@@ -841,9 +840,7 @@ def case_10(workdir: Path) -> CaseResult:
         ),
         str(workdir / "c10"),
         trace,
-        first_fail=None
-        if ok
-        else "PaperRunner._handle_stale_protection",
+        first_fail=None if ok else "PaperRunner._handle_stale_protection",
         proposed_fix=None
         if ok
         else "Persist PROTECTION_DEGRADED, freeze entries, and never claim a software stop is broker-resident.",
@@ -901,9 +898,11 @@ def case_11(workdir: Path) -> CaseResult:
     missing_freeze = world2.store.get_entry_freeze()
     world.close()
     world2.close()
-    fail_closed = partial_state is TradeState.REPAIR_REQUIRED or (
-        positions and world.runner.last_recovery.entries_blocked
-    ) or bool(positions)
+    fail_closed = (
+        partial_state is TradeState.REPAIR_REQUIRED
+        or (positions and world.runner.last_recovery.entries_blocked)
+        or bool(positions)
+    )
     silent_hold = (
         ReviewAction.HOLD in missing_reviews
         and ReasonCode.PRICE_UNAVAILABLE in missing_reasons
