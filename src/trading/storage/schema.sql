@@ -40,3 +40,11 @@ CREATE TABLE IF NOT EXISTS position_lifecycle (
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS review_slot_runs (
+    slot_id TEXT NOT NULL,
+    session_date TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    as_of TEXT NOT NULL,
+    PRIMARY KEY (slot_id, session_date)
+);

@@ -32,7 +32,13 @@ from trading.data.storage.snapshot_store import SnapshotStore
 from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec
 from trading.domain.contracts.snapshot import MarketQuote
-from trading.domain.enums import Exchange, ExecutionMode, InstrumentKind, TradeState
+from trading.domain.enums import (
+    Exchange,
+    ExecutionMode,
+    InstrumentKind,
+    ReviewSlotId,
+    TradeState,
+)
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.identification import (
@@ -57,12 +63,14 @@ from trading.runtime.notify import (
     format_eod_report,
     format_lifecycle_alert,
     format_post_trade,
+    format_review_decision,
 )
 from trading.runtime.paper_runner import (
     PaperCycleResult,
     PaperRunner,
     PaperStrategyRequest,
 )
+from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment
 
@@ -70,6 +78,23 @@ __all__ = ["PaperSessionConfig", "load_paper_session_config", "run_paper_session
 
 _IST = ZoneInfo("Asia/Kolkata")
 _NOTIFY_MAX = 4000
+
+
+class ReviewSlotConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: ReviewSlotId
+    local: str
+
+
+class PositionalReviewConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    nse_slots: tuple[ReviewSlotConfig, ...] = (
+        ReviewSlotConfig(id=ReviewSlotId.NSE_MORNING, local="10:30"),
+        ReviewSlotConfig(id=ReviewSlotId.NSE_AFTERNOON, local="14:30"),
+    )
+    mcx_slots: tuple[ReviewSlotConfig, ...] = ()
 
 
 class PaperSessionConfig(BaseModel):
@@ -87,6 +112,9 @@ class PaperSessionConfig(BaseModel):
     cohort_dir: str
     store_path: str
     broker_state_path: str
+    positional_review: PositionalReviewConfig = Field(
+        default_factory=PositionalReviewConfig
+    )
 
 
 class SessionNotifier(Protocol):
@@ -193,6 +221,7 @@ class PaperSession:
                     self._notifier.send(text[:_NOTIFY_MAX])
         if snapshots:
             self._runner.manage_exits(snapshots)
+        self._run_due_reviews(snapshots)
         return result
 
     def _has_open_positions(self) -> bool:
@@ -200,6 +229,26 @@ class PaperSession:
             position.state is not TradeState.CLOSED
             for position in self._runner.trade_manager.list_positions()
         )
+
+    def _run_due_reviews(self, snapshots: dict[str, FeatureSnapshot]) -> None:
+        """Fire missed or on-time NSE review slots. Continuous exits already ran."""
+        now = self._clock.now_utc()
+        local = now.astimezone(self._zone)
+        eod = _parse_hhmm(self._config.eod_local)
+        slots = _configured_slots(self._config.positional_review)
+        recorded = self._runner.recorded_review_slots(local.date())
+        for slot in due_review_slots(
+            now_local=local,
+            session_open=self._open,
+            eod=eod,
+            slots=slots,
+            recorded=recorded,
+        ):
+            result = self._runner.run_review_slot(
+                slot, snapshots, session_date=local.date()
+            )
+            for decision in result.decisions:
+                self._notifier.send(format_review_decision(decision)[:_NOTIFY_MAX])
 
     def _past_eod(self, local_time: dt_time) -> bool:
         hour, minute = (int(part) for part in self._config.eod_local.split(":", 1))
@@ -352,8 +401,14 @@ def run_paper_session(
 
 
 def _parse_hhmm(value: str) -> dt_time:
-    hour, minute = (int(part) for part in value.split(":", 1))
-    return dt_time(hour, minute)
+    return parse_hhmm(value)
+
+
+def _configured_slots(config: PositionalReviewConfig) -> tuple[ReviewSlot, ...]:
+    slots: list[ReviewSlot] = []
+    for item in (*config.nse_slots, *config.mcx_slots):
+        slots.append(ReviewSlot(slot_id=item.id, local=parse_hhmm(item.local)))
+    return tuple(slots)
 
 
 def _quote_from_capture(

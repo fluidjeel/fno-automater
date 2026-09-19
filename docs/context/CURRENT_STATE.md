@@ -30,6 +30,11 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
   exits keep frozen `LEG_PRICE` on the strategy monitor long (not first
   `position.legs[0]`, not remapped to `STRATEGY_PNL`). Iron condors stay
   `STRATEGY_PNL`.
+- Twice-daily NSE positional review at 10:30 and 14:30 IST (config-driven)
+  decides HOLD / TIGHTEN_STOP / PARTIAL_EXIT / FULL_EXIT against that frozen
+  policy, or emits a HEDGE/ROLL proposal that cannot auto-submit (PAPER-007).
+  Missed slots run once on restart if still before EOD. Continuous software
+  exits still evaluate every poll.
 - Paper broker synthetic margin for live weekly symbols. Isolation still refuses
   Fyers transaction adapters (PAPER-004).
 - Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.
@@ -39,7 +44,8 @@ STATUS: PAPER_SESSION_READY_PROMOTION_BLOCKED
 - `uv run ruff check .` and `uv run mypy --strict` are required after this
   change.
 - Offline tests include `tests/test_paper_session.py`,
-  `tests/test_paper_lifecycle.py` and `tests/test_candidates.py`.
+  `tests/test_paper_lifecycle.py`, `tests/test_paper_review.py` and
+  `tests/test_candidates.py`.
 
 ## Blocking gaps
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 
 from trading.broker.paper import PaperBroker
 from trading.config.evaluation import FillModelConfig
@@ -21,6 +21,7 @@ from trading.domain.contracts import (
     InstrumentSpec,
     OrderEvent,
     PositionLifecycleRecord,
+    PositionReviewRecord,
     ReconciliationEvent,
     RiskDecision,
     RouteDecision,
@@ -35,6 +36,7 @@ from trading.domain.contracts.position import PositionState
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     DifferenceClass,
+    Exchange,
     ExecutionMode,
     ExitScope,
     HoldingStyle,
@@ -43,6 +45,8 @@ from trading.domain.enums import (
     OrderType,
     ReasonCode,
     ReconciliationTrigger,
+    ReviewAction,
+    ReviewSlotId,
     RiskAction,
     Severity,
     Side,
@@ -68,15 +72,23 @@ from trading.portfolio import (
 )
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
 from trading.runtime.isolation import assert_paper_isolation
+from trading.runtime.review_schedule import ReviewSlot
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
 from trading.storage.trading_store import TradingEventType, TradingStore
 from trading.strategies import StrategyContext, build_strategy
 from trading.strategies.macro import MacroAssessment
-from trading.trade import TradeManager, monitor_leg
+from trading.trade import (
+    TradeManager,
+    assert_stop_not_wider,
+    monitor_leg,
+)
+from trading.trade.exits import ExitEvaluation, ExitKind
+from trading.trade.review import ReviewEngine, ReviewEvaluation
 
 __all__ = [
     "LifecycleAlert",
     "PaperCycleResult",
+    "PaperReviewResult",
     "PaperRunner",
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
@@ -149,6 +161,16 @@ class PaperCycleResult:
     reconcile_id: str
     entries_blocked: bool
     route_decision: RouteDecision | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperReviewResult:
+    """Outcome of one scheduled positional review slot."""
+
+    slot_id: ReviewSlotId
+    session_date: date
+    decisions: tuple[PositionReviewRecord, ...]
+    slot_recorded: bool
 
 
 @dataclass
@@ -234,6 +256,7 @@ class PaperRunner:
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._lifecycle_recovered = False
+        self._review_engine = ReviewEngine()
         self._last_recovery = PositionRecoveryResult(
             restored_trade_ids=(),
             entries_blocked=False,
@@ -414,18 +437,199 @@ class PaperRunner:
             events.extend(self._submit_exit(intent, decision, updated, snapshots))
         return tuple(events)
 
+    def run_review_slot(
+        self,
+        slot: ReviewSlot,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        session_date: date,
+    ) -> PaperReviewResult:
+        """Review persisted positional opens for one due slot. Idempotent.
+
+        HEDGE/ROLL emit a structured proposal and do not submit. Stops stay
+        software-only; this does not place a broker-resident protective order.
+        """
+        if self._services.store.has_review_slot_run(slot.slot_id, session_date):
+            return PaperReviewResult(
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                decisions=(),
+                slot_recorded=False,
+            )
+        decisions = self._review_positions(slot, snapshots, session_date=session_date)
+        inserted = self._services.store.record_review_slot_run(
+            slot_id=slot.slot_id,
+            session_date=session_date,
+            venue=slot.venue,
+            as_of=self._clock.now_utc(),
+        )
+        return PaperReviewResult(
+            slot_id=slot.slot_id,
+            session_date=session_date,
+            decisions=decisions,
+            slot_recorded=inserted,
+        )
+
+    def recorded_review_slots(
+        self, session_date: date
+    ) -> frozenset[tuple[date, ReviewSlotId]]:
+        """Slots already persisted for an IST session date."""
+        return frozenset(
+            (day, slot_id)
+            for slot_id, day in self._services.store.list_review_slot_runs(session_date)
+        )
+
+    def _review_positions(
+        self,
+        slot: ReviewSlot,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        session_date: date,
+    ) -> tuple[PositionReviewRecord, ...]:
+        now = self._clock.now_utc()
+        decisions: list[PositionReviewRecord] = []
+        for position in self._services.trade_manager.list_positions():
+            book = self._open_book.get(position.trade_id)
+            if book is None:
+                continue
+            intent, decision = book
+            holding = _holding_style(intent)
+            if holding is not HoldingStyle.POSITIONAL:
+                continue
+            if not _matches_slot_venue(position, slot.venue):
+                continue
+            persisted = self._services.store.get_position_lifecycle(position.trade_id)
+            prior = persisted.reviews if persisted is not None else ()
+            if any(
+                item.slot_id is slot.slot_id and item.session_date == session_date
+                for item in prior
+            ):
+                continue
+            leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
+            feature = (
+                _monitor_snapshot(intent, leg_snapshots)
+                if leg_snapshots is not None
+                else None
+            )
+            if feature is None:
+                review = _hold_unavailable_review(
+                    trade_id=position.trade_id,
+                    policy_id=position.exit_policy.policy_id,
+                    slot_id=slot.slot_id,
+                    session_date=session_date,
+                    review_id=self._ids.new_id("REV"),
+                    now=now,
+                )
+                self._write_lifecycle(position.trade_id, extra_reviews=(review,))
+                decisions.append(review)
+                continue
+            evaluation = self._review_engine.evaluate(
+                position,
+                intent,
+                feature,
+                now=now,
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                holding_style=holding,
+                prior_reviews=prior,
+                leg_snapshots=leg_snapshots,
+            )
+            if evaluation.reason_code is ReasonCode.REVIEW_DUPLICATE_SLOT:
+                continue
+            submitted = self._apply_review(
+                evaluation,
+                intent=intent,
+                decision=decision,
+                position=position,
+                snapshots=snapshots,
+            )
+            review = _stamp_review(
+                evaluation,
+                trade_id=position.trade_id,
+                policy_id=position.exit_policy.policy_id,
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                review_id=self._ids.new_id("REV"),
+                submitted=submitted,
+                now=now,
+            )
+            self._write_lifecycle(position.trade_id, extra_reviews=(review,))
+            decisions.append(review)
+        return tuple(decisions)
+
+    def _apply_review(
+        self,
+        evaluation: ReviewEvaluation,
+        *,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> bool:
+        if evaluation.action is ReviewAction.TIGHTEN_STOP:
+            policy = evaluation.updated_policy
+            if policy is None:
+                return False
+            assert_stop_not_wider(
+                position.exit_policy, policy, monitor_leg(intent).side
+            )
+            self._services.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.NONE,
+                    reason_code=ReasonCode.OK,
+                    detail=evaluation.detail,
+                    updated_policy=policy,
+                ),
+            )
+            return False
+        if evaluation.action.is_proposal or evaluation.action is ReviewAction.HOLD:
+            return False
+        if not evaluation.should_submit_exit:
+            return False
+        self._services.trade_manager.apply_exit_evaluation(
+            position.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail=evaluation.detail,
+                updated_policy=evaluation.updated_policy,
+            ),
+        )
+        pending = self._services.trade_manager.get_position(position.trade_id)
+        if pending is None:
+            return False
+        events = self._submit_exit(
+            intent,
+            decision,
+            pending,
+            snapshots,
+            quantity_contracts=evaluation.exit_quantity_contracts,
+            remaining_stays_open=evaluation.action is ReviewAction.PARTIAL_EXIT,
+        )
+        return bool(events)
+
     def _exit_plan(
         self,
         intent: TradeIntent,
         decision: RiskDecision,
         position: PositionState,
         snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        quantity_contracts: int | None = None,
     ) -> OrderPlan | None:
         now = self._clock.now_utc()
         orders: list[PlannedOrder] = []
         for leg in position.legs:
             snapshot = snapshots.get(leg.contract.symbol)
             if snapshot is None:
+                return None
+            qty = (
+                quantity_contracts
+                if quantity_contracts is not None
+                else leg.quantity_contracts
+            )
+            if qty <= 0 or qty > leg.quantity_contracts:
                 return None
             exit_side = Side.SELL if leg.side is Side.BUY else Side.BUY
             limit = (
@@ -434,7 +638,12 @@ class PaperRunner:
             if limit is None:
                 return None
             internal_order_id = self._ids.new_id("ORD")
-            exit_leg_id = f"{leg.leg_id}-exit"
+            partial = qty != leg.quantity_contracts
+            exit_leg_id = (
+                f"{leg.leg_id}-review-partial-{qty}"
+                if partial
+                else f"{leg.leg_id}-exit"
+            )
             orders.append(
                 PlannedOrder(
                     plan_leg_id=exit_leg_id,
@@ -449,7 +658,7 @@ class PaperRunner:
                             intent_id=intent.intent_id,
                             leg_id=exit_leg_id,
                             side=exit_side.value,
-                            quantity_contracts=leg.quantity_contracts,
+                            quantity_contracts=qty,
                         ),
                         intent_id=intent.intent_id,
                         risk_decision_id=decision.decision_id,
@@ -463,7 +672,7 @@ class PaperRunner:
                         side=exit_side,
                         order_type=OrderType.LIMIT,
                         time_in_force=TimeInForce.DAY,
-                        quantity_contracts=leg.quantity_contracts,
+                        quantity_contracts=qty,
                         limit_price=limit,
                     ),
                     plan_state=OrderPlanState.RISK_APPROVED,
@@ -507,11 +716,28 @@ class PaperRunner:
         decision: RiskDecision,
         position: PositionState,
         snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        quantity_contracts: int | None = None,
+        remaining_stays_open: bool = False,
     ) -> tuple[OrderEvent, ...]:
         record = self._services.store.get_position_lifecycle(position.trade_id)
-        if record is not None and record.exit_order_ids:
-            return self._adopt_existing_exit_orders(record)
-        plan = self._exit_plan(intent, decision, position, snapshots)
+        live = self._services.trade_manager.get_position(position.trade_id)
+        if (
+            record is not None
+            and record.exit_order_ids
+            and live is not None
+            and live.state in {TradeState.EXIT_PENDING, TradeState.CLOSING}
+        ):
+            return self._adopt_existing_exit_orders(
+                record, remaining_stays_open=remaining_stays_open
+            )
+        plan = self._exit_plan(
+            intent,
+            decision,
+            position,
+            snapshots,
+            quantity_contracts=quantity_contracts,
+        )
         if plan is None:
             return ()
         try:
@@ -524,6 +750,7 @@ class PaperRunner:
             self._freeze_unknown_exit(position.trade_id)
             return ()
         order_ids = tuple(event.identity.internal_order_id for event in submit.events)
+        persist_ids: tuple[str, ...] = () if remaining_stays_open else order_ids
         self._write_lifecycle(position.trade_id, exit_order_ids=order_ids)
         for event in submit.events:
             if event.state is OrderState.UNKNOWN:
@@ -532,15 +759,19 @@ class PaperRunner:
             self._services.trade_manager.apply_exit_order_event(
                 event,
                 capital_reservation_id=decision.capital_reservation_id,
+                remaining_stays_open=remaining_stays_open,
             )
-        self._write_lifecycle(position.trade_id, exit_order_ids=order_ids)
+        self._write_lifecycle(position.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(position.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
             self._open_book.pop(position.trade_id, None)
         return submit.events
 
     def _adopt_existing_exit_orders(
-        self, record: PositionLifecycleRecord
+        self,
+        record: PositionLifecycleRecord,
+        *,
+        remaining_stays_open: bool = False,
     ) -> tuple[OrderEvent, ...]:
         events: list[OrderEvent] = []
         decision = record.risk_decision
@@ -559,8 +790,10 @@ class PaperRunner:
                 self._services.trade_manager.apply_exit_order_event(
                     event,
                     capital_reservation_id=decision.capital_reservation_id,
+                    remaining_stays_open=remaining_stays_open,
                 )
-        self._write_lifecycle(record.trade_id, exit_order_ids=record.exit_order_ids)
+        persist_ids = () if remaining_stays_open else record.exit_order_ids
+        self._write_lifecycle(record.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(record.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
             self._open_book.pop(record.trade_id, None)
@@ -607,18 +840,27 @@ class PaperRunner:
         trade_id: str,
         *,
         exit_order_ids: tuple[str, ...] | None = None,
+        extra_reviews: tuple[PositionReviewRecord, ...] = (),
     ) -> None:
+        existing = self._services.store.get_position_lifecycle(trade_id)
         position = self._services.trade_manager.get_position(trade_id)
         book = self._open_book.get(trade_id)
-        if position is None or book is None:
+        if book is not None:
+            intent, decision = book
+        elif existing is not None:
+            intent, decision = existing.intent, existing.risk_decision
+        else:
             return
-        intent, decision = book
-        existing = self._services.store.get_position_lifecycle(trade_id)
+        if position is None:
+            if existing is None:
+                return
+            position = existing.position
         ids = (
             exit_order_ids
             if exit_order_ids is not None
             else (existing.exit_order_ids if existing is not None else ())
         )
+        prior_reviews = existing.reviews if existing is not None else ()
         record = PositionLifecycleRecord(
             trade_id=trade_id,
             position=position,
@@ -626,6 +868,7 @@ class PaperRunner:
             risk_decision=decision,
             holding_style=_holding_style(intent),
             exit_order_ids=ids,
+            reviews=(*prior_reviews, *extra_reviews),
             as_of=position.as_of,
         )
         if existing is not None and _lifecycle_unchanged(existing, record):
@@ -1009,6 +1252,7 @@ def _lifecycle_unchanged(
         and existing.risk_decision == updated.risk_decision
         and existing.holding_style == updated.holding_style
         and existing.exit_order_ids == updated.exit_order_ids
+        and existing.reviews == updated.reviews
     )
 
 
@@ -1075,3 +1319,73 @@ def _unique_alerts(alerts: list[LifecycleAlert]) -> tuple[LifecycleAlert, ...]:
         seen.add(key)
         unique.append(alert)
     return tuple(unique)
+
+
+def _matches_slot_venue(position: PositionState, venue: Exchange) -> bool:
+    nse = {Exchange.NSE, Exchange.NFO}
+    for leg in position.legs:
+        if venue is Exchange.MCX:
+            if leg.contract.exchange is not Exchange.MCX:
+                return False
+        elif leg.contract.exchange not in nse:
+            return False
+    return True
+
+
+def _stamp_review(
+    evaluation: ReviewEvaluation,
+    *,
+    trade_id: str,
+    policy_id: str,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    review_id: str,
+    submitted: bool,
+    now: datetime,
+) -> PositionReviewRecord:
+    tightened = (
+        evaluation.updated_policy.stop_price
+        if evaluation.action is ReviewAction.TIGHTEN_STOP
+        and evaluation.updated_policy is not None
+        else None
+    )
+    return PositionReviewRecord(
+        review_id=review_id,
+        trade_id=trade_id,
+        slot_id=slot_id,
+        session_date=session_date,
+        action=evaluation.action,
+        reason_code=evaluation.reason_code,
+        detail=evaluation.detail,
+        submitted=submitted and not evaluation.action.is_proposal,
+        frozen_policy_id=policy_id,
+        tightened_stop_price=tightened,
+        exit_quantity_contracts=evaluation.exit_quantity_contracts,
+        as_of=now,
+    )
+
+
+def _hold_unavailable_review(
+    *,
+    trade_id: str,
+    policy_id: str,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    review_id: str,
+    now: datetime,
+) -> PositionReviewRecord:
+    return PositionReviewRecord(
+        review_id=review_id,
+        trade_id=trade_id,
+        slot_id=slot_id,
+        session_date=session_date,
+        action=ReviewAction.HOLD,
+        reason_code=ReasonCode.PRICE_UNAVAILABLE,
+        detail=(
+            "review quotes unavailable; position stays open and continuous "
+            "software stops still apply"
+        ),
+        submitted=False,
+        frozen_policy_id=policy_id,
+        as_of=now,
+    )

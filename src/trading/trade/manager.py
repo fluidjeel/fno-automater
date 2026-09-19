@@ -211,8 +211,14 @@ class TradeManager:
         event: OrderEvent,
         *,
         capital_reservation_id: str | None = None,
+        remaining_stays_open: bool = False,
     ) -> PositionState:
-        """Advance an exit leg from broker confirmation to CLOSED."""
+        """Advance an exit leg from broker confirmation to CLOSED.
+
+        ``remaining_stays_open`` is for a review PARTIAL_EXIT: after a fill that
+        leaves quantity, the trade returns to OPEN with the same frozen stop.
+        Full multi-leg exits keep the default (stay CLOSING until flat).
+        """
         trade_id = event.identity.trade_id
         position = self._require(trade_id)
         now = self._clock.now_utc()
@@ -253,6 +259,13 @@ class TradeManager:
                 self._positions[trade_id] = closed
                 return closed
             updated = closing.model_copy(update={"legs": remaining_legs, "as_of": now})
+            if remaining_stays_open and updated.state is not TradeState.OPEN:
+                updated = self._transition(
+                    updated,
+                    TradeState.OPEN,
+                    trigger=Trigger.RECONCILIATION,
+                    now=now,
+                )
             self._positions[trade_id] = updated
             return updated
         if (

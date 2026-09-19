@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,7 @@ from trading.domain.contracts import (
     ReconciliationEvent,
     RiskDecision,
 )
-from trading.domain.enums import ReservationState, SystemState
+from trading.domain.enums import Exchange, ReservationState, ReviewSlotId, SystemState
 from trading.storage.trading_store import (
     AppendSpec,
     DuplicateIdempotencyKeyError,
@@ -255,6 +255,27 @@ class TestSupportingTables:
             updated_at=NOW,
         )
         assert store.get_system_state() == (SystemState.RECOVERY, "REC-BOOT-1")
+
+    def test_review_slot_run_is_idempotent(self, store: TradingStore) -> None:
+        """Duplicate invocation of the same slot+day inserts once."""
+        first = store.record_review_slot_run(
+            slot_id=ReviewSlotId.NSE_MORNING,
+            session_date=date(2026, 9, 14),
+            venue=Exchange.NSE,
+            as_of=NOW,
+        )
+        second = store.record_review_slot_run(
+            slot_id=ReviewSlotId.NSE_MORNING,
+            session_date=date(2026, 9, 14),
+            venue=Exchange.NSE,
+            as_of=LATER,
+        )
+        assert first is True
+        assert second is False
+        assert store.has_review_slot_run(ReviewSlotId.NSE_MORNING, date(2026, 9, 14))
+        assert not store.has_review_slot_run(
+            ReviewSlotId.NSE_AFTERNOON, date(2026, 9, 14)
+        )
 
     def test_deserialize_preserves_contract_fields(self, store: TradingStore) -> None:
         """Recovered payloads round-trip through their contract types."""

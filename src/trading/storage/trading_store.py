@@ -12,7 +12,7 @@ import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
@@ -26,7 +26,13 @@ from trading.domain.contracts import (
     RiskDecision,
     VersionedModel,
 )
-from trading.domain.enums import ReasonCode, ReservationState, SystemState
+from trading.domain.enums import (
+    Exchange,
+    ReasonCode,
+    ReservationState,
+    ReviewSlotId,
+    SystemState,
+)
 from trading.domain.primitives import Currency, Money
 
 __all__ = [
@@ -417,6 +423,57 @@ class TradingStore:
             ).fetchall()
         return tuple(
             PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
+            for row in rows
+        )
+
+    def record_review_slot_run(
+        self,
+        *,
+        slot_id: ReviewSlotId,
+        session_date: date,
+        venue: Exchange,
+        as_of: datetime,
+    ) -> bool:
+        """Persist that a review slot ran. Returns False on a duplicate day+slot."""
+        stamp = _utc_iso(as_of)
+        with self._transaction():
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO review_slot_runs "
+                "(slot_id, session_date, venue, as_of) VALUES (?, ?, ?, ?)",
+                (slot_id.value, session_date.isoformat(), venue.value, stamp),
+            )
+            return cursor.rowcount == 1
+
+    def has_review_slot_run(self, slot_id: ReviewSlotId, session_date: date) -> bool:
+        """Whether this NSE/MCX slot already ran on the IST session date."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM review_slot_runs WHERE slot_id = ? AND session_date = ?",
+                (slot_id.value, session_date.isoformat()),
+            ).fetchone()
+        return row is not None
+
+    def list_review_slot_runs(
+        self, session_date: date | None = None
+    ) -> tuple[tuple[ReviewSlotId, date], ...]:
+        """Return recorded (slot, session_date) pairs, optionally one day."""
+        with self._lock:
+            if session_date is None:
+                rows = self._conn.execute(
+                    "SELECT slot_id, session_date FROM review_slot_runs "
+                    "ORDER BY session_date ASC, slot_id ASC"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT slot_id, session_date FROM review_slot_runs "
+                    "WHERE session_date = ? ORDER BY slot_id ASC",
+                    (session_date.isoformat(),),
+                ).fetchall()
+        return tuple(
+            (
+                ReviewSlotId(str(row["slot_id"])),
+                date.fromisoformat(str(row["session_date"])),
+            )
             for row in rows
         )
 
