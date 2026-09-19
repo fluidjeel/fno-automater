@@ -37,6 +37,7 @@ class ObservedP1Features:
     points: tuple[IvPoint, ...]
     iv_skew: Decimal | None
     term_atm_iv: tuple[tuple[date, Decimal], ...]
+    atm_iv_by_expiry: tuple[tuple[date, Decimal], ...]
     realized_volatility_annualized: Decimal | None
     realized_volatility_ratio: Decimal | None
     present: tuple[PaperDataField, ...]
@@ -46,7 +47,7 @@ class ObservedP1Features:
         """Observed ATM IV for one expiry, or None when that expiry was not seen."""
         if expiry is None:
             return None
-        for item_expiry, value in self.term_atm_iv:
+        for item_expiry, value in self.atm_iv_by_expiry:
             if item_expiry == expiry:
                 return value
         return None
@@ -90,6 +91,7 @@ def observe_p1_features(
         points=typed_points,
         iv_skew=skew,
         term_atm_iv=term if term_ok else (),
+        atm_iv_by_expiry=term,
         realized_volatility_annualized=rv_ann if rv_ok else None,
         realized_volatility_ratio=rv_ratio if rv_ok else None,
         present=tuple(present),
@@ -184,21 +186,29 @@ def _observed_term(points: Sequence[IvPoint]) -> tuple[tuple[date, Decimal], ...
         by_expiry.setdefault(point.expiry, []).append(point)
     rows: list[tuple[date, Decimal]] = []
     for expiry, group in by_expiry.items():
-        atm = _atm_point(group)
-        if atm is not None:
-            rows.append((expiry, atm.implied_volatility))
+        atm_iv = _atm_iv(group)
+        if atm_iv is not None:
+            rows.append((expiry, atm_iv))
     rows.sort(key=lambda item: item[0])
     return tuple(rows)
 
 
-def _atm_point(points: Sequence[IvPoint]) -> IvPoint | None:
+def _atm_iv(points: Sequence[IvPoint]) -> Decimal | None:
     with_spot = [item for item in points if item.underlying_price is not None]
     if not with_spot:
         return None
-        return min(
-            with_spot,
-            key=lambda item: abs(item.strike - (item.underlying_price or _ZERO)),
-        )
+    nearest = min(
+        abs(item.strike - (item.underlying_price or _ZERO)) for item in with_spot
+    )
+    closest = [
+        item
+        for item in with_spot
+        if abs(item.strike - (item.underlying_price or _ZERO)) == nearest
+    ]
+    ivs = sorted(item.implied_volatility for item in closest)
+    if len(ivs) % 2 == 1:
+        return ivs[len(ivs) // 2]
+    return (ivs[len(ivs) // 2 - 1] + ivs[len(ivs) // 2]) / 2
 
 
 def _has_greeks(candidate: FeatureSnapshot) -> bool:
@@ -215,7 +225,12 @@ def _has_greeks(candidate: FeatureSnapshot) -> bool:
 
 def _has_depth(candidate: FeatureSnapshot) -> bool:
     bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
-    return bid_size is not None and ask_size is not None and bid_size > 0 and ask_size > 0
+    return (
+        bid_size is not None
+        and ask_size is not None
+        and bid_size > 0
+        and ask_size > 0
+    )
 
 
 def _q(value: Decimal) -> Decimal:

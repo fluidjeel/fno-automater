@@ -44,6 +44,7 @@ from trading.domain.enums import (
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.identification import (
+    allowed_families_for,
     bind_debit_spread,
     bind_long_option,
     blocked_families,
@@ -53,7 +54,6 @@ from trading.identification import (
     publish_macro_assessment,
     route_nifty_options,
 )
-from trading.identification.allow_table import allowed_families_for
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
 from trading.runtime.candidates import (

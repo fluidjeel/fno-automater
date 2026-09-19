@@ -355,44 +355,84 @@ def _p1_score(
     """Observed-only ranking tilt. Missing P1 series are skipped, never filled."""
     if p1 is None:
         return None
-    present = set(p1.present)
-    parts: list[Decimal] = []
-    iv = _implied_vol(candidate)
-    if PaperDataField.IV_SURFACE in present and iv is not None:
-        atm = p1.atm_iv(candidate.contract.expiry)
-        if atm is not None and atm > 0:
-            relative = iv / atm
-            if role == "short":
-                parts.append(_clamp(_ONE - abs(relative - Decimal("1.10")), _ZERO, _ONE))
-            else:
-                parts.append(_clamp(Decimal(2) - relative, _ZERO, _ONE))
-    if PaperDataField.IV_SKEW in present and p1.iv_skew is not None:
-        option_type = candidate.contract.option_type
-        if option_type is OptionType.CALL:
-            parts.append(_ONE if p1.iv_skew > 0 else Decimal("0.5"))
-        elif option_type is OptionType.PUT:
-            parts.append(_ONE if p1.iv_skew < 0 else Decimal("0.5"))
-    if PaperDataField.TERM_STRUCTURE in present and p1.term_atm_iv:
-        cheapest = min(value for _expiry, value in p1.term_atm_iv)
-        atm = p1.atm_iv(candidate.contract.expiry)
-        if atm is not None and atm > 0:
-            parts.append(_clamp(cheapest / atm, _ZERO, _ONE))
-    if PaperDataField.DEPTH in present:
-        bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
-        if bid_size is not None and ask_size is not None and min(bid_size, ask_size) > 0:
-            parts.append(_ONE)
-    if PaperDataField.GREEKS in present:
-        theta = None
-        if (
-            candidate.derivatives is not None
-            and candidate.derivatives.greeks is not None
-        ):
-            theta = candidate.derivatives.greeks.theta
-        if theta is not None:
-            parts.append(_clamp(_ONE - abs(theta), _ZERO, _ONE))
+    parts = [
+        score
+        for score in (
+            _p1_iv_score(candidate, p1, role=role),
+            _p1_skew_score(candidate, p1),
+            _p1_term_score(candidate, p1),
+            _p1_depth_score(candidate, p1),
+            _p1_theta_score(candidate, p1),
+        )
+        if score is not None
+    ]
     if not parts:
         return None
     return sum(parts, _ZERO) / Decimal(len(parts))
+
+
+def _p1_iv_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features, *, role: str
+) -> Decimal | None:
+    if PaperDataField.IV_SURFACE not in p1.present:
+        return None
+    iv = _implied_vol(candidate)
+    atm = p1.atm_iv(candidate.contract.expiry)
+    if iv is None or atm is None or atm <= 0:
+        return None
+    relative = iv / atm
+    if role == "short":
+        return _clamp(_ONE - abs(relative - Decimal("1.10")), _ZERO, _ONE)
+    return _clamp(Decimal(2) - relative, _ZERO, _ONE)
+
+
+def _p1_skew_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.IV_SKEW not in p1.present or p1.iv_skew is None:
+        return None
+    option_type = candidate.contract.option_type
+    if option_type is OptionType.CALL:
+        return _ONE if p1.iv_skew > 0 else Decimal("0.5")
+    if option_type is OptionType.PUT:
+        return _ONE if p1.iv_skew < 0 else Decimal("0.5")
+    return None
+
+
+def _p1_term_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.TERM_STRUCTURE not in p1.present or not p1.term_atm_iv:
+        return None
+    cheapest = min(value for _expiry, value in p1.term_atm_iv)
+    atm = p1.atm_iv(candidate.contract.expiry)
+    if atm is None or atm <= 0:
+        return None
+    return _clamp(cheapest / atm, _ZERO, _ONE)
+
+
+def _p1_depth_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.DEPTH not in p1.present:
+        return None
+    bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
+    if bid_size is None or ask_size is None or min(bid_size, ask_size) <= 0:
+        return None
+    return _ONE
+
+
+def _p1_theta_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features
+) -> Decimal | None:
+    if PaperDataField.GREEKS not in p1.present:
+        return None
+    if candidate.derivatives is None or candidate.derivatives.greeks is None:
+        return None
+    theta = candidate.derivatives.greeks.theta
+    if theta is None:
+        return None
+    return _clamp(_ONE - abs(theta), _ZERO, _ONE)
 
 
 def _implied_vol(candidate: FeatureSnapshot) -> Decimal | None:

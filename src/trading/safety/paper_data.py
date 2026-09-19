@@ -208,8 +208,10 @@ def _check_open_interest(
     if not derivatives:
         return _missing(ReasonCode.DEPTH_INSUFFICIENT, "no_derivative_snapshots")
     for snapshot in derivatives:
-        assert snapshot.derivatives is not None
-        oi = snapshot.derivatives.open_interest
+        context = snapshot.derivatives
+        if context is None:
+            return _missing(ReasonCode.DEPTH_INSUFFICIENT, snapshot.snapshot_id)
+        oi = context.open_interest
         if oi is None:
             return _missing(ReasonCode.DEPTH_INSUFFICIENT, snapshot.snapshot_id)
         if spec.zero_invalid and oi <= 0:
@@ -236,9 +238,10 @@ def _check_metadata(
             return _missing(ReasonCode.INSTRUMENT_UNKNOWN, snapshot.snapshot_id)
         if kind is InstrumentKind.FUTURE and contract.expiry is None:
             return _missing(ReasonCode.INSTRUMENT_UNKNOWN, snapshot.snapshot_id)
-        if kind in {InstrumentKind.OPTION, InstrumentKind.FUTURE}:
-            if not _lot_size_ok(snapshot, inputs.instruments):
-                return _zero(ReasonCode.INSTRUMENT_UNKNOWN, snapshot.snapshot_id)
+        if kind in {InstrumentKind.OPTION, InstrumentKind.FUTURE} and not _lot_size_ok(
+            snapshot, inputs.instruments
+        ):
+            return _zero(ReasonCode.INSTRUMENT_UNKNOWN, snapshot.snapshot_id)
     return _ok()
 
 

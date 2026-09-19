@@ -16,10 +16,10 @@ from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.portfolio import PortfolioSnapshot
 from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
 from trading.domain.contracts.sizing import SizingRequest
-from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
     DataQuality,

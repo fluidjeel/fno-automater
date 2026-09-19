@@ -213,5 +213,8 @@ class PaperDataAssessment(StrictModel):
         return tuple(
             row.field
             for row in self.results
-            if row.tier is PaperDataTier.P1 and row.presence is PaperDataPresence.MISSING
+            if (
+                row.tier is PaperDataTier.P1
+                and row.presence is PaperDataPresence.MISSING
+            )
         )

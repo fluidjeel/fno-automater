@@ -52,9 +52,9 @@ STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
 ## Verification
 
 - `uv run ruff check .` and `uv run mypy --strict src tests` are clean.
-- Focused PAPER-009 suite: 75 passed
-  (`tests/test_paper_safety_hardening.py`, lifecycle, review, runner,
-  debit-spread, risk gateway, trading store, positional e2e sim).
+- PAPER-010 focused suite: `tests/test_paper_data_requirements.py` plus
+  identification, gateway, paper runner/session, contracts, config, and
+  PAPER-009 safety tests.
 
 ## Blocking gaps
 

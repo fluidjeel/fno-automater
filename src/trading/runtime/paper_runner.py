@@ -32,9 +32,9 @@ from trading.domain.contracts import (
 from trading.domain.contracts.common import Versions
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
+from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
 from trading.domain.contracts.portfolio import PositionRecord
 from trading.domain.contracts.position import PositionState
-from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     DifferenceClass,

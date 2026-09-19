@@ -5,6 +5,7 @@ Invariant 6: missing, stale or zero-invalid P0 state blocks new exposure.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
@@ -13,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import tests.factories as f
+from tests.test_identification import _market
 from tests.test_paper_runner import (
     BROKER_FIXTURES,
     _paper_config,
@@ -25,15 +27,15 @@ from tests.test_risk_gateway import (
     instrument_spec,
     option_snapshot,
 )
-from trading.risk import CapitalReservationService, RiskGateway
 from trading.broker.paper import PaperBroker
 from trading.config import load_paper_data_requirements, load_risk_policy
 from trading.domain.clock import FrozenClock
-from trading.domain.contracts import FeatureSnapshot
+from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketState
 from trading.domain.contracts.identification import TrendState
 from trading.domain.contracts.paper_data import (
     P0_FIELDS,
     P1_FIELDS,
+    PaperDataAssessment,
     PaperDataField,
     PaperDataPresence,
     PaperDataRequirements,
@@ -49,6 +51,7 @@ from trading.identification import (
     observe_p1_features,
 )
 from trading.identification.p1_features import ObservedP1Features
+from trading.risk import CapitalReservationService, RiskGateway
 from trading.runtime.paper_runner import PaperRunner
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingStore
@@ -109,7 +112,7 @@ def _inputs(
     return PaperDataInputs(**payload)  # type: ignore[arg-type]
 
 
-def _instrument() -> object:
+def _instrument() -> InstrumentSpec:
     return instrument_spec()
 
 
@@ -118,7 +121,7 @@ def _assess(
     *,
     p1_present: frozenset[PaperDataField] = frozenset(),
     p1_absent: frozenset[PaperDataField] = P1_FIELDS,
-) -> object:
+) -> PaperDataAssessment:
     return assess_paper_data(
         REQUIREMENTS,
         inputs,
@@ -134,7 +137,9 @@ def test_config_lists_every_p0_and_p1_field() -> None:
 
 
 def test_incomplete_p0_config_fails_closed() -> None:
-    fields = [spec for spec in REQUIREMENTS.fields if spec.field is not PaperDataField.LTP]
+    fields = [
+        spec for spec in REQUIREMENTS.fields if spec.field is not PaperDataField.LTP
+    ]
     with pytest.raises(ValueError, match="P0 paper-data contract is incomplete"):
         PaperDataRequirements.model_validate(
             {
@@ -158,7 +163,14 @@ def test_full_p0_happy_path_permits_entry() -> None:
         (
             PaperDataField.LTP,
             lambda: _inputs(
-                _p0_option(market=f.quote(bid=f.price("91.95"), ask=f.price("92.00"), last=None, volume=5000))
+                _p0_option(
+                    market=f.quote(
+                        bid=f.price("91.95"),
+                        ask=f.price("92.00"),
+                        last=None,
+                        volume=5000,
+                    )
+                )
             ),
             PaperDataPresence.MISSING,
             ReasonCode.PRICE_UNAVAILABLE,
@@ -181,7 +193,14 @@ def test_full_p0_happy_path_permits_entry() -> None:
         (
             PaperDataField.BID_ASK,
             lambda: _inputs(
-                _p0_option(market=f.quote(bid=None, ask=f.price("92.00"), last=f.price("92.00"), volume=5000))
+                _p0_option(
+                    market=f.quote(
+                        bid=None,
+                        ask=f.price("92.00"),
+                        last=f.price("92.00"),
+                        volume=5000,
+                    )
+                )
             ),
             PaperDataPresence.MISSING,
             ReasonCode.PRICE_UNAVAILABLE,
@@ -197,7 +216,13 @@ def test_full_p0_happy_path_permits_entry() -> None:
         (
             PaperDataField.VOLUME,
             lambda: _inputs(
-                _p0_option(market=f.quote(bid=f.price("91.95"), ask=f.price("92.00"), last=f.price("92.00")))
+                _p0_option(
+                    market=f.quote(
+                        bid=f.price("91.95"),
+                        ask=f.price("92.00"),
+                        last=f.price("92.00"),
+                    )
+                )
             ),
             PaperDataPresence.MISSING,
             ReasonCode.DATA_GAP,
@@ -297,12 +322,12 @@ def test_full_p0_happy_path_permits_entry() -> None:
 )
 def test_each_p0_breach_blocks_entry(
     field: PaperDataField,
-    inputs: object,
+    inputs: Callable[[], PaperDataInputs],
     presence: PaperDataPresence,
     reason: ReasonCode,
 ) -> None:
     """Invariant 6: any P0 hole blocks paper entry with a reason code."""
-    assessment = _assess(inputs())  # type: ignore[operator]
+    assessment = _assess(inputs())
     assert not assessment.p0_ok
     assert field in assessment.failed_p0_fields
     row = next(item for item in assessment.results if item.field is field)
@@ -428,9 +453,7 @@ def _id_option(
     )
 
 
-def _market_state() -> object:
-    from tests.test_identification import _market
-
+def _market_state() -> MarketState:
     return _market(trend=TrendState.UP)
 
 
@@ -477,9 +500,21 @@ def test_p1_absent_does_not_invent_or_crash() -> None:
 def test_p1_skew_is_observed_not_invented() -> None:
     candidates = (
         _id_option("C25", strike="24200", delta="0.25", iv="14"),
-        _id_option("P25", strike="23800", delta="-0.25", iv="18", option_type=OptionType.PUT),
+        _id_option(
+            "P25",
+            strike="23800",
+            delta="-0.25",
+            iv="18",
+            option_type=OptionType.PUT,
+        ),
         _id_option("C50", strike="24000", delta="0.52", iv="15"),
-        _id_option("P50", strike="24000", delta="-0.50", iv="16", option_type=OptionType.PUT),
+        _id_option(
+            "P50",
+            strike="24000",
+            delta="-0.50",
+            iv="16",
+            option_type=OptionType.PUT,
+        ),
     )
     observed = observe_p1_features(candidates, requirements=REQUIREMENTS)
     assert observed.iv_skew == Decimal("4.000000")
@@ -492,10 +527,15 @@ def test_observed_p1_can_be_merged_into_assessment() -> None:
         points=(),
         iv_skew=None,
         term_atm_iv=(),
+        atm_iv_by_expiry=(),
         realized_volatility_annualized=Decimal("15"),
         realized_volatility_ratio=Decimal("1"),
         present=(PaperDataField.REALIZED_VOLATILITY,),
-        absent=tuple(field for field in P1_FIELDS if field is not PaperDataField.REALIZED_VOLATILITY),
+        absent=tuple(
+            field
+            for field in P1_FIELDS
+            if field is not PaperDataField.REALIZED_VOLATILITY
+        ),
     )
     assessment = assess_paper_data(
         REQUIREMENTS,
@@ -506,6 +546,8 @@ def test_observed_p1_can_be_merged_into_assessment() -> None:
     assert assessment.p0_ok
     assert PaperDataField.REALIZED_VOLATILITY in assessment.p1_present
     assert PaperDataField.IV_SURFACE in assessment.p1_absent
-    row = next(item for item in assessment.results if item.field is PaperDataField.IV_SURFACE)
+    row = next(
+        item for item in assessment.results if item.field is PaperDataField.IV_SURFACE
+    )
     assert row.detail == "p1_absent_not_invented"
     assert row.tier is PaperDataTier.P1

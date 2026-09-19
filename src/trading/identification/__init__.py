@@ -12,17 +12,17 @@ from trading.identification.binders import (
     bind_debit_spread,
     bind_long_option,
 )
-from trading.identification.p1_features import (
-    ObservedP1Features,
-    blocked_families,
-    observe_p1_features,
-)
 from trading.identification.config import (
     IdentificationPolicy,
     load_identification_policy,
 )
 from trading.identification.macro import publish_macro_assessment
 from trading.identification.market_state import build_market_state
+from trading.identification.p1_features import (
+    ObservedP1Features,
+    blocked_families,
+    observe_p1_features,
+)
 from trading.identification.router import RoutedOpportunity, route_nifty_options
 from trading.identification.vix import resolve_vix_symbol
 
