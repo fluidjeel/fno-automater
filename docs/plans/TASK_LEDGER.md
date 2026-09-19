@@ -100,5 +100,9 @@ PAPER-001 supervised paper runner with isolation done.
 PAPER-002 conservative paper fills (opt-in) done.
 L4-HUMAN-001 operator attention and L4-AGENT-001 weekly loop done.
 CAS-001 Layer 1 cas-microstructure-v1 producer done; live CAS cohort is next.
-Next implementation task: PAPER-003 (versioned paper evidence store).
+PAPER-003 versioned paper evidence store done.
+PAPER-004 isolation/stale/event-risk/restart drills done.
+Identification stack (market state, binders, router) wired into paper session.
+L4 weekly agent DeepSeek OpenAI-compat client landed; config/agent.yaml enabled:false.
+Next: PAPER-005 after verified charges_per_lot + live paper evidence; Monday live CAS depth window; optional trading agent weekly --trial.
 ```
