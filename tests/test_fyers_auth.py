@@ -128,7 +128,7 @@ class TestRefreshAccessToken:
             return True
 
         monkeypatch.setattr(
-            auth_mod.FyersSettings,
+            FyersSettings,
             "from_repo_root",
             classmethod(lambda cls, root: settings),
         )

@@ -22,6 +22,7 @@ from trading.ai import (
 from trading.ai.tools import dispatch_tool
 from trading.cli import main
 from trading.config import (
+    AgentConfig,
     load_agent_config,
     load_agent_config_text,
     load_evaluation_config,
@@ -40,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EVALUATION = load_evaluation_config(ROOT / "config" / "evaluation.yaml")
 
 
-def _enabled_config() -> object:
+def _enabled_config() -> AgentConfig:
     raw = (ROOT / "config" / "agent.yaml").read_text(encoding="utf-8")
     return load_agent_config_text(raw.replace("enabled: false", "enabled: true")).config
 
@@ -116,7 +117,7 @@ def test_emit_proposal_returns_strategy_family() -> None:
     )
     proposal = run_weekly_agent(
         llm=ScriptedLlm([turn]),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -158,7 +159,7 @@ def test_timeout_abstains() -> None:
 
     proposal = run_weekly_agent(
         llm=_Timeout(),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -195,7 +196,7 @@ def test_malformed_proposal_abstains() -> None:
     )
     proposal = run_weekly_agent(
         llm=ScriptedLlm([turn]),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -271,7 +272,7 @@ def test_structure_advice_rejects_unknown_structure() -> None:
     with pytest.raises(ValidationError):
         StructureAdvice(
             as_of=datetime.now(UTC),
-            preferred_structure="iron_condor",
+            preferred_structure="iron_condor",  # type: ignore[arg-type]
             stance=AdviceStance.PAPER,
             confidence=Decimal("0.5"),
         )

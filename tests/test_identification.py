@@ -224,8 +224,8 @@ def test_market_state_uses_completed_bars_and_is_reproducible() -> None:
         "as_of": NOW,
         "policy": POLICY,
     }
-    first = build_market_state(_bars(), **kwargs)
-    second = build_market_state(_bars(), **kwargs)
+    first = build_market_state(_bars(), **kwargs)  # type: ignore[arg-type]
+    second = build_market_state(_bars(), **kwargs)  # type: ignore[arg-type]
 
     assert first == second
     assert first.completed_bar_count == 60
