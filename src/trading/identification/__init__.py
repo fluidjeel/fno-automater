@@ -10,18 +10,18 @@ from trading.identification.allow_table import (
 )
 from trading.identification.binders import (
     BoundCandidates,
+    bind_cas_microstructure,
     bind_debit_spread,
     bind_long_option,
 )
+from trading.identification.breakout_scenarios import run_breakout_scenarios
 from trading.identification.config import (
     IdentificationPolicy,
     load_identification_policy,
 )
 from trading.identification.macro import publish_macro_assessment
 from trading.identification.market_state import build_market_state
-from trading.identification.paper_scenarios import (
-    run_paper_scenario_matrix,
-)
+from trading.identification.paper_scenarios import run_paper_scenario_matrix
 from trading.identification.router import RoutedOpportunity, route_nifty_options
 from trading.identification.vix import resolve_vix_symbol
 
@@ -32,6 +32,7 @@ __all__ = [
     "RoutedOpportunity",
     "SessionBucket",
     "allowed_families_for",
+    "bind_cas_microstructure",
     "bind_debit_spread",
     "bind_long_option",
     "build_market_state",
@@ -41,6 +42,7 @@ __all__ = [
     "publish_macro_assessment",
     "resolve_vix_symbol",
     "route_nifty_options",
+    "run_breakout_scenarios",
     "run_paper_scenario_matrix",
     "session_bucket_for",
 ]

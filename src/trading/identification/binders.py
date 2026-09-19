@@ -11,7 +11,12 @@ from trading.domain.contracts.identification import SetupFeatures, StructureKind
 from trading.domain.enums import InstrumentKind, OptionType, ReasonCode
 from trading.identification.config import IdentificationPolicy
 
-__all__ = ["BoundCandidates", "bind_debit_spread", "bind_long_option"]
+__all__ = [
+    "BoundCandidates",
+    "bind_cas_microstructure",
+    "bind_debit_spread",
+    "bind_long_option",
+]
 
 _ZERO = Decimal(0)
 _ONE = Decimal(1)
@@ -77,6 +82,66 @@ def bind_long_option(
             market,
             selected,
             structure=StructureKind.LONG_OPTION,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+        ),
+    )
+
+
+def bind_cas_microstructure(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+) -> BoundCandidates:
+    """Bind an auction option using long-delta liquidity gates, any MIXED side."""
+    option_type = _direction_type(market)
+    eligible = [
+        item
+        for item in candidates
+        if (option_type is None or item.contract.option_type is option_type)
+        and _common_reason(item, policy) is None
+        and _long_delta_ok(item, policy)
+        and _dte_ok(item, policy)
+    ]
+    ranked = sorted(
+        ((_candidate_score(item, candidates, policy), item) for item in eligible),
+        key=lambda pair: (-pair[0], pair[1].contract.symbol),
+    )
+    rejected = tuple(
+        sorted(item.contract.symbol for item in candidates if item not in eligible)
+    )
+    if not ranked:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="cas_microstructure",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(_dominant_reason(candidates, policy),),
+                rejected_symbols=rejected,
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+    score, selected = ranked[0]
+    binding = CandidateBinding(
+        strategy_id="cas_microstructure",
+        binding_version=policy.binding_version,
+        selected_symbols=(selected.contract.symbol,),
+        score=score,
+        eligible=True,
+        rejected_symbols=rejected,
+    )
+    return BoundCandidates(
+        binding=binding,
+        candidates=(selected,),
+        setup_features=_setup(
+            market,
+            selected,
+            structure=StructureKind.CAS_OPTION,
             score=score,
             policy=policy,
             rejected=rejected,

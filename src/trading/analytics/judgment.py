@@ -1,4 +1,4 @@
-"""Offline judgment harness: label should_enter/should_pass from MAE/MFE − charges."""
+"""Offline judgment harness: label should_enter/should_pass from MAE/MFE - charges."""
 
 from __future__ import annotations
 
@@ -13,13 +13,34 @@ from trading.domain.contracts.evaluation import (
     JudgmentSignalResult,
 )
 from trading.domain.contracts.identification import ConfidenceKind
-from trading.domain.primitives import Currency, Money
+from trading.domain.primitives import Money
 
-__all__ = ["JudgmentError", "evaluate_judgment", "label_signal"]
+__all__ = [
+    "JudgmentError",
+    "evaluate_judgment",
+    "label_excursion",
+    "label_signal",
+]
 
 
 class JudgmentError(ValueError):
     """Raised when a cohort cannot be judged."""
+
+
+def label_excursion(
+    *,
+    mae: Decimal,
+    mfe: Decimal,
+    lots: int,
+    charges_per_lot: Decimal,
+    thresholds: JudgmentThresholds,
+) -> bool:
+    """True=should_enter when net MFE clears charges and beats MAE."""
+    charges = charges_per_lot * Decimal(lots)
+    net_mfe = mfe - charges
+    if net_mfe < thresholds.min_net_mfe_amount:
+        return False
+    return not (thresholds.require_mfe_beats_mae and net_mfe <= mae)
 
 
 def label_signal(
@@ -31,13 +52,13 @@ def label_signal(
     """Return True=should_enter, False=should_pass, None=unlabeled."""
     if signal.declined or signal.mae is None or signal.mfe is None:
         return None
-    charges = charges_per_lot * Decimal(signal.lots)
-    net_mfe = signal.mfe.amount - charges
-    if net_mfe < thresholds.min_net_mfe_amount:
-        return False
-    if thresholds.require_mfe_beats_mae and net_mfe <= signal.mae.amount:
-        return False
-    return True
+    return label_excursion(
+        mae=signal.mae.amount,
+        mfe=signal.mfe.amount,
+        lots=signal.lots,
+        charges_per_lot=charges_per_lot,
+        thresholds=thresholds,
+    )
 
 
 def evaluate_judgment(
@@ -50,9 +71,7 @@ def evaluate_judgment(
     """Score offline enter/pass labels and desk precision/capture/Brier."""
     if not package.experiment.parameters_frozen:
         raise JudgmentError("unfrozen experiment cannot be judged")
-    charges_per_lot = fill_model.charges_per_lot.require(
-        "fill_model.charges_per_lot"
-    )
+    charges_per_lot = fill_model.charges_per_lot.require("fill_model.charges_per_lot")
     currency = thresholds.currency
 
     rows: list[JudgmentSignalResult] = []
@@ -100,15 +119,15 @@ def evaluate_judgment(
         )
 
     labeled = [row for row in rows if row.should_enter is not None]
-    should_enter = [row for row in labeled if row.should_enter]
-    should_pass = [row for row in labeled if not row.should_enter]
-    entered = [row for row in labeled if row.entered]
-    true_positive = [row for row in entered if row.should_enter]
-    false_positive = [row for row in entered if not row.should_enter]
-    false_negative = [row for row in should_enter if not row.entered]
+    enter_rows = [row for row in labeled if row.should_enter]
+    pass_rows = [row for row in labeled if not row.should_enter]
+    taken_rows = [row for row in labeled if row.entered]
+    true_positive = [row for row in taken_rows if row.should_enter]
+    false_positive = [row for row in taken_rows if not row.should_enter]
+    false_negative = [row for row in enter_rows if not row.entered]
 
-    precision = _ratio(len(true_positive), len(entered))
-    capture = _ratio(len(true_positive), len(should_enter))
+    precision = _ratio(len(true_positive), len(taken_rows))
+    capture = _ratio(len(true_positive), len(enter_rows))
     brier = _brier(labeled)
 
     gates: list[str] = []
@@ -126,9 +145,9 @@ def evaluate_judgment(
         as_of=as_of,
         fill_model_version=fill_model.version,
         labeled_count=len(labeled),
-        should_enter_count=len(should_enter),
-        should_pass_count=len(should_pass),
-        entered_count=len(entered),
+        should_enter_count=len(enter_rows),
+        should_pass_count=len(pass_rows),
+        entered_count=len(taken_rows),
         true_positive_count=len(true_positive),
         false_positive_count=len(false_positive),
         false_negative_count=len(false_negative),
@@ -154,8 +173,11 @@ def _brier(rows: list[JudgmentSignalResult]) -> Decimal | None:
     ]
     if not scored:
         return None
-    total = sum(
-        (row.confidence - (Decimal(1) if row.should_enter else Decimal(0))) ** 2
-        for row in scored
-    )
+    total = Decimal(0)
+    for row in scored:
+        confidence = row.confidence
+        if confidence is None:
+            continue
+        outcome = Decimal(1) if row.should_enter else Decimal(0)
+        total += (confidence - outcome) ** 2
     return (total / Decimal(len(scored))).quantize(Decimal("0.0001"))
