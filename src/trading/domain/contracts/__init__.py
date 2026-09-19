@@ -60,6 +60,12 @@ from trading.domain.contracts.position import (
     PositionLegState,
     PositionState,
 )
+from trading.domain.contracts.advice import (
+    AdviceStance,
+    RankedStructure,
+    StructureAdvice,
+    StructureChoice,
+)
 from trading.domain.contracts.proposal import (
     AIProposal,
     EvidenceRef,
@@ -88,6 +94,10 @@ from trading.domain.contracts.snapshot import (
 __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
+    "AdviceStance",
+    "RankedStructure",
+    "StructureAdvice",
+    "StructureChoice",
     "ApprovedLeg",
     "AttentionRequest",
     "CandidateBinding",

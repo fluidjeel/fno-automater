@@ -14,6 +14,7 @@ from trading.ai import (
     LlmToolCall,
     LlmTurn,
     ToolContext,
+    run_advise_agent,
     run_weekly_agent,
 )
 from trading.ai.tools import dispatch_tool
@@ -24,6 +25,7 @@ from trading.config import (
     load_evaluation_config,
 )
 from trading.domain.clock import FrozenClock
+from trading.domain.contracts import AdviceStance, StructureChoice
 from trading.domain.enums import (
     FamilyStance,
     ProposalType,
@@ -261,3 +263,124 @@ def test_cli_weekly_paper_cohort_path(tmp_path: Path) -> None:
     paper = tmp_path / "cohort.json"
     paper.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
     assert main(["agent", "weekly", str(paper)]) == 0
+
+
+def test_structure_advice_rejects_unknown_structure() -> None:
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from pydantic import ValidationError
+
+    from trading.domain.contracts import StructureAdvice
+
+    with pytest.raises(ValidationError):
+        StructureAdvice(
+            as_of=datetime.now(UTC),
+            preferred_structure="iron_condor",
+            stance=AdviceStance.PAPER,
+            confidence=Decimal("0.5"),
+        )
+
+
+def test_advise_disabled_returns_pass_without_model_call() -> None:
+    clock = FrozenClock(f.NOW)
+
+    class _Boom:
+        def complete(self, messages: object, tools: object) -> LlmTurn:
+            raise AssertionError("disabled advise must not call the model")
+
+    advice = run_advise_agent(
+        llm=_Boom(),
+        config=load_agent_config(ROOT / "config" / "agent.yaml").config,
+        tools=_ctx(clock),
+        prompt="advise",
+    )
+    assert advice.preferred_structure is StructureChoice.PASS
+    assert advice.stance is AdviceStance.PASS
+    assert "AI_UNAVAILABLE" in advice.failed_gate_ids
+
+
+def test_emit_advice_returns_ranked_structure() -> None:
+    clock = FrozenClock(f.NOW)
+    turn = LlmTurn(
+        text="",
+        tool_calls=(
+            LlmToolCall(
+                call_id="1",
+                name="emit_advice",
+                arguments={
+                    "advice": {
+                        "preferred_structure": StructureChoice.DEBIT_SPREAD.value,
+                        "stance": AdviceStance.PAPER.value,
+                        "confidence": "0.55",
+                        "alternatives_ranked": [
+                            {
+                                "structure": StructureChoice.POSITIONAL_LONG_OPTION.value,
+                                "score": "0.40",
+                                "why": "lower IV regime still ok for long option",
+                            }
+                        ],
+                        "do_not_trade_if": ["iv_percentile missing"],
+                        "market_summary": {"trend": "UP"},
+                    }
+                },
+            ),
+        ),
+        input_tokens=10,
+        output_tokens=10,
+    )
+    advice = run_advise_agent(
+        llm=ScriptedLlm([turn]),
+        config=_enabled_config(),
+        tools=_ctx(clock),
+        prompt="advise",
+    )
+    assert advice.preferred_structure is StructureChoice.DEBIT_SPREAD
+    assert advice.stance is AdviceStance.PAPER
+    assert advice.alternatives_ranked[0].structure is StructureChoice.POSITIONAL_LONG_OPTION
+
+
+def test_emit_advice_rejects_unknown_structure_and_passes() -> None:
+    clock = FrozenClock(f.NOW)
+    turn = LlmTurn(
+        text="",
+        tool_calls=(
+            LlmToolCall(
+                call_id="1",
+                name="emit_advice",
+                arguments={
+                    "advice": {
+                        "preferred_structure": "iron_condor",
+                        "stance": "PAPER",
+                        "confidence": "0.9",
+                    }
+                },
+            ),
+        ),
+        input_tokens=5,
+        output_tokens=5,
+    )
+    # malformed emit leaves loop without advice -> PASS / schema path
+    advice = run_advise_agent(
+        llm=ScriptedLlm([turn]),
+        config=_enabled_config(),
+        tools=_ctx(clock),
+        prompt="advise",
+    )
+    assert advice.preferred_structure is StructureChoice.PASS
+
+
+def test_cli_advise_refuses_missing_cohort(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["agent", "advise"]) != 0
+    err = capsys.readouterr().err
+    assert "refusing fixture" in err.lower() or "cohort" in err.lower() or "agent:" in err
+
+
+def test_cli_advise_allow_fixture_prints_pass(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    code = main(["agent", "advise", "--allow-fixture"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert '"preferred_structure": "PASS"' in out or '"preferred_structure":"PASS"' in out.replace(" ", "")
+

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -17,6 +18,7 @@ from trading.ai.history_ports import (
     history_evidence,
 )
 from trading.ai.llm_settings import load_llm_settings
+from trading.ai.advise import run_advise_agent
 from trading.ai.loop import run_weekly_agent
 from trading.ai.openai_compat import OpenAICompatLlm
 from trading.ai.ports import LlmTimeoutError, LlmTurn
@@ -730,6 +732,121 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_agent_advise(args: argparse.Namespace) -> int:
+    """Rank paper structures into StructureAdvice. Never ENABLE/live."""
+    root = _repo_root()
+    try:
+        evaluation = load_evaluation_config(_resolve_repo_path(args.config))
+        agent_loaded = load_agent_config(_resolve_repo_path(args.agent_config))
+        cohort_path, cohort_source = _resolve_weekly_cohort(
+            root,
+            cohort=args.cohort or "",
+            allow_fixture=bool(args.allow_fixture),
+        )
+        package = CohortPackage.model_validate_json(
+            _resolve_repo_path(cohort_path).read_text(encoding="utf-8")
+        )
+    except (OSError, ValidationError, ValueError, AgentConfigError) as exc:
+        print(f"agent: {exc}", file=sys.stderr)
+        return 1
+    clock = WallClock()
+    config = agent_loaded.config
+    llm: _UnavailableLlm | OpenAICompatLlm | RecordingLlm = _UnavailableLlm()
+    recorder: RecordingLlm | None = None
+    history: dict[str, Any] = {}
+    market = None
+    news = None
+    model_name = config.model
+    if args.enable:
+        config = config.model_copy(update={"enabled": True})
+        try:
+            settings = load_llm_settings(root)
+            inner = OpenAICompatLlm(settings)
+        except ValueError as exc:
+            print(f"agent: {exc}", file=sys.stderr)
+            return 1
+        model_name = inner.model
+        config = config.model_copy(
+            update={
+                "enabled": True,
+                "model": model_name,
+                "max_tokens_per_run": max(config.max_tokens_per_run, 100000),
+                "input_inr_per_million_tokens": Decimal("15"),
+                "output_inr_per_million_tokens": Decimal("45"),
+            }
+        )
+        recorder = RecordingLlm(inner)
+        llm = recorder
+        try:
+            history, market = _trial_history_port(
+                root,
+                clock=clock,
+                symbol=args.symbol,
+                days=args.history_days,
+                resolution=args.resolution,
+            )
+        except (OSError, ValueError, FyersApiError) as exc:
+            print(f"agent history: {exc}", file=sys.stderr)
+            return 1
+        news = _trial_news_port(root)
+    ctx = ToolContext(
+        clock=clock,
+        id_factory=SequentialIdFactory(clock.now_utc()),
+        evaluation=evaluation,
+        cohort=package,
+        market=market,
+        news=news,
+        model_name=model_name,
+    )
+    prompt = (
+        "Rank paper structures for the next session using tools. "
+        "Prefer PASS when evidence is thin. Never ENABLE or speak as live. "
+        f"Start with fetch_market for {args.symbol}, then scorecard and "
+        "eligibility. This run cannot place orders or change live config."
+    )
+    advice = run_advise_agent(
+        llm=llm,
+        config=config,
+        tools=ctx,
+        prompt=prompt,
+    )
+    print(advice.model_dump_json(indent=2))
+    stamp = clock.now_utc().strftime("%Y%m%dT%H%M%SZ")
+    out_dir = Path(args.out_dir)
+    if not out_dir.is_absolute():
+        out_dir = root / out_dir
+    run_dir = out_dir / f"{stamp}-advise-{advice.preferred_structure.value}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    advice_path = run_dir / "advice.json"
+    advice_path.write_text(advice.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    meta = {
+        "model": model_name,
+        "enabled_override": bool(args.enable),
+        "shipped_agent_enabled": agent_loaded.config.enabled,
+        "symbol": args.symbol,
+        "history_days": args.history_days,
+        "resolution": args.resolution,
+        "cohort": cohort_path,
+        "cohort_source": cohort_source,
+        "preferred_structure": advice.preferred_structure.value,
+        "stance": advice.stance.value,
+    }
+    (run_dir / "meta.json").write_text(
+        json.dumps(meta, indent=2) + "\n", encoding="utf-8"
+    )
+    if recorder is not None:
+        (run_dir / "transcript.jsonl").write_text(
+            "".join(json.dumps(turn, default=str) + "\n" for turn in recorder.turns),
+            encoding="utf-8",
+        )
+        (run_dir / "history.json").write_text(
+            json.dumps(history, indent=2, default=str) + "\n", encoding="utf-8"
+        )
+    print(f"advice: {advice_path}")
+    return 0
+
+
+
 def _trial_history_port(
     root: Path,
     *,
@@ -1058,6 +1175,30 @@ def main(argv: list[str] | None = None) -> int:
     weekly.add_argument("--resolution", default="D")
     weekly.add_argument("--out-dir", default="data/paper/agent_runs")
     weekly.set_defaults(func=_cmd_agent_weekly)
+
+    advise = agent_sub.add_parser(
+        "advise",
+        help="rank paper structures (PASS when disabled; never ENABLE/live)",
+    )
+    advise.add_argument("cohort", nargs="?", default="", help="CohortPackage JSON")
+    advise.add_argument("--config", default="config/evaluation.yaml")
+    advise.add_argument("--agent-config", default="config/agent.yaml")
+    advise.add_argument(
+        "--enable",
+        action="store_true",
+        help="in-memory enable plus DeepSeek; shipped agent.yaml stays disabled",
+    )
+    advise.add_argument(
+        "--allow-fixture",
+        action="store_true",
+        help="explicitly allow tests/fixtures/** cohorts (demo only)",
+    )
+    advise.add_argument("--symbol", default="NSE:NIFTY50-INDEX")
+    advise.add_argument("--history-days", type=int, default=20)
+    advise.add_argument("--resolution", default="D")
+    advise.add_argument("--out-dir", default="data/paper/agent_runs")
+    advise.set_defaults(func=_cmd_agent_advise)
+
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)
