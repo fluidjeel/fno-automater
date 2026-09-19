@@ -226,10 +226,7 @@ def _has_greeks(candidate: FeatureSnapshot) -> bool:
 def _has_depth(candidate: FeatureSnapshot) -> bool:
     bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
     return (
-        bid_size is not None
-        and ask_size is not None
-        and bid_size > 0
-        and ask_size > 0
+        bid_size is not None and ask_size is not None and bid_size > 0 and ask_size > 0
     )
 
 

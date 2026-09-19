@@ -341,9 +341,7 @@ def gateway(tmp_path: Path) -> RiskGateway:
     clock = FrozenClock(NOW)
     ids = SequentialIdFactory(clock.instant)
     store = TradingStore.open(tmp_path / "trading.db", clock=clock)
-    broker = PaperBroker.from_fixtures(
-        BROKER_FIXTURES, clock=clock, id_factory=ids
-    )
+    broker = PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids)
     return RiskGateway(
         account_config=ACCOUNT_CONFIG,
         risk_policy=RISK_POLICY,
@@ -396,9 +394,7 @@ def test_paper_runner_blocks_entry_when_p0_volume_missing(
         account_config=_paper_config(),  # type: ignore[arg-type]
         risk_policy=load_risk_policy(ROOT / "config" / "risk.yaml"),
         store=store,
-        broker=PaperBroker.from_fixtures(
-            BROKER_FIXTURES, clock=clock, id_factory=ids
-        ),
+        broker=PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids),
         clock=clock,
         id_factory=ids,
         paper_data_requirements=REQUIREMENTS,
