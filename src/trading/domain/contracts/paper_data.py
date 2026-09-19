@@ -12,6 +12,7 @@ from enum import StrEnum, unique
 from pydantic import Field, model_validator
 
 from trading.domain.contracts.base import (
+    ExactDecimal,
     NonEmptyStr,
     StrictBool,
     StrictInt,
@@ -23,6 +24,11 @@ from trading.domain.enums import ReasonCode
 __all__ = [
     "P0_FIELDS",
     "P1_FIELDS",
+    "P1DepthWindows",
+    "P1GreeksWindows",
+    "P1RvWindows",
+    "P1SkewWindows",
+    "P1Windows",
     "PaperDataAssessment",
     "PaperDataField",
     "PaperDataFieldResult",
@@ -116,11 +122,70 @@ class PaperDataFieldSpec(StrictModel):
         return self
 
 
+class P1SkewWindows(StrictModel):
+    """Delta band for 25Δ put-minus-call skew. No interpolated wings."""
+
+    delta_min: ExactDecimal = Field(gt=0, le=1)
+    delta_max: ExactDecimal = Field(gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _band_is_ordered(self) -> P1SkewWindows:
+        if self.delta_min >= self.delta_max:
+            raise ValueError("iv_skew.delta_min must be < delta_max")
+        return self
+
+
+class P1RvWindows(StrictModel):
+    """Close-to-close realized-vol windows on completed Fyers history bars."""
+
+    bar_resolution: NonEmptyStr
+    short_window_bars: StrictInt = Field(ge=2)
+    long_window_bars: StrictInt = Field(ge=2)
+    session_bars: StrictInt = Field(ge=1)
+    trading_days: StrictInt = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _short_is_inside_long(self) -> P1RvWindows:
+        if self.short_window_bars >= self.long_window_bars:
+            raise ValueError(
+                "realized_volatility.short_window_bars must be < long_window_bars"
+            )
+        return self
+
+
+class P1GreeksWindows(StrictModel):
+    """Which Fyers chain greeks must be observed before ranking uses them."""
+
+    require_delta: StrictBool
+    require_iv: StrictBool
+    rank_with_theta: StrictBool
+    rank_with_vega: StrictBool
+
+
+class P1DepthWindows(StrictModel):
+    """Top-of-book size gates for entry ranking and exit observation."""
+
+    min_top_size: StrictInt = Field(ge=1)
+    min_book_levels: StrictInt = Field(ge=1)
+    observe_on_exit: StrictBool
+    max_symbols: StrictInt = Field(ge=0)
+
+
+class P1Windows(StrictModel):
+    """Documented P1 formulas live in config, not identification literals."""
+
+    iv_skew: P1SkewWindows
+    realized_volatility: P1RvWindows
+    greeks: P1GreeksWindows
+    depth: P1DepthWindows
+
+
 class PaperDataRequirements(VersionedModel):
     """Closed P0/P1 lists plus per-field freshness. Config, not code constants."""
 
     requirements_version: NonEmptyStr
     fields: tuple[PaperDataFieldSpec, ...]
+    windows: P1Windows
 
     @model_validator(mode="after")
     def _lists_are_complete_and_unique(self) -> PaperDataRequirements:

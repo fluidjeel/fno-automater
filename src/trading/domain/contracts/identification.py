@@ -140,6 +140,7 @@ class SetupFeatures(VersionedModel):
     rejected_alternatives: tuple[NonEmptyStr, ...] = ()
     p1_fields_used: tuple[NonEmptyStr, ...] = ()
     p1_fields_absent: tuple[NonEmptyStr, ...] = ()
+    p1_absence_reasons: tuple[NonEmptyStr, ...] = ()
 
 
 class RouteDecision(VersionedModel):

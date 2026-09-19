@@ -59,6 +59,7 @@ from trading.domain.enums import (
 )
 from trading.domain.ids import IdFactory, derive_idempotency_key
 from trading.domain.primitives import Currency, Money
+from trading.identification.p1_features import observe_exit_depth
 from trading.news.contracts import EventRiskState
 from trading.oms import (
     OmsEngine,
@@ -234,6 +235,7 @@ class PaperRunner:
         self._ids = id_factory
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
+        self._exit_depth_gaps: tuple[str, ...] = ()
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
             store, clock=clock, id_factory=id_factory
@@ -332,6 +334,11 @@ class PaperRunner:
     @property
     def last_recovery(self) -> PositionRecoveryResult:
         return self._last_recovery
+
+    @property
+    def exit_depth_gaps(self) -> tuple[str, ...]:
+        """Symbols whose exit snapshots lacked observed depth this cycle."""
+        return self._exit_depth_gaps
 
     def recover_lifecycle(self) -> PositionRecoveryResult:
         """Restore persisted positions and block entries on unresolved gaps.
@@ -455,6 +462,7 @@ class PaperRunner:
     ) -> tuple[OrderEvent, ...]:
         """Evaluate frozen exit policy and submit opposite LIMIT orders."""
         events: list[OrderEvent] = []
+        gaps: list[str] = []
         events.extend(self._resume_inflight_exits(snapshots))
         for position in self._services.trade_manager.list_positions():
             if position.state is not TradeState.OPEN:
@@ -481,6 +489,7 @@ class PaperRunner:
             feature = _monitor_snapshot(intent, leg_snapshots)
             if feature is None:
                 continue
+            self._note_exit_depth(feature, leg_snapshots, gaps)
             evaluation = self._services.trade_manager.evaluate_exit(
                 position.trade_id,
                 feature,
@@ -496,6 +505,7 @@ class PaperRunner:
             if updated.state is not TradeState.EXIT_PENDING:
                 continue
             events.extend(self._submit_exit(intent, decision, updated, snapshots))
+        self._exit_depth_gaps = tuple(dict.fromkeys(gaps))
         return tuple(events)
 
     def run_review_slot(
@@ -1237,6 +1247,24 @@ class PaperRunner:
             reason_code=ReasonCode.OK,
             detail="protection quotes are fresh",
         )
+
+    def _note_exit_depth(
+        self,
+        feature: FeatureSnapshot,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+        gaps: list[str],
+    ) -> None:
+        """Record missing exit depth without blocking deterministic protection."""
+        if self._paper_data is None:
+            return
+        seen: set[str] = set()
+        for snap in (feature, *leg_snapshots.values()):
+            if snap.snapshot_id in seen:
+                continue
+            seen.add(snap.snapshot_id)
+            present, reason = observe_exit_depth(snap, self._paper_data)
+            if not present:
+                gaps.append(f"{snap.contract.symbol}:{reason}")
 
     def _quote_is_stale(self, snapshot: FeatureSnapshot) -> bool:
         if snapshot.quality.state.blocks_new_exposure:

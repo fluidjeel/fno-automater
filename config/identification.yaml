@@ -2,8 +2,8 @@
 schema_version: "1"
 policy_version: "nifty-identification-v1"
 feature_version: "nifty-market-state-v1"
-binding_version: "nifty-contract-binding-v1"
-router_version: "nifty-structure-router-v2"
+binding_version: "nifty-contract-binding-v2"
+router_version: "nifty-structure-router-v3"
 # Verified in Fyers NSE_CM instrument master (token 26017).
 vix_symbol: "NSE:INDIAVIX-INDEX"
 

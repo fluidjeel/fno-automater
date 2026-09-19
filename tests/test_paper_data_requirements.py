@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 import tests.factories as f
-from tests.test_identification import _market
+from tests.test_identification import _bound, _market
+from tests.test_paper_lifecycle import _option_snapshot
 from tests.test_paper_runner import (
     BROKER_FIXTURES,
     _paper_config,
@@ -29,9 +30,11 @@ from tests.test_risk_gateway import (
 )
 from trading.broker.paper import PaperBroker
 from trading.config import load_paper_data_requirements, load_risk_policy
+from trading.data.events import CanonicalMarketEvent
+from trading.data.prices import depth_top_sizes, observed_book_sizes
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketState
-from trading.domain.contracts.identification import TrendState
+from trading.domain.contracts.identification import TrendState, VolatilityState
 from trading.domain.contracts.paper_data import (
     P0_FIELDS,
     P1_FIELDS,
@@ -42,13 +45,16 @@ from trading.domain.contracts.paper_data import (
     PaperDataTier,
 )
 from trading.domain.contracts.snapshot import DerivativesContext, Greeks
-from trading.domain.enums import OptionType, ReasonCode, RiskAction
+from trading.domain.enums import OptionType, ReasonCode, RiskAction, TradeState
 from trading.domain.ids import SequentialIdFactory
 from trading.identification import (
+    allowed_families_for,
     bind_long_option,
     blocked_families,
     load_identification_policy,
+    observe_exit_depth,
     observe_p1_features,
+    route_nifty_options,
 )
 from trading.identification.p1_features import ObservedP1Features
 from trading.risk import CapitalReservationService, RiskGateway
@@ -134,6 +140,9 @@ def test_config_lists_every_p0_and_p1_field() -> None:
     assert {spec.field for spec in REQUIREMENTS.p0} == P0_FIELDS
     assert {spec.field for spec in REQUIREMENTS.p1} == P1_FIELDS
     assert REQUIREMENTS.spec_for(PaperDataField.LTP).max_age_ms == 120000
+    assert REQUIREMENTS.windows.iv_skew.delta_min == Decimal("0.20")
+    assert REQUIREMENTS.windows.realized_volatility.long_window_bars == 50
+    assert REQUIREMENTS.windows.depth.observe_on_exit is True
 
 
 def test_incomplete_p0_config_fails_closed() -> None:
@@ -145,6 +154,7 @@ def test_incomplete_p0_config_fails_closed() -> None:
             {
                 "requirements_version": "broken",
                 "fields": [item.model_dump(mode="json") for item in fields],
+                "windows": REQUIREMENTS.windows.model_dump(mode="json"),
             }
         )
 
@@ -415,12 +425,16 @@ def _id_option(
     option_type: OptionType = OptionType.CALL,
     bid_size: int | None = None,
     ask_size: int | None = None,
+    expiry: date | None = None,
+    theta: str | None = None,
+    vega: str | None = None,
+    dte: int = 5,
 ) -> FeatureSnapshot:
     return f.snapshot(
         snapshot_id=f"snapshot-{symbol}",
         contract=f.option_contract(
             symbol=symbol,
-            expiry=date(2026, 9, 24),
+            expiry=expiry or date(2026, 9, 24),
             strike=Decimal(strike),
             option_type=option_type,
         ),
@@ -433,7 +447,7 @@ def _id_option(
             ask_size=ask_size,
         ),
         derivatives=DerivativesContext(
-            days_to_expiry=5,
+            days_to_expiry=dte,
             open_interest=5000,
             option_type=option_type,
             greeks=Greeks(
@@ -442,6 +456,8 @@ def _id_option(
                 converged=True,
                 implied_volatility=Decimal(iv),
                 delta=Decimal(delta),
+                theta=None if theta is None else Decimal(theta),
+                vega=None if vega is None else Decimal(vega),
             ),
             underlying_price=f.price("24000"),
         ),
@@ -524,14 +540,17 @@ def test_observed_p1_can_be_merged_into_assessment() -> None:
         iv_skew=None,
         term_atm_iv=(),
         atm_iv_by_expiry=(),
+        term_slope=None,
         realized_volatility_annualized=Decimal("15"),
         realized_volatility_ratio=Decimal("1"),
+        depth_top_size=(),
         present=(PaperDataField.REALIZED_VOLATILITY,),
         absent=tuple(
             field
             for field in P1_FIELDS
             if field is not PaperDataField.REALIZED_VOLATILITY
         ),
+        absence_reasons=((PaperDataField.IV_SURFACE, "fewer_than_min_points"),),
     )
     assessment = assess_paper_data(
         REQUIREMENTS,
@@ -547,3 +566,228 @@ def test_observed_p1_can_be_merged_into_assessment() -> None:
     )
     assert row.detail == "p1_absent_not_invented"
     assert row.tier is PaperDataTier.P1
+
+
+def test_missing_p1_windows_fail_closed() -> None:
+    payload = REQUIREMENTS.model_dump(mode="json")
+    payload.pop("windows")
+    with pytest.raises(ValueError):
+        PaperDataRequirements.model_validate(payload)
+
+
+def test_p1_records_absence_reasons_without_inventing() -> None:
+    observed = observe_p1_features(
+        (_id_option("AAA-24000-CE", strike="24000", delta="0.52", iv="20"),),
+        requirements=REQUIREMENTS,
+        market=None,
+    )
+    labels = observed.reason_labels()
+    assert "IV_SURFACE:fewer_than_min_points" in labels
+    assert "IV_SKEW:missing_25d_put_or_call" in labels
+    assert "TERM_STRUCTURE:fewer_than_min_expiries" in labels
+    assert "REALIZED_VOLATILITY:missing_or_unwarmed_history" in labels
+    assert "DEPTH:missing_top_of_book_size" in labels
+    bound = bind_long_option(
+        (
+            _id_option("AAA-24000-CE", strike="24000", delta="0.52", iv="20"),
+            _id_option("ZZZ-24000-CE", strike="24000", delta="0.52", iv="12"),
+        ),
+        market=_market_state(),
+        policy=POLICY,
+        p1=observed,
+    )
+    assert bound.setup_features is not None
+    assert bound.setup_features.p1_absence_reasons == labels
+
+
+def test_p1_term_structure_prefers_cheaper_atm_expiry() -> None:
+    """Front ATM cheaper than back only ranks when two expiries are observed."""
+    near = date(2026, 9, 24)
+    far = date(2026, 10, 29)
+    candidates = (
+        _id_option("NEAR-CHEAP", strike="24000", delta="0.52", iv="11", expiry=near),
+        _id_option(
+            "FAR-RICH", strike="24000", delta="0.52", iv="22", expiry=far, dte=28
+        ),
+        _id_option("NEAR-OTM", strike="24200", delta="0.20", iv="12", expiry=near),
+        _id_option(
+            "FAR-OTM", strike="24200", delta="0.20", iv="21", expiry=far, dte=28
+        ),
+    )
+    market = _market_state()
+    without = bind_long_option(candidates, market=market, policy=POLICY)
+    observed = observe_p1_features(candidates, requirements=REQUIREMENTS, market=market)
+    assert PaperDataField.TERM_STRUCTURE in observed.present
+    assert observed.term_slope is not None
+    with_p1 = bind_long_option(candidates, market=market, policy=POLICY, p1=observed)
+    assert without.binding.selected_symbols == ("FAR-RICH",)
+    assert with_p1.binding.selected_symbols == ("NEAR-CHEAP",)
+
+
+def test_p1_depth_prefers_deeper_book_when_sizes_are_observed() -> None:
+    """Invariant 6: missing size is not filled; observed size changes ranking."""
+    thin = _id_option(
+        "AAA-THIN", strike="24000", delta="0.52", iv="15", bid_size=10, ask_size=10
+    )
+    deep = _id_option(
+        "ZZZ-DEEP", strike="24000", delta="0.52", iv="15", bid_size=800, ask_size=800
+    )
+    filler_a = _id_option(
+        "FILL-A", strike="23900", delta="0.70", iv="15", bid_size=50, ask_size=50
+    )
+    filler_b = _id_option(
+        "FILL-B", strike="24100", delta="0.15", iv="15", bid_size=50, ask_size=50
+    )
+    candidates = (thin, deep, filler_a, filler_b)
+    market = _market_state()
+    without = bind_long_option(candidates, market=market, policy=POLICY)
+    observed = observe_p1_features(candidates, requirements=REQUIREMENTS, market=market)
+    assert PaperDataField.DEPTH in observed.present
+    with_p1 = bind_long_option(candidates, market=market, policy=POLICY, p1=observed)
+    assert without.binding.selected_symbols == ("AAA-THIN",)
+    assert with_p1.binding.selected_symbols == ("ZZZ-DEEP",)
+
+
+def test_p1_greeks_prefer_slower_theta_decay_when_theta_is_observed() -> None:
+    slow = _id_option("SLOW-THETA", strike="24000", delta="0.52", iv="15", theta="-1")
+    fast = _id_option("FAST-THETA", strike="24000", delta="0.52", iv="15", theta="-20")
+    filler_a = _id_option("FILL-A", strike="23900", delta="0.70", iv="15", theta="-5")
+    filler_b = _id_option("FILL-B", strike="24100", delta="0.15", iv="15", theta="-5")
+    candidates = (fast, slow, filler_a, filler_b)
+    market = _market_state()
+    without = bind_long_option(candidates, market=market, policy=POLICY)
+    observed = observe_p1_features(candidates, requirements=REQUIREMENTS, market=market)
+    assert PaperDataField.GREEKS in observed.present
+    with_p1 = bind_long_option(candidates, market=market, policy=POLICY, p1=observed)
+    assert without.binding.selected_symbols == ("FAST-THETA",)
+    assert with_p1.binding.selected_symbols == ("SLOW-THETA",)
+
+
+def test_p1_rv_absent_when_history_is_shorter_than_the_long_window() -> None:
+    market = _market(
+        completed_bar_count=10, realized_volatility_annualized=Decimal("15")
+    )
+    observed = observe_p1_features(
+        (
+            _id_option("AAA-24000-CE", strike="24000", delta="0.52", iv="15"),
+            _id_option("ZZZ-24000-CE", strike="24000", delta="0.52", iv="12"),
+            _id_option("NIFTY-23900-CE", strike="23900", delta="0.70", iv="15"),
+            _id_option("NIFTY-24100-CE", strike="24100", delta="0.15", iv="15"),
+        ),
+        requirements=REQUIREMENTS,
+        market=market,
+    )
+    assert PaperDataField.REALIZED_VOLATILITY in observed.absent
+    assert "REALIZED_VOLATILITY:fewer_than_long_window_bars" in observed.reason_labels()
+
+
+def test_router_uses_observed_expanding_rv_to_prefer_debit_spread() -> None:
+    long_option = _bound("positional_long_option", "0.90")
+    spread = _bound("debit_spread", "0.80")
+    cheap_iv = _market(
+        iv_percentile=Decimal("30"),
+        iv_rv_ratio=Decimal("1.0"),
+        volatility=VolatilityState.EXPANDING,
+        realized_volatility_ratio=Decimal("1.40"),
+    )
+    without, _ = route_nifty_options(
+        cheap_iv, long_option=long_option, debit_spread=spread, policy=POLICY
+    )
+    observed = ObservedP1Features(
+        points=(),
+        iv_skew=None,
+        term_atm_iv=(),
+        atm_iv_by_expiry=(),
+        term_slope=None,
+        realized_volatility_annualized=Decimal("18"),
+        realized_volatility_ratio=Decimal("1.40"),
+        depth_top_size=(),
+        present=(PaperDataField.REALIZED_VOLATILITY,),
+        absent=(),
+        absence_reasons=(),
+    )
+    with_p1, _ = route_nifty_options(
+        cheap_iv,
+        long_option=long_option,
+        debit_spread=spread,
+        policy=POLICY,
+        p1=observed,
+    )
+    assert without.paper_winner == "positional_long_option"
+    assert with_p1.paper_winner == "debit_spread"
+
+
+def test_allow_table_blocks_cas_when_p1_depth_is_absent() -> None:
+    market = _market_state()
+    observed = observe_p1_features(
+        (_id_option("AAA-24000-CE", strike="24000", delta="0.52", iv="20"),),
+        requirements=REQUIREMENTS,
+    )
+    allowed = allowed_families_for(market, POLICY, p1=observed, paper_data=REQUIREMENTS)
+    assert "cas_microstructure" not in allowed
+
+
+def test_exit_depth_gap_does_not_block_software_stop(tmp_path: Path) -> None:
+    """Invariant 6: missing exit depth is logged; existing protection still fires."""
+    clock = FrozenClock(NOW + timedelta(seconds=60))
+    store = TradingStore.open(tmp_path / "paper.sqlite", clock=clock)
+    ids = SequentialIdFactory(clock.instant)
+    runner = PaperRunner(
+        account_config=_paper_config(),  # type: ignore[arg-type]
+        risk_policy=load_risk_policy(ROOT / "config" / "risk.yaml"),
+        store=store,
+        broker=PaperBroker.from_fixtures(BROKER_FIXTURES, clock=clock, id_factory=ids),
+        clock=clock,
+        id_factory=ids,
+        paper_data_requirements=REQUIREMENTS,
+    )
+    option = _request().candidates[0]
+    complete = option.model_copy(
+        update={
+            "market": f.quote(
+                bid=f.price("91.95"),
+                ask=f.price("92.00"),
+                last=f.price("92.00"),
+                volume=4000,
+                bid_size=300,
+                ask_size=300,
+            )
+        }
+    )
+    opened = runner.run_cycle((_request(candidates=(complete,)),))
+    assert opened.outcomes[0].order_events
+    position = runner.trade_manager.list_positions()[0]
+    symbol = position.legs[0].contract.symbol
+    stop = _option_snapshot(
+        position.legs[0].contract,
+        market=f.quote(bid=f.price("1.00"), ask=f.price("1.05")),
+    )
+    present, reason = observe_exit_depth(stop, REQUIREMENTS)
+    assert present is False
+    assert reason == "missing_top_of_book_size"
+    events = runner.manage_exits({symbol: stop})
+    assert events
+    assert runner.exit_depth_gaps == (f"{symbol}:missing_top_of_book_size",)
+    closed = runner.trade_manager.get_position(position.trade_id)
+    assert closed is not None
+    assert closed.state is TradeState.CLOSED
+    store.close()
+
+
+def test_depth_helpers_do_not_invent_missing_sizes() -> None:
+    empty = CanonicalMarketEvent(
+        event_id="depth-empty",
+        provider="fyers",
+        symbol="NSE:NIFTY26SEP24000CE",
+        event_type="DEPTH_SNAPSHOT",
+        event_time=NOW,
+        source_time=NOW,
+        receive_time=NOW,
+        provider_sequence=None,
+        payload={"bid_levels": [], "ask_levels": []},
+        raw_ref="raw",
+        normalization_version="1",
+    )
+    assert depth_top_sizes(empty) == (None, None)
+    assert observed_book_sizes({"bid": 100, "ask": 101, "volume": 12}) == (None, None)
+    assert observed_book_sizes({"bid_size": 40, "ask_size": 55}) == (40, 55)

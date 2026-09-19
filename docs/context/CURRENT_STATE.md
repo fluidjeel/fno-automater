@@ -1,8 +1,8 @@
 # Current State
 
 LAST_UPDATED: 2026-09-19
-CURRENT_MILESTONE: Phase 4–6 - PAPER two-tier data contract
-STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
+CURRENT_MILESTONE: Phase 4–6 - PAPER P1 option selection
+STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
 
@@ -41,10 +41,13 @@ STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
   Missing monitor marks `UNPROTECTED_POSITION` (never silent HOLD). Stale
   quotes persist `PROTECTION_DEGRADED` and freeze entries. PAPER stops are
   not broker-resident. 60s poll gap is a measured limitation (not live-safe).
-- Two-tier paper-data contract (PAPER-010): `config/paper_data.yaml` lists
+- Two-tier paper-data contract (PAPER-010/011): `config/paper_data.yaml` lists
   P0 (LTP, bid/ask, freshness, volume, OI, metadata, margin, broker, event)
-  and P1 (IV surface/skew/term, RV, greeks, depth). Paper session + Layer 2
-  fail closed on any P0 hole. P1 ranking uses observed chain values only.
+  and P1 (IV surface/skew/term, RV, greeks, depth) with formula windows.
+  Paper session + Layer 2 fail closed on any P0 hole. Observed P1 series
+  change binder ranking and router preference; absence is logged and never
+  invented. Depth is observed on entry and exit; CAS stays SHADOW and blocked
+  without size.
 - Paper broker synthetic margin for live weekly symbols. Isolation still refuses
   Fyers transaction adapters (PAPER-004).
 - Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.
@@ -54,7 +57,7 @@ STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
 - `uv run ruff check .` and `uv run mypy --strict src tests` are clean.
 - PAPER-010 focused suite: `tests/test_paper_data_requirements.py` plus
   identification, gateway, paper runner/session, contracts, config, and
-  PAPER-009 safety tests.
+  PAPER-009 safety tests. PAPER-011 extends that suite per P1 series.
 
 ## Blocking gaps
 

@@ -9,7 +9,9 @@ from zoneinfo import ZoneInfo
 
 from trading.domain.contracts import MarketState
 from trading.domain.contracts.advice import StructureChoice
+from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.identification.config import AllowRule, IdentificationPolicy
+from trading.identification.p1_features import ObservedP1Features, blocked_families
 
 __all__ = [
     "IvBucket",
@@ -61,7 +63,11 @@ def iv_bucket_for(
 
 
 def allowed_families_for(
-    market: MarketState, policy: IdentificationPolicy
+    market: MarketState,
+    policy: IdentificationPolicy,
+    *,
+    p1: ObservedP1Features | None = None,
+    paper_data: PaperDataRequirements | None = None,
 ) -> frozenset[str]:
     """Union of matching YAML rules, then hard NIFTY-route filters."""
     session = session_bucket_for(market.calculated_at, policy)
@@ -82,9 +88,12 @@ def allowed_families_for(
         ):
             allowed.update(rule.allowed_families)
 
-    return frozenset(
+    families = frozenset(
         _apply_hard_filters(allowed, trend=trend, iv_bucket=iv_bucket, session=session)
     )
+    if p1 is not None and paper_data is not None:
+        return frozenset(families - blocked_families(p1, paper_data))
+    return families
 
 
 def _apply_hard_filters(

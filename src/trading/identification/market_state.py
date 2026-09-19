@@ -30,6 +30,8 @@ __all__ = ["build_market_state"]
 _IST = ZoneInfo("Asia/Kolkata")
 _BAR_SECONDS = 300
 _ANNUAL_BARS = Decimal(75 * 252)
+# P1 presence for this series is gated by config/paper_data.yaml windows
+# (short 12 / long 50 completed 5m bars; 75 session bars * 252 days).
 _ATR_PERIOD = 14
 _RETURN_60_BARS = 13
 _MIN_STDEV_SAMPLES = 2

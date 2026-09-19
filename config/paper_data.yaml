@@ -3,7 +3,7 @@
 # config/data_pipeline.yaml chain/bar/depth ages. Do not invent a universal
 # threshold.
 schema_version: "1"
-requirements_version: "paper-data-v1"
+requirements_version: "paper-data-v2"
 
 fields:
   # Priority 0 — required for every paper entry
@@ -60,3 +60,29 @@ fields:
     max_age_ms: 60000
     # CAS already requires licensed depth; do not auto-ENABLE the family.
     block_families: [cas_microstructure]
+
+# Formula windows for observed-only P1 builders. Absence is logged; values are
+# never interpolated or defaulted. Align RV bars with identification warmup
+# (50 completed 5m bars) and NSE session length documented in data_pipeline.
+windows:
+  iv_skew:
+    # |delta| band treated as 25-delta. Outside this band is unused, not filled.
+    delta_min: "0.20"
+    delta_max: "0.30"
+  realized_volatility:
+    bar_resolution: "5"
+    short_window_bars: 12   # 60 minutes of completed 5m bars
+    long_window_bars: 50    # matches identification.yaml warmup.min_completed_bars
+    session_bars: 75        # 09:15–15:30 IST at 5m
+    trading_days: 252
+  greeks:
+    require_delta: true
+    require_iv: true
+    rank_with_theta: true
+    rank_with_vega: true
+  depth:
+    min_top_size: 1
+    min_book_levels: 1
+    observe_on_exit: true
+    # REST depth is one symbol per call; cap extra fetches per poll.
+    max_symbols: 8

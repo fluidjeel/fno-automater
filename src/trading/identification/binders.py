@@ -11,7 +11,7 @@ from trading.domain.contracts.identification import SetupFeatures, StructureKind
 from trading.domain.contracts.paper_data import PaperDataField
 from trading.domain.enums import InstrumentKind, OptionType, ReasonCode
 from trading.identification.config import IdentificationPolicy
-from trading.identification.p1_features import ObservedP1Features
+from trading.identification.p1_features import ObservedP1Features, top_book_size
 
 __all__ = ["BoundCandidates", "bind_debit_spread", "bind_long_option"]
 
@@ -340,7 +340,7 @@ def _candidate_score(
         + Decimal("0.20") * dte_score
         + Decimal("0.20") * spread_score
     )
-    extra = _p1_score(candidate, p1, role=role)
+    extra = _p1_score(candidate, universe, p1, role=role)
     if extra is None:
         return _q(base)
     return _q(Decimal("0.80") * base + Decimal("0.20") * extra)
@@ -348,6 +348,7 @@ def _candidate_score(
 
 def _p1_score(
     candidate: FeatureSnapshot,
+    universe: tuple[FeatureSnapshot, ...],
     p1: ObservedP1Features | None,
     *,
     role: str,
@@ -361,8 +362,9 @@ def _p1_score(
             _p1_iv_score(candidate, p1, role=role),
             _p1_skew_score(candidate, p1),
             _p1_term_score(candidate, p1),
-            _p1_depth_score(candidate, p1),
-            _p1_theta_score(candidate, p1),
+            _p1_rv_score(candidate, p1, role=role),
+            _p1_depth_score(candidate, universe, p1),
+            _p1_greeks_score(candidate, universe, p1),
         )
         if score is not None
     ]
@@ -411,28 +413,79 @@ def _p1_term_score(
     return _clamp(cheapest / atm, _ZERO, _ONE)
 
 
+def _p1_rv_score(
+    candidate: FeatureSnapshot, p1: ObservedP1Features, *, role: str
+) -> Decimal | None:
+    if PaperDataField.REALIZED_VOLATILITY not in p1.present:
+        return None
+    iv = _implied_vol(candidate)
+    rv = p1.realized_volatility_annualized
+    if iv is None or rv is None or rv <= 0:
+        return None
+    relative = iv / rv
+    if role == "short":
+        return _clamp(relative - Decimal("0.50"), _ZERO, _ONE)
+    return _clamp(Decimal(2) - relative, _ZERO, _ONE)
+
+
 def _p1_depth_score(
-    candidate: FeatureSnapshot, p1: ObservedP1Features
+    candidate: FeatureSnapshot,
+    universe: tuple[FeatureSnapshot, ...],
+    p1: ObservedP1Features,
 ) -> Decimal | None:
     if PaperDataField.DEPTH not in p1.present:
         return None
-    bid_size, ask_size = candidate.market.bid_size, candidate.market.ask_size
-    if bid_size is None or ask_size is None or min(bid_size, ask_size) <= 0:
+    observed = [size for _symbol, size in p1.depth_top_size]
+    if not observed:
         return None
-    return _ONE
+    this = _top_size(candidate)
+    if this is None or this <= 0:
+        return _ZERO
+    return _clamp(Decimal(this) / Decimal(max(observed)), _ZERO, _ONE)
 
 
-def _p1_theta_score(
-    candidate: FeatureSnapshot, p1: ObservedP1Features
+def _p1_greeks_score(
+    candidate: FeatureSnapshot,
+    universe: tuple[FeatureSnapshot, ...],
+    p1: ObservedP1Features,
 ) -> Decimal | None:
     if PaperDataField.GREEKS not in p1.present:
         return None
+    greeks = None if candidate.derivatives is None else candidate.derivatives.greeks
+    if greeks is None:
+        return None
+    parts: list[Decimal] = []
+    theta = greeks.theta
+    if theta is not None:
+        peak = max((_abs_theta(item) or _ZERO) for item in universe)
+        if peak > 0:
+            parts.append(_clamp(_ONE - abs(theta) / peak, _ZERO, _ONE))
+    vega = greeks.vega
+    if vega is not None:
+        peak_vega = max((_abs_vega(item) or _ZERO) for item in universe)
+        if peak_vega > 0:
+            parts.append(_clamp(abs(vega) / peak_vega, _ZERO, _ONE))
+    if not parts:
+        return None
+    return sum(parts, _ZERO) / Decimal(len(parts))
+
+
+def _top_size(candidate: FeatureSnapshot) -> int | None:
+    return top_book_size(candidate)
+
+
+def _abs_theta(candidate: FeatureSnapshot) -> Decimal | None:
     if candidate.derivatives is None or candidate.derivatives.greeks is None:
         return None
     theta = candidate.derivatives.greeks.theta
-    if theta is None:
+    return None if theta is None else abs(theta)
+
+
+def _abs_vega(candidate: FeatureSnapshot) -> Decimal | None:
+    if candidate.derivatives is None or candidate.derivatives.greeks is None:
         return None
-    return _clamp(_ONE - abs(theta), _ZERO, _ONE)
+    vega = candidate.derivatives.greeks.vega
+    return None if vega is None else abs(vega)
 
 
 def _implied_vol(candidate: FeatureSnapshot) -> Decimal | None:
@@ -488,6 +541,7 @@ def _setup(
         rejected_alternatives=rejected,
         p1_fields_used=() if p1 is None else tuple(item.value for item in p1.present),
         p1_fields_absent=() if p1 is None else tuple(item.value for item in p1.absent),
+        p1_absence_reasons=() if p1 is None else p1.reason_labels(),
     )
 
 

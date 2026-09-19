@@ -21,7 +21,9 @@ from trading.identification.market_state import build_market_state
 from trading.identification.p1_features import (
     ObservedP1Features,
     blocked_families,
+    observe_exit_depth,
     observe_p1_features,
+    top_book_size,
 )
 from trading.identification.router import RoutedOpportunity, route_nifty_options
 from trading.identification.vix import resolve_vix_symbol
@@ -40,9 +42,11 @@ __all__ = [
     "build_market_state",
     "iv_bucket_for",
     "load_identification_policy",
+    "observe_exit_depth",
     "observe_p1_features",
     "publish_macro_assessment",
     "resolve_vix_symbol",
     "route_nifty_options",
     "session_bucket_for",
+    "top_book_size",
 ]
