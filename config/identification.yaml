@@ -3,7 +3,7 @@ schema_version: "1"
 policy_version: "nifty-identification-v1"
 feature_version: "nifty-market-state-v1"
 binding_version: "nifty-contract-binding-v1"
-router_version: "nifty-structure-router-v1"
+router_version: "nifty-structure-router-v2"
 # Verified in Fyers NSE_CM instrument master (token 26017).
 vix_symbol: "NSE:INDIAVIX-INDEX"
 
@@ -38,3 +38,33 @@ router:
   min_score_gap: "0.10"
   cooldown_minutes: 30
 
+
+allow_table:
+  high_iv_percentile: "70"
+  # IST half-open windows [start, end)
+  auction_windows_ist:
+    - {start: "09:00", end: "09:15"}
+    - {start: "15:30", end: "15:40"}
+  continuous_window_ist: {start: "09:15", end: "15:30"}
+  rules:
+    # Directional continuous / auction: long option + debit spread
+    - trend: [UP, DOWN]
+      volatility: ["*"]
+      iv_bucket: [LOW, MID, HIGH]
+      event: [NORMAL, CAUTION]
+      session: [CONTINUOUS, AUCTION]
+      allowed_families: [positional_long_option, debit_spread]
+    # Range + high IV: defined-risk multileg + debit (hard filter also requires HIGH+RANGE)
+    - trend: [RANGE]
+      volatility: ["*"]
+      iv_bucket: [HIGH]
+      event: [NORMAL, CAUTION]
+      session: [CONTINUOUS, AUCTION]
+      allowed_families: [defined_risk_multileg, debit_spread]
+    # Auction: CAS microstructure alongside directional families
+    - trend: ["*"]
+      volatility: ["*"]
+      iv_bucket: [LOW, MID, HIGH]
+      event: [NORMAL, CAUTION]
+      session: [AUCTION]
+      allowed_families: [cas_microstructure, positional_long_option, debit_spread]

@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["IdentificationPolicy", "load_identification_policy"]
+__all__ = ["AllowRule", "AllowTablePolicy", "IdentificationPolicy", "TimeWindow", "load_identification_policy"]
 
 
 class _Frozen(BaseModel):
@@ -50,6 +50,28 @@ class RouterPolicy(_Frozen):
     cooldown_minutes: int = Field(ge=0)
 
 
+
+class TimeWindow(_Frozen):
+    start: str
+    end: str
+
+
+class AllowRule(_Frozen):
+    trend: tuple[str, ...]
+    volatility: tuple[str, ...]
+    iv_bucket: tuple[str, ...]
+    event: tuple[str, ...]
+    session: tuple[str, ...]
+    allowed_families: tuple[str, ...]
+
+
+class AllowTablePolicy(_Frozen):
+    high_iv_percentile: Decimal = Field(ge=0, le=100)
+    auction_windows_ist: tuple[TimeWindow, ...]
+    continuous_window_ist: TimeWindow
+    rules: tuple[AllowRule, ...]
+
+
 class IdentificationPolicy(_Frozen):
     policy_version: str
     feature_version: str
@@ -60,6 +82,7 @@ class IdentificationPolicy(_Frozen):
     regime: RegimePolicy
     contracts: ContractPolicy
     router: RouterPolicy
+    allow_table: AllowTablePolicy
 
 
 def load_identification_policy(path: Path) -> IdentificationPolicy:

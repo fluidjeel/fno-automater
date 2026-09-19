@@ -5,6 +5,13 @@ from trading.identification.binders import (
     bind_debit_spread,
     bind_long_option,
 )
+from trading.identification.allow_table import (
+    IvBucket,
+    SessionBucket,
+    allowed_families_for,
+    iv_bucket_for,
+    session_bucket_for,
+)
 from trading.identification.config import (
     IdentificationPolicy,
     load_identification_policy,
@@ -22,7 +29,12 @@ __all__ = [
     "bind_long_option",
     "build_market_state",
     "resolve_vix_symbol",
+    "IvBucket",
+    "SessionBucket",
+    "allowed_families_for",
+    "iv_bucket_for",
     "load_identification_policy",
+    "session_bucket_for",
     "publish_macro_assessment",
     "route_nifty_options",
 ]

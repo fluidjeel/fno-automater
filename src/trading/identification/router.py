@@ -14,6 +14,7 @@ from trading.domain.contracts.identification import (
 )
 from trading.domain.enums import ReasonCode
 from trading.identification.binders import BoundCandidates
+from trading.identification.allow_table import allowed_families_for
 from trading.identification.config import IdentificationPolicy
 
 __all__ = ["RoutedOpportunity", "route_nifty_options"]
@@ -38,7 +39,7 @@ def route_nifty_options(
     cooldown_active: bool = False,
     allowed_families: frozenset[str] | None = None,
 ) -> tuple[RouteDecision, tuple[RoutedOpportunity, ...]]:
-    families = allowed_families or frozenset({"positional_long_option", "debit_spread"})
+    families = allowed_families if allowed_families is not None else allowed_families_for(market, policy)
     candidates = {
         "positional_long_option": long_option,
         "debit_spread": debit_spread,

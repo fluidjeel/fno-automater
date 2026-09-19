@@ -27,7 +27,12 @@ from trading.identification import (
     bind_debit_spread,
     bind_long_option,
     build_market_state,
+    allowed_families_for,
     load_identification_policy,
+    session_bucket_for,
+    IvBucket,
+    SessionBucket,
+    iv_bucket_for,
     route_nifty_options,
 )
 
@@ -382,3 +387,55 @@ def test_resolve_vix_symbol_matches_instrument_master() -> None:
     assert root.exists()
     assert resolve_vix_symbol(POLICY, instrument_root=root) == "NSE:INDIAVIX-INDEX"
 
+
+
+
+def test_allow_table_matrix_for_regime_buckets() -> None:
+    """Six-to-eight regime cells: directional, multileg, CAS auction, commodity excluded."""
+    # NOW is 10:00 UTC = 15:30 IST → AUCTION window in policy.
+    assert session_bucket_for(NOW, POLICY) is SessionBucket.AUCTION
+
+    continuous = NOW.replace(hour=5, minute=0)  # 10:30 IST
+    assert session_bucket_for(continuous, POLICY) is SessionBucket.CONTINUOUS
+
+    cases = [
+        # trend, iv, event, calculated_at, expect_superset, expect_absent
+        ("UP", "30", "NORMAL", NOW, {"positional_long_option", "debit_spread", "cas_microstructure"}, {"defined_risk_multileg", "commodity_futures_trend"}),
+        ("DOWN", "55", "CAUTION", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "defined_risk_multileg", "commodity_futures_trend"}),
+        ("RANGE", "80", "NORMAL", continuous, {"defined_risk_multileg", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
+        ("RANGE", "50", "NORMAL", continuous, set(), {"defined_risk_multileg", "cas_microstructure", "commodity_futures_trend"}),
+        ("UP", "30", "NORMAL", continuous, {"positional_long_option", "debit_spread"}, {"cas_microstructure", "commodity_futures_trend"}),
+        ("MIXED", "80", "NORMAL", NOW, {"cas_microstructure", "positional_long_option", "debit_spread"}, {"defined_risk_multileg", "commodity_futures_trend"}),
+        ("UP", "30", "BLOCK_NEW", continuous, set(), {"positional_long_option", "debit_spread", "cas_microstructure"}),
+        ("RANGE", "80", "NORMAL", NOW, {"defined_risk_multileg", "debit_spread", "cas_microstructure"}, {"commodity_futures_trend"}),
+    ]
+    for trend, iv, event, when, expect_has, expect_missing in cases:
+        market = _market(
+            trend=TrendState(trend),
+            iv_percentile=Decimal(iv),
+            event_state=event,
+            calculated_at=when,
+        )
+        allowed = allowed_families_for(market, POLICY)
+        assert expect_has <= allowed, (trend, iv, event, when, allowed)
+        assert allowed.isdisjoint(expect_missing), (trend, iv, event, when, allowed)
+
+
+def test_router_intersects_allow_table_blocking_preferred_family() -> None:
+    """Allow-table can block the preferred family even when binders are eligible."""
+    market = _market(event_state="BLOCK_NEW")
+    route, _ = route_nifty_options(
+        market,
+        long_option=_bound("positional_long_option", "0.90"),
+        debit_spread=_bound("debit_spread", "0.75"),
+        policy=POLICY,
+    )
+    assert route.paper_winner is None
+    assert allowed_families_for(market, POLICY) == frozenset()
+
+
+def test_iv_bucket_boundaries_follow_router_and_allow_table() -> None:
+    assert iv_bucket_for(Decimal("40"), POLICY) is IvBucket.LOW
+    assert iv_bucket_for(Decimal("41"), POLICY) is IvBucket.MID
+    assert iv_bucket_for(Decimal("70"), POLICY) is IvBucket.HIGH
+    assert iv_bucket_for(None, POLICY) is IvBucket.UNKNOWN
