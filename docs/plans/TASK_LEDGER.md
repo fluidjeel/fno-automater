@@ -67,6 +67,7 @@ variant needs a neutral-regime rule that is not yet specified.
 | PAPER-004 | DONE | Isolation, stale/event-risk, restart idempotency, Telegram advisory copy | `tests/test_paper_session.py`; Fyers txn adapter still refused |
 | PAPER-006 | DONE | PAPER positional lifecycle persistence and restart recovery | `tests/test_paper_lifecycle.py`; software-only exits, 60s poll, no broker-resident PAPER stops |
 | PAPER-007 | DONE | Twice-daily PAPER positional review (10:30/14:30 IST) against persisted frozen policy | `tests/test_paper_review.py`; HOLD/TIGHTEN/PARTIAL/FULL; hedge/roll proposal-only; missed-slot restart |
+| PAPER-008 | DONE | Observational 12-case PAPER positional e2e sim (no production patch) | `tests/paper_positional_sim/`; first FAIL is debit-spread SNAPSHOT_MISMATCH; traces in `tests/artifacts/paper_positional_sim/` |
 | PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
 | CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 

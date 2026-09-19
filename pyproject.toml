@@ -71,6 +71,7 @@ ignore = [
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
 "tests/**" = ["S101", "S105", "S106", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401"]
+"tests/paper_positional_sim/**" = ["E501"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
 "tests/test_data_pipeline.py" = ["I001"]
 "src/trading/data/replay.py" = ["I001"]
