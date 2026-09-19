@@ -109,7 +109,17 @@ class TestConservativeFillCalculator:
         command = f.order_command(
             side=Side.BUY, quantity_contracts=75, limit_price=f.price("100.05")
         )
-        fill = simulate_fill(command, quote, policy=shipped_fill_model())
+        unverified = shipped_fill_model().model_copy(
+            update={
+                "charges_per_lot": VerifiedValue(
+                    value=None,
+                    source="test deliberately unverified",
+                    verified_at=None,
+                    note="fail-closed path",
+                )
+            }
+        )
+        fill = simulate_fill(command, quote, policy=unverified)
         assert fill.outcome is FillOutcome.FILLED
         assert fill.charges_confirmed is False
         assert fill.charges is None

@@ -45,11 +45,21 @@ class TestEligibility:
     def test_unconfirmed_costs_are_ineligible_even_with_gross_profit(self) -> None:
         package = f.long_option_cohort_package()
         shipped = load_evaluation_config(SHIPPED)
+        # Gate must still fail closed when charges are deliberately unverified,
+        # even if the shipped evaluation.yaml now carries a verified schedule.
+        unverified_fill = shipped.config.fill_model.model_copy(
+            update={
+                "charges_per_lot": shipped.config.fill_model.charges_per_lot.model_copy(
+                    update={"value": None, "verified_at": None}
+                )
+            }
+        )
         scorecard = build_scorecard(
-            package, shipped.config.fill_model, as_of=package.observation_end
+            package, unverified_fill, as_of=package.observation_end
         )
         assert scorecard.gross_pnl.amount > 0
         assert scorecard.win_count >= 1
+        assert scorecard.costs_confirmed is False
         loose = shipped.config.eligibility.model_copy(
             update={
                 "min_observation_days": 0,

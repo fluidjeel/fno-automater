@@ -52,7 +52,7 @@ def test_scan_flags_unverified_charges_and_cas_gap() -> None:
         notify=sink,
     )
     blockers = {item.blocker for item in requests}
-    assert AttentionBlocker.CHARGES_UNVERIFIED in blockers
+    assert AttentionBlocker.CHARGES_UNVERIFIED not in blockers
     assert AttentionBlocker.CAS_FEATURES_MISSING in blockers
     assert AttentionBlocker.LIVE_CONFIG_UNVERIFIED in blockers
     assert AttentionBlocker.AGENT_DISABLED in blockers
@@ -76,7 +76,7 @@ def test_telegram_sink_is_advisory_text_only() -> None:
         clock=clock,
         id_factory=SequentialIdFactory(clock.instant),
         evaluation=load_evaluation_config(ROOT / "config" / "evaluation.yaml"),
-        cas_features_complete=True,
+        cas_features_complete=False,
         live_unverified_paths=(),
         agent_enabled=True,
         notify=sink,

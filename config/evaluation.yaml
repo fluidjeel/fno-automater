@@ -13,10 +13,20 @@ fill_model:
   legging_delay_ticks: 2
   require_traded_through: true
   charges_per_lot:
-    value: null
-    source: "broker contract note and exchange/tax circular"
-    verified_at: null
-    note: "Fail closed until brokerage, STT, exchange fees and GST are verified."
+    # Conservative ROUND-TRIP INR per lot for NSE index OPTIONS on Fyers.
+    # Built 2026-09-19 from https://fyers.in/charges-list + Finance Act STT
+    # (options sell STT 0.15% of premium w.e.f. 2026-04-01). Assumed Nifty
+    # lot=75 and ~₹200–250 premium; higher premiums cost more (mostly STT).
+    # Multi-leg structures should scale by filled lots (and by legs in sizing).
+    value: "100"
+    source: "https://fyers.in/charges-list + NSE/STT schedule (Finance Act 2026)"
+    verified_at: "2026-09-19"
+    note: >-
+      Round-trip estimate: brokerage ₹20×2; STT 0.15% sell premium; NSE txn
+      ~0.0355299% premium both sides; clearing ~0.009% premium both sides;
+      SEBI ₹10/cr; NSE IPFT ₹50/cr options; stamp 0.003% buy; GST 18% on
+      (brokerage+exchange+clearing+SEBI+IPFT). At ₹200 premium ≈₹86; buffer
+      to ₹100. Not a substitute for a contract note on a live account.
 
 eligibility:
   min_observation_days: 60

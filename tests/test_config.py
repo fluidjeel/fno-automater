@@ -66,13 +66,16 @@ class TestShippedConfiguration:
         with pytest.raises(ConfigNotVerifiedError):
             config.require_ready_for(Environment.LIVE)
 
-    def test_evaluation_policy_loads_with_unverified_charges(self) -> None:
+    def test_evaluation_policy_loads_with_verified_charges(self) -> None:
         loaded = load_evaluation_config(EVALUATION_CONFIG)
         assert loaded.config.fill_model.version == "conservative-v1"
-        with pytest.raises(ConfigNotVerifiedError):
-            loaded.config.fill_model.charges_per_lot.require(
-                "fill_model.charges_per_lot"
-            )
+        per_lot = loaded.config.fill_model.charges_per_lot.require(
+            "fill_model.charges_per_lot"
+        )
+        assert per_lot > 0
+        assert loaded.config.fill_model.charges_per_lot.verified_at == date(
+            2026, 9, 19
+        )
 
     def test_agent_policy_ships_disabled(self) -> None:
         loaded = load_agent_config(

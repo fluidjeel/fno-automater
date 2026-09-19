@@ -10,6 +10,7 @@ from pydantic import ValidationError
 import tests.factories as f
 from trading.analytics.scorecard import EvaluationError, build_scorecard
 from trading.config import load_evaluation_config
+from trading.config.schema import VerifiedValue
 from trading.domain.contracts import CohortPackage
 from trading.domain.enums import ReasonCode
 
@@ -60,7 +61,16 @@ class TestScorecard:
 
     def test_unverified_charges_leave_net_pnl_unset(self) -> None:
         package = f.long_option_cohort_package()
-        policy = load_evaluation_config(SHIPPED).config.fill_model
+        shipped = load_evaluation_config(SHIPPED).config.fill_model
+        policy = shipped.model_copy(
+            update={
+                "charges_per_lot": VerifiedValue(
+                    value=None,
+                    source="test deliberately unverified",
+                    verified_at=None,
+                )
+            }
+        )
         scorecard = build_scorecard(package, policy, as_of=package.observation_end)
         assert scorecard.costs_confirmed is False
         assert scorecard.net_pnl is None
