@@ -75,6 +75,8 @@ class ReadinessEvaluator:
                 and not position.protective_order_ids
             ):
                 return False
+            if position.protection_degraded or position.software_stop_unavailable:
+                return False
         return True
 
     def _entry_block_reasons(self, request: ReadinessRequest) -> tuple[ReasonCode, ...]:

@@ -20,6 +20,7 @@ from trading.domain.contracts.common import (
     Lineage,
     Versions,
 )
+from trading.domain.contracts.entry_freeze import EntryFreezeRecord
 from trading.domain.contracts.evaluation import (
     CohortPackage,
     CohortScorecard,
@@ -82,7 +83,7 @@ from trading.domain.contracts.proposal import (
 from trading.domain.contracts.reconciliation import ReconciliationEvent
 from trading.domain.contracts.reconciliation_result import ReconciliationResult
 from trading.domain.contracts.reservation import CapitalReservation
-from trading.domain.contracts.risk import ApprovedLeg, RiskDecision
+from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
 from trading.domain.contracts.sizing import (
     SizingDecision,
     SizingLegResult,
@@ -113,6 +114,7 @@ __all__ = [
     "ContractRef",
     "DataQualityReport",
     "DerivativesContext",
+    "EntryFreezeRecord",
     "EntryPolicy",
     "EvidenceRef",
     "ExitPolicy",
@@ -128,6 +130,7 @@ __all__ = [
     "IntentLeg",
     "JudgmentReport",
     "JudgmentSignalResult",
+    "LegQuoteRef",
     "Lineage",
     "MacroStatus",
     "MarketQuote",

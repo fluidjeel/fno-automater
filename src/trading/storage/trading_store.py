@@ -20,6 +20,7 @@ from typing import Any
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
     CapitalReservation,
+    EntryFreezeRecord,
     OrderEvent,
     PositionLifecycleRecord,
     ReconciliationEvent,
@@ -57,6 +58,7 @@ class TradingEventType(StrEnum):
     RECONCILIATION_EVENT = "reconciliation_event"
     CAPITAL_RESERVATION = "capital_reservation"
     POSITION_LIFECYCLE = "position_lifecycle"
+    ENTRY_FREEZE = "entry_freeze"
 
 
 _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
@@ -65,6 +67,7 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.RECONCILIATION_EVENT: ReconciliationEvent,
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
     TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
+    TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
 }
 
 
@@ -476,6 +479,68 @@ class TradingStore:
             )
             for row in rows
         )
+
+    def get_entry_freeze(self) -> EntryFreezeRecord | None:
+        """Load the persisted entry-freeze latch, if any."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM entry_freeze WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return EntryFreezeRecord.model_validate(json.loads(row["payload"]))
+
+    def upsert_entry_freeze(
+        self,
+        record: EntryFreezeRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> bool:
+        """Persist the freeze latch. Returns True when an audit event was written.
+
+        Unchanged blocked/reason/detail combinations skip the audit append so
+        restart recovery and duplicate freeze calls stay idempotent.
+        """
+        existing = self.get_entry_freeze()
+        unchanged = (
+            existing is not None
+            and existing.entries_blocked == record.entries_blocked
+            and existing.reason_code == record.reason_code
+            and existing.detail == record.detail
+        )
+        stamp = _utc_iso(recorded_at or record.updated_at)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO entry_freeze "
+                "(singleton, entries_blocked, reason_code, detail, payload, "
+                "updated_at) "
+                "VALUES (1, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(singleton) DO UPDATE SET "
+                "entries_blocked = excluded.entries_blocked, "
+                "reason_code = excluded.reason_code, "
+                "detail = excluded.detail, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    1 if record.entries_blocked else 0,
+                    None if record.reason_code is None else record.reason_code.value,
+                    record.detail,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            if unchanged:
+                return False
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.ENTRY_FREEZE,
+                    payload=record,
+                    event_id=event_id,
+                ),
+                stamp,
+            )
+            return True
 
     def _initialize(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")

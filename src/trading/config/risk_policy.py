@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,7 @@ from trading.domain.primitives import Currency, Money
 
 __all__ = [
     "LoadedRiskPolicy",
+    "MissingMonitorResolution",
     "RiskPolicyConfig",
     "RiskPolicyLoadError",
     "StrategyAllocation",
@@ -33,6 +35,14 @@ __all__ = [
 
 class RiskPolicyLoadError(ConfigLoadError):
     """Raised when risk policy cannot be parsed or fails validation."""
+
+
+@unique
+class MissingMonitorResolution(StrEnum):
+    """Deterministic action after an open position loses its monitor quote."""
+
+    HALT_ONLY = "HALT_ONLY"
+    FLATTEN_REMAINING = "FLATTEN_REMAINING"
 
 
 class MoneyAmount(StrictModel):
@@ -68,6 +78,9 @@ class RiskPolicyConfig(VersionedModel):
     # PAPER SPAN substitute. Null fails closed for live-symbol futures sizing.
     paper_future_margin_fraction: ExactDecimal | None = Field(
         default=None, gt=0, le=Decimal("1")
+    )
+    missing_monitor_resolution: MissingMonitorResolution = (
+        MissingMonitorResolution.HALT_ONLY
     )
 
     @model_validator(mode="after")

@@ -84,6 +84,9 @@ freshness:
   max_age_ms_by_timeframe: {}
   warmup_bars_by_timeframe: {}
   max_clock_drift_ms: 500
+  quote_max_age_ms: 120000
+  max_leg_quote_skew_ms: 2000
+  protection_stale_escalate_after_ms: 120000
 
 storage:
   durable_write_required_before_submit: true

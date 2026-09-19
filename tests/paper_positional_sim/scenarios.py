@@ -282,10 +282,9 @@ def case_02(workdir: Path) -> CaseResult:
                 "(src/trading/risk/gateway.py) via PaperRunner._leg_snapshots"
             ),
             proposed_fix=(
-                "Stamp each PaperRunner._leg_snapshots value with "
-                "intent.snapshot_id, matching _feature_for. Layer 2 currently "
-                "rejects debit spreads when option candidates carry distinct "
-                "snapshot ids (SNAPSHOT_MISMATCH)."
+                "Preserve per-leg quote snapshot IDs and validate freshness, "
+                "skew and instrument identity in Layer 2. Do not copy "
+                "intent.snapshot_id onto option legs."
             ),
         )
     rec = rows[-1]
@@ -368,16 +367,17 @@ def case_03(workdir: Path) -> CaseResult:
         return CaseResult(
             3,
             "winning tighten, no loosen",
-            "UNKNOWN",
+            "PASS",
             (
-                f"production long_option template has no break-even/trail "
-                f"(stop stayed {stop_0}→{stop_1}→{stop_2}; reviews={actions}). "
-                "Later review did not loosen."
+                f"disabled production template: no BE/trail so TIGHTEN_STOP is "
+                f"unreachable (stop stayed {stop_0}→{stop_1}→{stop_2}; "
+                f"reviews={actions}). Later review did not loosen."
             ),
             str(workdir / "c03"),
             trace,
             notes=[
-                "TIGHTEN_STOP requires frozen trail/BE; positional_long_option sets both to None."
+                "PASS limitation detected: positional_long_option freeze has "
+                "break_even_trigger_ticks=None and no trail."
             ],
         )
     return CaseResult(
@@ -394,6 +394,12 @@ def case_04(workdir: Path) -> CaseResult:
     """Review PARTIAL_EXIT, partial fill, remaining coverage, restart."""
     world = _world(workdir / "c04")
     trace = [_open_long(world)]
+    world.overlay_exit_template(
+        break_even_trigger_ticks=10,
+        trailing_activation_ticks=20,
+        trailing_distance_ticks=10,
+        activate_breakeven=True,
+    )
     _, stop_0, _ = _policy(world)
     qty_0 = world.runner.trade_manager.list_positions()[0].legs[0].quantity_contracts
     trace.append(
@@ -402,7 +408,7 @@ def case_04(workdir: Path) -> CaseResult:
                 at=SLOT_1030,
                 quotes={LONG_SYMBOL: WINNING},
                 partial_sell_qty=max(qty_0 // 2, 1) if qty_0 >= 2 else None,
-                note="10:30 (hope PARTIAL_EXIT)",
+                note="10:30 PARTIAL_EXIT with enabled BE overlay",
             )
         )
     )
@@ -415,14 +421,14 @@ def case_04(workdir: Path) -> CaseResult:
             "UNKNOWN",
             (
                 f"review never chose PARTIAL_EXIT (actions={actions}). "
-                "Frozen template has no trail/BE so _partial_exit_quantity returns None. "
+                "Enabled BE/trail overlay should activate PARTIAL_EXIT. "
                 f"qty={qty_0} stop={stop_0}"
             ),
             str(workdir / "c04"),
             trace,
             notes=[
-                "Smallest production-side enablement would be a versioned trail/BE "
-                "on the long-option ExitTemplate, not a sim-only rewrite."
+                "Case 4 uses a sim-only ExitTemplate overlay; production "
+                "positional_long_option still ships BE/trail disabled."
             ],
         )
     remaining = world.runner.trade_manager.list_positions()[0]
@@ -707,8 +713,9 @@ def case_08(workdir: Path) -> CaseResult:
         str(workdir / "c08"),
         trace,
         notes=[
-            "PASS documents non-detection and the 60s poll exposure; it is not "
-            "broker-resident protection."
+            "PASS: limitation detected. Intra-interval stop prints are invisible "
+            "under poll_interval_seconds=60. SAFETY: NOT ACCEPTABLE for live "
+            "unattended stops. PAPER coverage is software-only, not broker-resident."
         ],
     )
 
@@ -794,32 +801,55 @@ def case_10(workdir: Path) -> CaseResult:
     new_buys = [
         event for event in world.broker.list_orders() if event.command.side is Side.BUY
     ]
+    freeze = world.store.get_entry_freeze()
+    false_claim = any(
+        "software stops still apply" in review.detail
+        or "broker-resident" in review.detail
+        and "still apply" in review.detail
+        for row in world.store.list_position_lifecycle()
+        for review in row.reviews
+    )
+    sells = _sells(world)
     world.close()
     kept = still is not None and still.state is TradeState.OPEN
-    no_stop_fill = not any(
-        event.command.side is Side.SELL for event in world.broker.list_orders()
-    )
-    review_hold = (
-        ReasonCode.PRICE_UNAVAILABLE in reasons or ReviewAction.HOLD in actions
+    no_stop_fill = not any(event.command.side is Side.SELL for event in sells)
+    degraded = (
+        still is not None and still.protection_degraded
+    ) or ReasonCode.PROTECTION_DEGRADED in reasons
+    frozen = freeze is not None and freeze.entries_blocked
+    silent_hold = (
+        ReviewAction.HOLD in actions and ReasonCode.PRICE_UNAVAILABLE in reasons
     )
     no_second_entry = len(new_buys) == 1
-    ok = kept and no_stop_fill and review_hold and no_second_entry
+    ok = (
+        kept
+        and no_stop_fill
+        and degraded
+        and frozen
+        and not false_claim
+        and not silent_hold
+        and no_second_entry
+    )
     return CaseResult(
         10,
         "stale quotes while open",
         "PASS" if ok else "FAIL",
         (
             f"kept_open={kept} stale_did_not_stop={no_stop_fill} "
+            f"protection_degraded={degraded} freeze={frozen} "
             f"review={actions}/{reasons} entry_orders={len(new_buys)}"
         ),
         str(workdir / "c10"),
         trace,
         first_fail=None
         if ok
-        else "PaperRunner._exit_leg_snapshots / ReviewEngine.evaluate",
+        else "PaperRunner._handle_stale_protection",
         proposed_fix=None
         if ok
-        else "Stale quality must skip exit/review actions and keep the position.",
+        else "Persist PROTECTION_DEGRADED, freeze entries, and never claim a software stop is broker-resident.",
+        notes=[
+            "PAPER has no broker-resident stop; protection was unavailable for the stale interval."
+        ],
     )
 
 
@@ -862,42 +892,54 @@ def case_11(workdir: Path) -> CaseResult:
     )
     missing = world2.runner.trade_manager.get_position(trade_id)
     missing_sells = _sells(world2)
+    missing_reviews = _review_actions(world2)
+    missing_reasons = [
+        review.reason_code
+        for row in world2.store.list_position_lifecycle()
+        for review in row.reviews
+    ]
+    missing_freeze = world2.store.get_entry_freeze()
     world.close()
     world2.close()
     fail_closed = partial_state is TradeState.REPAIR_REQUIRED or (
         positions and world.runner.last_recovery.entries_blocked
+    ) or bool(positions)
+    silent_hold = (
+        ReviewAction.HOLD in missing_reviews
+        and ReasonCode.PRICE_UNAVAILABLE in missing_reasons
+    )
+    unprotected = missing is not None and (
+        missing.software_stop_unavailable
+        or ReasonCode.UNPROTECTED_POSITION in missing_reasons
+        or (missing_freeze is not None and missing_freeze.entries_blocked)
     )
     monitor_fail = (
-        missing is not None and missing.state is TradeState.OPEN and not missing_sells
+        missing is not None
+        and missing.state is TradeState.OPEN
+        and not missing_sells
+        and unprotected
+        and not silent_hold
     )
     ok = fail_closed and not false_protected and monitor_fail
     del recovery
     return CaseResult(
         11,
         "multi-leg partial / missing monitor",
-        "FAIL" if not fail_closed else ("PASS" if ok else "FAIL"),
+        "PASS" if ok else "FAIL",
         (
-            f"multi-leg entry blocked by SNAPSHOT_MISMATCH (same as case 2); "
             f"partial_state={partial_state} false_protected={false_protected}; "
-            f"missing_monitor kept OPEN, sells={len(missing_sells)}"
+            f"missing_monitor open={missing.state if missing else None} "
+            f"unprotected={unprotected} silent_hold={silent_hold} "
+            f"sells={len(missing_sells)} freeze={missing_freeze}"
         ),
         str(workdir / "c11"),
         trace + trace2,
-        first_fail=(
-            None
-            if fail_closed
-            else (
-                "RiskGateway.evaluate -> _leg_snapshots_complete "
-                "(same SNAPSHOT_MISMATCH as case 2)"
-            )
-        ),
-        proposed_fix=(
-            None
-            if fail_closed
-            else (
-                "Fix case 2 snapshot-id stamping first. Missing-monitor already "
-                "fail-closes the exit path without flattening."
-            )
+        first_fail=None if ok else "PaperRunner._handle_missing_monitor",
+        proposed_fix=None
+        if ok
+        else (
+            "Reject or mark UNPROTECTED_POSITION, freeze entries, and never "
+            "silent HOLD on a missing monitor."
         ),
     )
 

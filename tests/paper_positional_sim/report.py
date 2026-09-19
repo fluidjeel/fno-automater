@@ -68,13 +68,10 @@ def write_report(
     lines.extend(
         [
             "- PAPER protective STOPs remain local software stubs, not broker-resident working orders.",
-            "- Exit evaluation runs on `poll_interval_seconds` (60). Intra-interval prints are invisible.",
+            "- Case 8 PASS is a limitation detected: `poll_interval_seconds=60` cannot see a stop that prints and reverses between polls. SAFETY: NOT ACCEPTABLE for live unattended stops.",
             "- Conservative fills require a published PaperBroker quote. This "
             "harness publishes each observation as the live book; production "
             "`_publish_quotes` only runs while evaluating a new intent.",
-            "- Case 5: `SafetyControls.freeze_entries` on UNKNOWN is in-memory. "
-            "Restart recovered EXIT_PENDING without blocking entries "
-            "(`entries_blocked=False`); OMS idempotency still refused a second SELL.",
             "- Charges are itemized from `config/evaluation.yaml` round-trip "
             "`charges_per_lot`, not a live contract note.",
         ]
@@ -82,7 +79,7 @@ def write_report(
     lines.extend(["", "### Review-policy gaps", ""])
     lines.extend(
         [
-            "- `positional_long_option` / `debit_spread` freeze `break_even_trigger_ticks=None` and no trail, so `TIGHTEN_STOP` and `PARTIAL_EXIT` are unreachable on the production template.",
+            "- Production `positional_long_option` / `debit_spread` freeze `break_even_trigger_ticks=None` and no trail (case 3 PASS: disabled template). Case 4 overlays BE/trail in the sim harness only.",
             "- ReviewEngine does not consume IV, theta, quoted spread or margin; those inputs HOLD unless a frozen stop/target/expiry rule fires.",
             "- `PROPOSE_HEDGE` / `PROPOSE_ROLL` persist `REVIEW_PROPOSAL_REQUIRES_L2` and never auto-submit.",
         ]
@@ -154,7 +151,8 @@ def _verdict(results: list[CaseResult]) -> str:
     return (
         "PAPER positional lifecycle is suitable for attended forward observation "
         "of entry, frozen-policy stops/targets, twice-daily HOLD reviews, 15:40 "
-        "persist/restore and missed-slot catch-up. It is not LIVE-ready: "
-        "software-only protection, 60s poll exposure, and hedge/roll still require "
-        "a new Layer 2 trade. PAPER-005 stays blocked."
+        "persist/restore and missed-slot catch-up. It is not unattended-PAPER or "
+        "LIVE-ready: software-only protection, case 8 60s poll gap (SAFETY: NOT "
+        "ACCEPTABLE for live unattended stops), and hedge/roll still require a "
+        "new Layer 2 trade. PAPER-005 stays blocked."
     )

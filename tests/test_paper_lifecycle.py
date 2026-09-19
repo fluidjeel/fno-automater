@@ -207,7 +207,7 @@ class TestUnknownExitStatus:
         recovery = second.recover_lifecycle()
         assert recovery.entries_blocked is True
         assert any(
-            alert.reason_code is ReasonCode.RECONCILIATION_UNRESOLVED
+            alert.reason_code is ReasonCode.UNKNOWN_ORDER_STATUS
             for alert in recovery.alerts
         )
         symbol = opened.legs[0].contract.symbol
@@ -274,7 +274,11 @@ class TestStaleWhileOpen:
     def test_stale_market_data_does_not_exit_or_drop_position(
         self, store: TradingStore, clock: FrozenClock
     ) -> None:
-        """Stale quotes skip this cycle's exit; the open position stays monitored."""
+        """Stale quotes skip this cycle's exit; the open position stays monitored.
+
+        Invariant 6: PROTECTION_DEGRADED is persisted and new entries freeze.
+        PAPER software stops are not broker-resident.
+        """
         runner = _open_long(store, clock)
         opened = runner.trade_manager.list_positions()[0]
         symbol = opened.legs[0].contract.symbol
@@ -290,6 +294,11 @@ class TestStaleWhileOpen:
         still_open = runner.trade_manager.get_position(opened.trade_id)
         assert still_open is not None
         assert still_open.state is TradeState.OPEN
+        assert still_open.protection_degraded is True
+        freeze = store.get_entry_freeze()
+        assert freeze is not None
+        assert freeze.entries_blocked is True
+        assert freeze.reason_code is ReasonCode.PROTECTION_DEGRADED
 
 
 class TestPartialAndUnreconciled:

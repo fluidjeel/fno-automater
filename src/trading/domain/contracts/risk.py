@@ -26,9 +26,19 @@ from trading.domain.contracts.common import ExposureSnapshot
 from trading.domain.enums import ExecutionMode, ReasonCode, RiskAction
 from trading.domain.primitives import Lots, LotSize, Money, Quantity
 
-__all__ = ["ApprovedLeg", "RiskDecision"]
+__all__ = ["ApprovedLeg", "LegQuoteRef", "RiskDecision"]
 
 _APPROVING_ACTIONS = frozenset({RiskAction.APPROVE, RiskAction.RESIZE})
+
+
+class LegQuoteRef(StrictModel):
+    """Audit record of one leg's quote snapshot used at decision time."""
+
+    leg_id: NonEmptyStr
+    snapshot_id: NonEmptyStr
+    symbol: NonEmptyStr
+    event_time: UtcDatetime
+    calculation_time: UtcDatetime
 
 
 class ApprovedLeg(StrictModel):
@@ -73,6 +83,9 @@ class RiskDecision(VersionedModel):
     decided_at: UtcDatetime
     expires_at: UtcDatetime
     attempt_budget: StrictInt = Field(default=1, ge=1)
+    decision_snapshot_id: NonEmptyStr | None = None
+    decision_timestamp: UtcDatetime | None = None
+    leg_quotes: tuple[LegQuoteRef, ...] = ()
 
     @model_validator(mode="after")
     def _outcome_matches_its_evidence(self) -> RiskDecision:

@@ -48,3 +48,12 @@ CREATE TABLE IF NOT EXISTS review_slot_runs (
     as_of TEXT NOT NULL,
     PRIMARY KEY (slot_id, session_date)
 );
+
+CREATE TABLE IF NOT EXISTS entry_freeze (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    entries_blocked INTEGER NOT NULL,
+    reason_code TEXT,
+    detail TEXT,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

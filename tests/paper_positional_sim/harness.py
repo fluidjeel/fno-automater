@@ -45,11 +45,12 @@ from trading.domain.enums import (
     TradeState,
 )
 from trading.domain.ids import SequentialIdFactory
-from trading.domain.primitives import Currency, Money
+from trading.domain.primitives import Currency, Money, Price
 from trading.runtime.isolation import PaperIsolationError, assert_paper_isolation
 from trading.runtime.paper_runner import PaperRunner, PaperStrategyRequest
 from trading.runtime.paper_session import PaperSession, load_paper_session_config
-from trading.storage.trading_store import TradingStore
+from trading.trade.exits import tighten_exit_policy
+from trading.trade.manager import monitor_leg
 from trading.strategies.macro import MacroAssessment, MacroBias
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -346,6 +347,53 @@ class SimWorld:
         self.isolation_ok, self.isolation_detail = isolation_holds(self.broker)
         self.runner.recover_lifecycle()
         self.restart_meta: dict[str, object] | None = None
+
+    def overlay_exit_template(
+        self,
+        *,
+        break_even_trigger_ticks: int,
+        trailing_activation_ticks: int,
+        trailing_distance_ticks: int,
+        activate_breakeven: bool = False,
+    ) -> None:
+        """Sim-only overlay of BE/trail onto a frozen open. Production templates stay None."""
+        positions = self.runner.trade_manager.list_positions()
+        if not positions:
+            raise AssertionError("overlay_exit_template requires an open position")
+        position = positions[0]
+        book = self.runner._open_book.get(position.trade_id)
+        if book is None:
+            raise AssertionError("open book missing for overlay")
+        intent, decision = book
+        template = intent.exit_template.model_copy(
+            update={
+                "break_even_trigger_ticks": break_even_trigger_ticks,
+                "trailing_activation_ticks": trailing_activation_ticks,
+                "trailing_distance_ticks": trailing_distance_ticks,
+            }
+        )
+        updated_intent = intent.model_copy(update={"exit_template": template})
+        policy = position.exit_policy
+        if activate_breakeven:
+            watched = monitor_leg(updated_intent)
+            leg = next(item for item in position.legs if item.leg_id == watched.leg_id)
+            trigger = Price.snap(
+                leg.average_entry_price.value
+                + leg.average_entry_price.tick.value * break_even_trigger_ticks,
+                leg.average_entry_price.tick,
+            )
+            tightened = tighten_exit_policy(
+                policy,
+                template,
+                entry_price=leg.average_entry_price,
+                monitor_price=trigger,
+            )
+            if tightened is not None:
+                policy = tightened
+        updated_position = position.model_copy(update={"exit_policy": policy})
+        self.runner.trade_manager.restore_position(updated_position)
+        self.runner._open_book[position.trade_id] = (updated_intent, decision)
+        self.runner._write_lifecycle(position.trade_id)
 
     def close(self) -> None:
         self._persist()
