@@ -303,3 +303,36 @@ def test_router_selects_debit_spread_when_iv_is_expensive() -> None:
         policy=POLICY,
     )
     assert route.paper_winner == "debit_spread"
+
+def test_eligible_binds_always_attach_setup_features() -> None:
+    candidates = (
+        _option("NIFTY-23900-CE", strike="23900", delta="0.62", bid="140", ask="141"),
+        _option("NIFTY-24000-CE", strike="24000", delta="0.525", bid="99", ask="100"),
+        _option("NIFTY-24100-CE", strike="24100", delta="0.275", bid="72", ask="73"),
+        _option("NIFTY-24200-CE", strike="24200", delta="0.15", bid="45", ask="46"),
+    )
+    market = _market()
+    long_option = bind_long_option(candidates, market=market, policy=POLICY)
+    spread = bind_debit_spread(candidates, market=market, policy=POLICY)
+
+    assert long_option.binding.eligible
+    assert long_option.setup_features is not None
+    assert spread.binding.eligible
+    assert spread.setup_features is not None
+
+
+def test_router_pass_records_failed_gate_ids_without_fake_features() -> None:
+    long_option = _bound("positional_long_option", "0.90")
+    spread = _bound("debit_spread", "0.90")
+
+    route, opportunities = route_nifty_options(
+        _market(),
+        long_option=long_option,
+        debit_spread=spread,
+        policy=POLICY,
+    )
+
+    assert route.paper_winner is None
+    assert route.failed_gate_ids == ("min_score_gap",)
+    assert all(item.setup_features is not None for item in opportunities)
+

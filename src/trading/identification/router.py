@@ -99,6 +99,21 @@ def route_nifty_options(
             if name not in families or not candidates[name].binding.eligible
         )
     )
+    failed_gates: list[str] = [reason.value for reason in hard_reasons]
+    if winner is None and not hard_reasons:
+        if preferred is None:
+            failed_gates.append("preferred_unavailable")
+        elif preferred not in families:
+            failed_gates.append("preferred_family_blocked")
+        elif not candidates[preferred].binding.eligible:
+            failed_gates.append("preferred_ineligible")
+        elif winner_score is not None and winner_score < policy.router.min_winner_score:
+            failed_gates.append("min_winner_score")
+        elif score_gap is not None and score_gap < policy.router.min_score_gap:
+            failed_gates.append("min_score_gap")
+        else:
+            failed_gates.append("no_clear_winner")
+
     route_key = (
         f"{policy.router_version}|{market.market_state_id}|{winner}|{'|'.join(shadows)}"
     )
@@ -110,6 +125,7 @@ def route_nifty_options(
         shadow_alternatives=shadows,
         rejected_families=rejected,
         reason_codes=tuple(dict.fromkeys(hard_reasons)),
+        failed_gate_ids=tuple(dict.fromkeys(failed_gates)),
         winner_score=winner_score,
         score_gap=score_gap,
     )

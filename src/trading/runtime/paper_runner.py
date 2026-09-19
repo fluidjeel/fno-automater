@@ -111,6 +111,7 @@ class PaperCycleResult:
     outcomes: tuple[PaperStrategyOutcome, ...]
     reconcile_id: str
     entries_blocked: bool
+    route_decision: RouteDecision | None = None
 
 
 @dataclass
@@ -216,11 +217,20 @@ class PaperRunner:
                     reconcile_id=boot.result.result_id,
                 )
             )
+        route_decision = next(
+            (
+                request.route_decision
+                for request in requests
+                if request.route_decision is not None
+            ),
+            None,
+        )
         return PaperCycleResult(
             system_state=system_state,
             outcomes=tuple(outcomes),
             reconcile_id=boot.result.result_id,
             entries_blocked=entries_blocked,
+            route_decision=route_decision,
         )
 
     @property
