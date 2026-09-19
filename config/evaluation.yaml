@@ -46,3 +46,14 @@ eligibility:
   require_no_p0_p1: true
   require_confirmed_costs: true
   currency: INR
+
+
+# Offline judgment harness (P2.1). Labels should_enter when
+# (MFE − charges_per_lot×lots) clears min_net_mfe_amount and beats MAE.
+judgment:
+  min_net_mfe_amount: "0"
+  require_mfe_beats_mae: true
+  min_precision: "0.55"
+  min_capture: "0.50"
+  max_brier: "0.25"
+  currency: INR

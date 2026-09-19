@@ -25,6 +25,7 @@ from trading.ai.ports import LlmTimeoutError, LlmTurn
 from trading.ai.recording import RecordingLlm, persist_agent_run
 from trading.ai.tools import ToolContext
 from trading.analytics.eligibility import evaluate_eligibility
+from trading.analytics.judgment import JudgmentError, evaluate_judgment
 from trading.analytics.scorecard import EvaluationError, build_scorecard
 from trading.config import (
     AgentConfigError,
@@ -503,6 +504,29 @@ def _cmd_evaluate_eligibility(args: argparse.Namespace) -> int:
         print(f"evaluate: {exc}", file=sys.stderr)
         return 1
     print(result.model_dump_json(indent=2))
+    return 0
+
+
+def _cmd_evaluate_judgment(args: argparse.Namespace) -> int:
+    try:
+        package, loaded, as_of = _evaluation_inputs(args)
+        report = evaluate_judgment(
+            package,
+            loaded.config.fill_model,
+            loaded.config.judgment,
+            as_of=as_of,
+        )
+    except (
+        OSError,
+        JudgmentError,
+        EvaluationError,
+        EvaluationConfigError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        print(f"evaluate: {exc}", file=sys.stderr)
+        return 1
+    print(report.model_dump_json(indent=2))
     return 0
 
 
@@ -1098,6 +1122,11 @@ def main(argv: list[str] | None = None) -> int:
             "eligibility",
             "print a fail-closed promotion eligibility report as JSON",
             _cmd_evaluate_eligibility,
+        ),
+        (
+            "judgment",
+            "print offline should_enter/should_pass judgment metrics as JSON",
+            _cmd_evaluate_judgment,
         ),
     ):
         operation = evaluate_sub.add_parser(command, help=help_text)

@@ -26,6 +26,7 @@ from trading.domain.primitives import Currency, Money
 
 __all__ = [
     "EligibilityThresholds",
+    "JudgmentThresholds",
     "EvaluationConfig",
     "EvaluationConfigError",
     "FillModelConfig",
@@ -80,12 +81,25 @@ class EligibilityThresholds(StrictModel):
         return Money.of(self.max_average_slippage_amount, self.currency)
 
 
+class JudgmentThresholds(StrictModel):
+    """Offline judgment labels and report gates (P2.1)."""
+
+    min_net_mfe_amount: ExactDecimal = Field(default=Decimal("0"))
+    require_mfe_beats_mae: StrictBool = True
+    min_precision: ExactDecimal = Field(default=Decimal("0.55"), ge=0, le=1)
+    min_capture: ExactDecimal = Field(default=Decimal("0.50"), ge=0, le=1)
+    max_brier: ExactDecimal = Field(default=Decimal("0.25"), ge=0, le=1)
+    currency: Currency = Currency.INR
+
+
 class EvaluationConfig(VersionedModel):
+
     """Versioned Layer 4 evaluation policy."""
 
     policy_version: NonEmptyStr
     fill_model: FillModelConfig
     eligibility: EligibilityThresholds
+    judgment: JudgmentThresholds = Field(default_factory=JudgmentThresholds)
 
 
 @dataclass(frozen=True, slots=True)

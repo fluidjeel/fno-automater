@@ -34,6 +34,8 @@ from trading.domain.enums import (
 from trading.domain.primitives import Money, Price
 
 __all__ = [
+    "JudgmentReport",
+    "JudgmentSignalResult",
     "CohortPackage",
     "CohortScorecard",
     "CohortSignal",
@@ -264,3 +266,37 @@ class PromotionEligibilityResult(VersionedModel):
     failed_gates: tuple[NonEmptyStr, ...] = ()
     threshold_checksum: NonEmptyStr
     detail: str = ""
+
+
+
+class JudgmentSignalResult(StrictModel):
+    """Per-signal offline label versus whether the desk entered."""
+
+    signal_id: NonEmptyStr
+    should_enter: StrictBool | None = None
+    entered: StrictBool
+    confidence: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    mae: Money | None = None
+    mfe: Money | None = None
+    charges: Money | None = None
+    net_mfe: Money | None = None
+
+
+class JudgmentReport(VersionedModel):
+    """Cohort judgment metrics: precision, capture, optional Brier."""
+
+    experiment_id: NonEmptyStr
+    as_of: UtcDatetime
+    fill_model_version: NonEmptyStr
+    labeled_count: StrictInt = Field(ge=0)
+    should_enter_count: StrictInt = Field(ge=0)
+    should_pass_count: StrictInt = Field(ge=0)
+    entered_count: StrictInt = Field(ge=0)
+    true_positive_count: StrictInt = Field(ge=0)
+    false_positive_count: StrictInt = Field(ge=0)
+    false_negative_count: StrictInt = Field(ge=0)
+    precision: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    capture: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    brier_score: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    failed_gate_ids: tuple[NonEmptyStr, ...] = ()
+    signals: tuple[JudgmentSignalResult, ...] = ()

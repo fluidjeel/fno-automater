@@ -16,6 +16,8 @@ from trading.domain.contracts.common import (
 )
 from trading.domain.contracts.evaluation import (
     CohortPackage,
+    JudgmentReport,
+    JudgmentSignalResult,
     CohortScorecard,
     CohortSignal,
     ExperimentDefinition,
@@ -103,6 +105,8 @@ __all__ = [
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
+    "JudgmentReport",
+    "JudgmentSignalResult",
     "CohortScorecard",
     "CohortSignal",
     "ConfidenceKind",

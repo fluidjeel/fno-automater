@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 import tests.factories as f
+from trading.analytics.judgment import evaluate_judgment, label_signal
 from trading.analytics.scorecard import EvaluationError, build_scorecard
 from trading.config import load_evaluation_config
 from trading.config.schema import VerifiedValue
@@ -101,3 +102,79 @@ class TestScorecard:
                 observation_start=package.observation_start,
                 observation_end=package.observation_end,
             )
+
+
+
+class TestJudgment:
+    def test_labels_win_and_loss_from_mfe_mae_minus_charges(self) -> None:
+        package = f.long_option_cohort_package()
+        loaded = load_evaluation_config(SHIPPED)
+        charges = loaded.config.fill_model.charges_per_lot.require("charges")
+        thresholds = loaded.config.judgment
+        by_id = {signal.signal_id: signal for signal in package.signals}
+        assert (
+            label_signal(
+                by_id["SIG-WIN-1"],
+                charges_per_lot=charges,
+                thresholds=thresholds,
+            )
+            is True
+        )
+        assert (
+            label_signal(
+                by_id["SIG-LOSS-1"],
+                charges_per_lot=charges,
+                thresholds=thresholds,
+            )
+            is False
+        )
+        assert (
+            label_signal(
+                by_id["SIG-DECLINE-1"],
+                charges_per_lot=charges,
+                thresholds=thresholds,
+            )
+            is None
+        )
+
+    def test_judgment_report_precision_and_capture(self) -> None:
+        package = f.long_option_cohort_package()
+        loaded = load_evaluation_config(SHIPPED)
+        report = evaluate_judgment(
+            package,
+            loaded.config.fill_model,
+            loaded.config.judgment,
+            as_of=package.observation_end,
+        )
+        assert report.labeled_count == 2
+        assert report.should_enter_count == 1
+        assert report.should_pass_count == 1
+        assert report.entered_count == 2
+        assert report.true_positive_count == 1
+        assert report.false_positive_count == 1
+        assert report.precision == report.precision  # noqa: PLR0124 — keep Decimal
+        from decimal import Decimal
+
+        assert report.precision == Decimal("0.5000")
+        assert report.capture == Decimal("1.0000")
+        assert "min_precision" in report.failed_gate_ids
+        assert "brier_unavailable" in report.failed_gate_ids
+
+    def test_cli_evaluate_judgment_prints_json(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from trading.cli import main
+
+        code = main(
+            [
+                "evaluate",
+                "judgment",
+                str(COHORT_JSON),
+                "--config",
+                str(SHIPPED),
+            ]
+        )
+        out = capsys.readouterr().out
+        assert code == 0
+        assert '"precision"' in out
+        assert '"should_enter_count"' in out
