@@ -44,6 +44,7 @@ from trading.domain.contracts.intent import (
     IntentLeg,
     TradeIntent,
 )
+from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.order import OrderCommand, OrderEvent, OrderIdentity
 from trading.domain.contracts.order_plan import (
     OrderPlan,
@@ -139,6 +140,7 @@ __all__ = [
     "ParameterProposal",
     "PendingOrderSummary",
     "PlannedOrder",
+    "PositionLifecycleRecord",
     "PortfolioSnapshot",
     "PortfolioView",
     "PositionLegState",

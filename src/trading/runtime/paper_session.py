@@ -53,7 +53,7 @@ from trading.runtime.candidates import (
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.event_risk import collect_event_risk
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.notify import format_eod_report, format_post_trade
+from trading.runtime.notify import format_eod_report, format_lifecycle_alert, format_post_trade
 from trading.runtime.paper_runner import (
     PaperCycleResult,
     PaperRunner,
@@ -149,10 +149,15 @@ class PaperSession:
 
     def run(self, *, once: bool = False) -> int:
         """Poll until EOD. ``once`` runs a single tick then returns."""
+        recovery = self._runner.recover_lifecycle()
+        for alert in recovery.alerts:
+            self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
         while True:
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
             if self._past_eod(local.time()):
+                self._runner.flush_lifecycle()
+                self._persist_broker()
                 self._send_eod(now)
                 return 0
             in_window = self._open <= local.time() <= self._close
@@ -188,7 +193,7 @@ class PaperSession:
 
     def _has_open_positions(self) -> bool:
         return any(
-            position.state is TradeState.OPEN
+            position.state is not TradeState.CLOSED
             for position in self._runner.trade_manager.list_positions()
         )
 

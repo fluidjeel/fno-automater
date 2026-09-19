@@ -6,9 +6,13 @@ from collections.abc import Sequence
 
 from trading.domain.contracts.order import OrderEvent
 from trading.domain.enums import OrderState, RiskAction
-from trading.runtime.paper_runner import PaperCycleResult, PaperStrategyOutcome
+from trading.runtime.paper_runner import (
+    LifecycleAlert,
+    PaperCycleResult,
+    PaperStrategyOutcome,
+)
 
-__all__ = ["format_eod_report", "format_post_trade"]
+__all__ = ["format_eod_report", "format_lifecycle_alert", "format_post_trade"]
 
 
 def format_post_trade(
@@ -59,6 +63,14 @@ def format_eod_report(
     else:
         lines.append("net expectancy is unknown: charges_per_lot.verified_at is unset.")
     return "\n".join(lines)
+
+
+def format_lifecycle_alert(alert: LifecycleAlert) -> str:
+    """Advisory recovery alert. Not a promotion or flatten instruction."""
+    return (
+        f"PAPER recovery {alert.reason_code.value} trade={alert.trade_id} "
+        f"{alert.detail}"
+    )
 
 
 def _order_line(strategy_id: str, experiment_id: str, event: OrderEvent) -> str:
