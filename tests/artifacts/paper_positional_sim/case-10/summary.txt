@@ -1,3 +1,3 @@
 PASS
-kept_open=True stale_did_not_stop=True review=[<ReviewAction.HOLD: 'HOLD'>]/[<ReasonCode.PRICE_UNAVAILABLE: 'PRICE_UNAVAILABLE'>] entry_orders=1
+kept_open=True stale_did_not_stop=True protection_degraded=True freeze=True review=[<ReviewAction.HOLD: 'HOLD'>]/[<ReasonCode.PROTECTION_DEGRADED: 'PROTECTION_DEGRADED'>] entry_orders=1
 

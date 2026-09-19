@@ -1,3 +1,3 @@
-UNKNOWN
-production long_option template has no break-even/trail (stop stayed 90.00→90.00→90.00; reviews=[<ReviewAction.HOLD: 'HOLD'>, <ReviewAction.HOLD: 'HOLD'>]). Later review did not loosen.
+PASS
+disabled production template: no BE/trail so TIGHTEN_STOP is unreachable (stop stayed 90.00→90.00→90.00; reviews=[<ReviewAction.HOLD: 'HOLD'>, <ReviewAction.HOLD: 'HOLD'>]). Later review did not loosen.
 
