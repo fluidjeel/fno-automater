@@ -34,6 +34,7 @@ Implementation memory lives in `docs/plans/`.
 - `OPERATIONS_RUNBOOK.md`: readiness, failure and remediation procedures.
 - `POC_ROADMAP.md`: safe vertical build order.
 - `CURRENT_STATE.md`: concise evidence-backed project status.
+- `PAPER_DATA_REQUIREMENTS.md`: P0/P1 paper market-data matrix and gates.
 - `STRATEGY_SPECS/`: relevant strategy specification only.
 
 ## Superseded

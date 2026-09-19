@@ -34,6 +34,7 @@ from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.portfolio import PositionRecord
 from trading.domain.contracts.position import PositionState
+from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     DifferenceClass,
@@ -75,6 +76,7 @@ from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequ
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.review_schedule import ReviewSlot
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
+from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
 from trading.strategies import StrategyContext, build_strategy
 from trading.strategies.macro import MacroAssessment
@@ -214,6 +216,7 @@ class PaperRunner:
         id_factory: IdFactory,
         fill_model: FillModelConfig | None = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
+        paper_data_requirements: PaperDataRequirements | None = None,
     ) -> None:
         assert_paper_isolation(
             account_config.config.environment,
@@ -230,6 +233,7 @@ class PaperRunner:
         self._clock = clock
         self._ids = id_factory
         self._execution_mode = execution_mode
+        self._paper_data = paper_data_requirements
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
             store, clock=clock, id_factory=id_factory
@@ -1417,6 +1421,23 @@ class PaperRunner:
                 execution_mode=request.execution_mode,
             )
 
+        p0_block = self._paper_p0_block_reasons(request, skip_margin=True)
+        if p0_block and request.execute:
+            return PaperStrategyOutcome(
+                strategy_id=request.strategy_id,
+                snapshot_id=request.underlying.snapshot_id,
+                intents=(),
+                rejection_reasons=p0_block,
+                decisions=(),
+                order_events=(),
+                entry_blocked_reasons=p0_block,
+                executed=request.execute,
+                setup_features=request.setup_features,
+                route_decision=request.route_decision,
+                decision_quotes=_decision_quotes(request),
+                execution_mode=request.execution_mode,
+            )
+
         try:
             strategy = build_strategy(request.strategy_id)
         except KeyError:
@@ -1538,6 +1559,8 @@ class PaperRunner:
                     instrument=instrument,
                     leg_snapshots=_leg_snapshots(intent, request),
                     event_risk_state=request.event_risk_state,
+                    paper_requirements=self._paper_data,
+                    broker_state_ok=not entries_blocked,
                 )
             )
             self._services.store.append(
@@ -1566,6 +1589,44 @@ class PaperRunner:
             decision_quotes=_decision_quotes(request),
             execution_mode=request.execution_mode,
         )
+
+    def _paper_p0_block_reasons(
+        self,
+        request: PaperStrategyRequest,
+        *,
+        skip_margin: bool,
+    ) -> tuple[ReasonCode, ...]:
+        """P0 paper-data gate. Margin is re-checked at Layer 2 after preview."""
+        if self._paper_data is None:
+            return ()
+        snapshots = request.candidates if request.candidates else (request.underlying,)
+        skip = (
+            frozenset(
+                {
+                    PaperDataField.MARGIN_ESTIMATE,
+                    PaperDataField.POSITION_BROKER_STATE,
+                }
+            )
+            if skip_margin
+            else frozenset()
+        )
+        assessment = assess_paper_data(
+            self._paper_data,
+            PaperDataInputs(
+                now=self._clock.now_utc(),
+                snapshots=snapshots,
+                event_risk=request.event_risk_state,
+                portfolio=None,
+                broker_state_ok=True,
+                margin_confirmed=None,
+                margin_required=None,
+                instruments=request.instruments,
+                skip=skip,
+            ),
+        )
+        if assessment.p0_ok:
+            return ()
+        return assessment.p0_reason_codes or (ReasonCode.DATA_GAP,)
 
     def _submit(
         self,

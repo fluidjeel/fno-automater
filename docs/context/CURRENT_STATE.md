@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-19
-CURRENT_MILESTONE: Phase 4–6 - PAPER P0 safety hardening
+CURRENT_MILESTONE: Phase 4–6 - PAPER two-tier data contract
 STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -41,6 +41,10 @@ STATUS: P0_HARDENED_UNATTENDED_NOT_LIVE_SAFE
   Missing monitor marks `UNPROTECTED_POSITION` (never silent HOLD). Stale
   quotes persist `PROTECTION_DEGRADED` and freeze entries. PAPER stops are
   not broker-resident. 60s poll gap is a measured limitation (not live-safe).
+- Two-tier paper-data contract (PAPER-010): `config/paper_data.yaml` lists
+  P0 (LTP, bid/ask, freshness, volume, OI, metadata, margin, broker, event)
+  and P1 (IV surface/skew/term, RV, greeks, depth). Paper session + Layer 2
+  fail closed on any P0 hole. P1 ranking uses observed chain values only.
 - Paper broker synthetic margin for live weekly symbols. Isolation still refuses
   Fyers transaction adapters (PAPER-004).
 - Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.

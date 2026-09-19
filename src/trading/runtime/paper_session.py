@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from trading.broker.paper import PaperBroker
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
+from trading.config.paper_data import load_paper_data_requirements
 from trading.config.schema import Environment
 from trading.data.config import DataPipelineConfig, load_data_pipeline_config
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
@@ -31,6 +32,7 @@ from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.data.storage.snapshot_store import SnapshotStore
 from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec
+from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     Exchange,
@@ -44,11 +46,14 @@ from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.identification import (
     bind_debit_spread,
     bind_long_option,
+    blocked_families,
     build_market_state,
     load_identification_policy,
+    observe_p1_features,
     publish_macro_assessment,
     route_nifty_options,
 )
+from trading.identification.allow_table import allowed_families_for
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
 from trading.runtime.candidates import (
@@ -324,6 +329,7 @@ def run_paper_session(
     pipeline_cfg = load_data_pipeline_config(
         repo_root / "config" / "data_pipeline.yaml"
     )
+    paper_data = load_paper_data_requirements(repo_root / "config" / "paper_data.yaml")
     funds = BrokerFunds(
         account_id=account.config.account_id,
         as_of=clock.now_utc(),
@@ -357,6 +363,7 @@ def run_paper_session(
         id_factory=ids,
         fill_model=evaluation.config.fill_model,
         execution_mode=ExecutionMode.PAPER,
+        paper_data_requirements=paper_data,
     )
     settings = FyersSettings.from_repo_root(repo_root)
     if notifier is None:
@@ -375,6 +382,7 @@ def run_paper_session(
             pipeline_cfg=pipeline_cfg,
             settings=settings,
             broker=broker,
+            paper_data=paper_data,
         )
     session = PaperSession(
         runner=runner,
@@ -457,6 +465,7 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
     pipeline_cfg: DataPipelineConfig,
     settings: FyersSettings,
     broker: PaperBroker,
+    paper_data: PaperDataRequirements | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -589,11 +598,18 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
             policy=identification,
             vix_history=vix_history,
         )
+        p1 = (
+            None
+            if paper_data is None
+            else observe_p1_features(
+                option_candidates, requirements=paper_data, market=market_state
+            )
+        )
         long_binding = bind_long_option(
-            option_candidates, market=market_state, policy=identification
+            option_candidates, market=market_state, policy=identification, p1=p1
         )
         debit_binding = bind_debit_spread(
-            option_candidates, market=market_state, policy=identification
+            option_candidates, market=market_state, policy=identification, p1=p1
         )
         regime_changed = last_winner_regime not in {None, market_state.trend.value}
         cooldown_active = (
@@ -606,6 +622,9 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
             position.contract.underlying == index_underlying.contract.underlying
             for position in broker.get_positions()
         )
+        allowed = allowed_families_for(market_state, identification)
+        if p1 is not None and paper_data is not None:
+            allowed = frozenset(allowed - blocked_families(p1, paper_data))
         route, opportunities = route_nifty_options(
             market_state,
             long_option=long_binding,
@@ -613,6 +632,7 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
             policy=identification,
             existing_correlated_exposure=correlated,
             cooldown_active=cooldown_active,
+            allowed_families=allowed,
         )
         if route.paper_winner is not None:
             last_winner_at = now

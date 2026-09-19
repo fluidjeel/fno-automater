@@ -69,6 +69,7 @@ variant needs a neutral-regime rule that is not yet specified.
 | PAPER-007 | DONE | Twice-daily PAPER positional review (10:30/14:30 IST) against persisted frozen policy | `tests/test_paper_review.py`; HOLD/TIGHTEN/PARTIAL/FULL; hedge/roll proposal-only; missed-slot restart |
 | PAPER-008 | DONE | Observational 12-case PAPER positional e2e sim (no production patch) | `tests/paper_positional_sim/`; debit-spread SNAPSHOT_MISMATCH recorded as P0 |
 | PAPER-009 | DONE | P0 safety hardening: multi-leg quote bundle, persistent entry freeze, missing-monitor UNPROTECTED_POSITION, stale PROTECTION_DEGRADED | 75 focused tests pass; ruff/mypy clean; 60s poll is SAFETY not OK for live; unattended PAPER is not claimed ready |
+| PAPER-010 | DONE | Two-tier PaperDataRequirements: P0 fail-closed entry gate, observed-only P1 selection | `tests/test_paper_data_requirements.py`; ruff/mypy; LIVE still off |
 | PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
 | CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 
@@ -113,5 +114,7 @@ PAPER-007 twice-daily PAPER positional review (NSE 10:30/14:30 IST) done.
   Protective coverage remains software-only between 60s polls.
 Identification stack (market state, binders, router) wired into paper session.
 L4 weekly agent DeepSeek OpenAI-compat client landed; config/agent.yaml enabled:false.
+PAPER-010 two-tier paper-data contract: P0 gates paper entry; P1 ranking is
+observed-only (no invented IV/skew/term/depth).
 Next: PAPER-005 after verified charges_per_lot + live paper evidence; Monday live CAS depth window; optional trading agent weekly --trial.
 ```

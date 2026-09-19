@@ -7,6 +7,7 @@ from trading.safety.controls import (
     SafetyControlsError,
     daily_loss_cap_breached,
 )
+from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.safety.readiness import (
     ReadinessEvaluator,
     ReadinessReport,
@@ -14,9 +15,11 @@ from trading.safety.readiness import (
 )
 
 __all__ = [
+    "PaperDataInputs",
     "ReadinessEvaluator",
     "ReadinessReport",
     "ReadinessRequest",
+    "assess_paper_data",
     "SafetyControlEvent",
     "SafetyControlKind",
     "SafetyControls",
