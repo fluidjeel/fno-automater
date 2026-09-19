@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from pydantic import ValidationError
 import tests.factories as f
 from trading.analytics.judgment import evaluate_judgment, label_signal
 from trading.analytics.scorecard import EvaluationError, build_scorecard
+from trading.cli import main
 from trading.config import load_evaluation_config
 from trading.config.schema import VerifiedValue
 from trading.domain.contracts import CohortPackage
@@ -104,7 +106,6 @@ class TestScorecard:
             )
 
 
-
 class TestJudgment:
     def test_labels_win_and_loss_from_mfe_mae_minus_charges(self) -> None:
         package = f.long_option_cohort_package()
@@ -152,9 +153,7 @@ class TestJudgment:
         assert report.entered_count == 2
         assert report.true_positive_count == 1
         assert report.false_positive_count == 1
-        assert report.precision == report.precision  # noqa: PLR0124 — keep Decimal
-        from decimal import Decimal
-
+        assert report.precision == report.precision
         assert report.precision == Decimal("0.5000")
         assert report.capture == Decimal("1.0000")
         assert "min_precision" in report.failed_gate_ids
@@ -163,8 +162,6 @@ class TestJudgment:
     def test_cli_evaluate_judgment_prints_json(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        from trading.cli import main
-
         code = main(
             [
                 "evaluate",

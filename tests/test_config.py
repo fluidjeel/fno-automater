@@ -73,9 +73,7 @@ class TestShippedConfiguration:
             "fill_model.charges_per_lot"
         )
         assert per_lot > 0
-        assert loaded.config.fill_model.charges_per_lot.verified_at == date(
-            2026, 9, 19
-        )
+        assert loaded.config.fill_model.charges_per_lot.verified_at == date(2026, 9, 19)
 
     def test_agent_policy_ships_disabled(self) -> None:
         loaded = load_agent_config(

@@ -1,4 +1,4 @@
-"""Offline judgment harness: label should_enter/should_pass from MAE/MFE − charges."""
+"""Offline judgment harness: label should_enter/should_pass from MAE/MFE - charges."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from trading.domain.contracts.evaluation import (
     JudgmentSignalResult,
 )
 from trading.domain.contracts.identification import ConfidenceKind
-from trading.domain.primitives import Currency, Money
+from trading.domain.primitives import Money
 
 __all__ = ["JudgmentError", "evaluate_judgment", "label_signal"]
 
@@ -35,9 +35,7 @@ def label_signal(
     net_mfe = signal.mfe.amount - charges
     if net_mfe < thresholds.min_net_mfe_amount:
         return False
-    if thresholds.require_mfe_beats_mae and net_mfe <= signal.mae.amount:
-        return False
-    return True
+    return not (thresholds.require_mfe_beats_mae and net_mfe <= signal.mae.amount)
 
 
 def evaluate_judgment(
@@ -50,9 +48,7 @@ def evaluate_judgment(
     """Score offline enter/pass labels and desk precision/capture/Brier."""
     if not package.experiment.parameters_frozen:
         raise JudgmentError("unfrozen experiment cannot be judged")
-    charges_per_lot = fill_model.charges_per_lot.require(
-        "fill_model.charges_per_lot"
-    )
+    charges_per_lot = fill_model.charges_per_lot.require("fill_model.charges_per_lot")
     currency = thresholds.currency
 
     rows: list[JudgmentSignalResult] = []

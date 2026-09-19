@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -17,7 +16,8 @@ __all__ = ["ADVISE_SYSTEM_PROMPT", "MAX_ADVISE_ITERATIONS", "run_advise_agent"]
 
 MAX_ADVISE_ITERATIONS = 6
 
-ADVISE_SYSTEM_PROMPT = """You are the Layer 4 structure desk for an Indian Nifty F&O paper stack.
+ADVISE_SYSTEM_PROMPT = """\
+You are the Layer 4 structure desk for an Indian Nifty F&O paper stack.
 You rank which paper family to prefer today. You do NOT promote strategies to live,
 ENABLE anything, or place orders. Deterministic code owns every live order.
 
@@ -38,7 +38,7 @@ Prefer PASS when IV is missing, eligibility fails, or evidence is thin.
 """
 
 
-def run_advise_agent(
+def run_advise_agent(  # noqa: PLR0911 - explicit PASS reasons for each abort
     *,
     llm: LlmPort,
     config: AgentConfig,
@@ -46,7 +46,6 @@ def run_advise_agent(
     prompt: str,
 ) -> StructureAdvice:
     """Rank paper structures until advice, PASS, budget, or iteration cap."""
-    now = tools.clock.now_utc()
     if not config.enabled:
         return _pass(
             tools,
@@ -119,9 +118,7 @@ def _assistant_message(turn: LlmTurn) -> dict[str, Any]:
     }
 
 
-def _pass(
-    tools: ToolContext, *, reason: ReasonCode, detail: str
-) -> StructureAdvice:
+def _pass(tools: ToolContext, *, reason: ReasonCode, detail: str) -> StructureAdvice:
     return StructureAdvice(
         as_of=tools.clock.now_utc(),
         preferred_structure=StructureChoice.PASS,

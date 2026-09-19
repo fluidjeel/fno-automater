@@ -34,13 +34,13 @@ from trading.domain.enums import (
 from trading.domain.primitives import Money, Price
 
 __all__ = [
-    "JudgmentReport",
-    "JudgmentSignalResult",
     "CohortPackage",
     "CohortScorecard",
     "CohortSignal",
     "ExperimentDefinition",
     "FillSimulation",
+    "JudgmentReport",
+    "JudgmentSignalResult",
     "PromotionEligibilityResult",
     "ReasonCount",
 ]
@@ -266,7 +266,6 @@ class PromotionEligibilityResult(VersionedModel):
     failed_gates: tuple[NonEmptyStr, ...] = ()
     threshold_checksum: NonEmptyStr
     detail: str = ""
-
 
 
 class JudgmentSignalResult(StrictModel):
