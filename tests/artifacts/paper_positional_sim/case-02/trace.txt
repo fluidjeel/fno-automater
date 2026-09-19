@@ -1,0 +1,4 @@
+2026-09-14T09:20:00+05:30 → debit-spread entry; NIFTY26SEP24000CE 91.95/92.00 last=92.00 dte=10 VALID,NIFTY26SEP24100CE 45.00/45.10 last=45.05 dte=10 VALID → FLAT → no-review-row → none → none → none → no-fills
+2026-09-14T10:30:00+05:30 → 10:30; NIFTY26SEP24000CE 94.00/94.10 last=94.05 dte=10 VALID,NIFTY26SEP24100CE 44.80/44.90 last=44.85 dte=10 VALID → FLAT → no-review-row → none → none → none → no-fills
+2026-09-14T14:30:00+05:30 → 14:30; NIFTY26SEP24000CE 94.00/94.10 last=94.05 dte=10 VALID,NIFTY26SEP24100CE 44.80/44.90 last=44.85 dte=10 VALID → FLAT → no-review-row → none → none → none → no-fills
+2026-09-14T14:35:00+05:30 → monitor-leg stop print; NIFTY26SEP24000CE 85.00/85.20 last=85.00 dte=10 VALID,NIFTY26SEP24100CE 44.80/44.90 last=44.85 dte=10 VALID → FLAT → no-review-row → none → none → none → no-fills

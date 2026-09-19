@@ -83,9 +83,7 @@ def allowed_families_for(
             allowed.update(rule.allowed_families)
 
     return frozenset(
-        _apply_hard_filters(
-            allowed, trend=trend, iv_bucket=iv_bucket, session=session
-        )
+        _apply_hard_filters(allowed, trend=trend, iv_bucket=iv_bucket, session=session)
     )
 
 

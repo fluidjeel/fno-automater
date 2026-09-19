@@ -1,0 +1,3 @@
+FAIL
+spread did not open; risk_reasons=[('SNAPSHOT_MISMATCH',)]
+RiskGateway.evaluate -> _leg_snapshots_complete (src/trading/risk/gateway.py) via PaperRunner._leg_snapshots

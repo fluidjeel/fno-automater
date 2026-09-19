@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 import tests.factories as f
 from trading.ai import (
@@ -20,12 +22,13 @@ from trading.ai import (
 from trading.ai.tools import dispatch_tool
 from trading.cli import main
 from trading.config import (
+    AgentConfig,
     load_agent_config,
     load_agent_config_text,
     load_evaluation_config,
 )
 from trading.domain.clock import FrozenClock
-from trading.domain.contracts import AdviceStance, StructureChoice
+from trading.domain.contracts import AdviceStance, StructureAdvice, StructureChoice
 from trading.domain.enums import (
     FamilyStance,
     ProposalType,
@@ -38,7 +41,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EVALUATION = load_evaluation_config(ROOT / "config" / "evaluation.yaml")
 
 
-def _enabled_config() -> object:
+def _enabled_config() -> AgentConfig:
     raw = (ROOT / "config" / "agent.yaml").read_text(encoding="utf-8")
     return load_agent_config_text(raw.replace("enabled: false", "enabled: true")).config
 
@@ -114,7 +117,7 @@ def test_emit_proposal_returns_strategy_family() -> None:
     )
     proposal = run_weekly_agent(
         llm=ScriptedLlm([turn]),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -156,7 +159,7 @@ def test_timeout_abstains() -> None:
 
     proposal = run_weekly_agent(
         llm=_Timeout(),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -193,7 +196,7 @@ def test_malformed_proposal_abstains() -> None:
     )
     proposal = run_weekly_agent(
         llm=ScriptedLlm([turn]),
-        config=_enabled_config(),  # type: ignore[arg-type]
+        config=_enabled_config(),
         tools=_ctx(clock),
         prompt="propose",
     )
@@ -266,17 +269,10 @@ def test_cli_weekly_paper_cohort_path(tmp_path: Path) -> None:
 
 
 def test_structure_advice_rejects_unknown_structure() -> None:
-    from datetime import UTC, datetime
-    from decimal import Decimal
-
-    from pydantic import ValidationError
-
-    from trading.domain.contracts import StructureAdvice
-
     with pytest.raises(ValidationError):
         StructureAdvice(
             as_of=datetime.now(UTC),
-            preferred_structure="iron_condor",
+            preferred_structure="iron_condor",  # type: ignore[arg-type]
             stance=AdviceStance.PAPER,
             confidence=Decimal("0.5"),
         )
@@ -315,7 +311,9 @@ def test_emit_advice_returns_ranked_structure() -> None:
                         "confidence": "0.55",
                         "alternatives_ranked": [
                             {
-                                "structure": StructureChoice.POSITIONAL_LONG_OPTION.value,
+                                "structure": (
+                                    StructureChoice.POSITIONAL_LONG_OPTION.value
+                                ),
                                 "score": "0.40",
                                 "why": "lower IV regime still ok for long option",
                             }
@@ -337,7 +335,10 @@ def test_emit_advice_returns_ranked_structure() -> None:
     )
     assert advice.preferred_structure is StructureChoice.DEBIT_SPREAD
     assert advice.stance is AdviceStance.PAPER
-    assert advice.alternatives_ranked[0].structure is StructureChoice.POSITIONAL_LONG_OPTION
+    assert (
+        advice.alternatives_ranked[0].structure
+        is StructureChoice.POSITIONAL_LONG_OPTION
+    )
 
 
 def test_emit_advice_rejects_unknown_structure_and_passes() -> None:
@@ -373,7 +374,9 @@ def test_emit_advice_rejects_unknown_structure_and_passes() -> None:
 def test_cli_advise_refuses_missing_cohort(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["agent", "advise"]) != 0
     err = capsys.readouterr().err
-    assert "refusing fixture" in err.lower() or "cohort" in err.lower() or "agent:" in err
+    assert (
+        "refusing fixture" in err.lower() or "cohort" in err.lower() or "agent:" in err
+    )
 
 
 def test_cli_advise_allow_fixture_prints_pass(
@@ -382,5 +385,7 @@ def test_cli_advise_allow_fixture_prints_pass(
     code = main(["agent", "advise", "--allow-fixture"])
     out = capsys.readouterr().out
     assert code == 0
-    assert '"preferred_structure": "PASS"' in out or '"preferred_structure":"PASS"' in out.replace(" ", "")
-
+    assert (
+        '"preferred_structure": "PASS"' in out
+        or '"preferred_structure":"PASS"' in out.replace(" ", "")
+    )

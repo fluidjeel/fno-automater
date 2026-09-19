@@ -22,3 +22,10 @@ commodity_segment: MCX_COM
 cohort_dir: data/paper/cohorts
 store_path: data/paper/trading.sqlite
 broker_state_path: data/paper/broker_state.json
+positional_review:
+  nse_slots:
+    - id: NSE_MORNING
+      local: "10:30"
+    - id: NSE_AFTERNOON
+      local: "14:30"
+  mcx_slots: []

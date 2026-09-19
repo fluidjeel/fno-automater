@@ -128,7 +128,7 @@ class TestRefreshAccessToken:
             return True
 
         monkeypatch.setattr(
-            auth_mod.FyersSettings,
+            FyersSettings,
             "from_repo_root",
             classmethod(lambda cls, root: settings),
         )
@@ -137,6 +137,7 @@ class TestRefreshAccessToken:
             "load_refresh_token",
             lambda self, root: "refresh-123",
         )
+
         def boom(*args: object, **kwargs: object) -> str:
             raise ValueError(
                 "refresh failed: Refresh token API is currently "

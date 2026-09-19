@@ -13,8 +13,8 @@ from trading.domain.contracts.identification import (
     TrendState,
 )
 from trading.domain.enums import ReasonCode
-from trading.identification.binders import BoundCandidates
 from trading.identification.allow_table import allowed_families_for
+from trading.identification.binders import BoundCandidates
 from trading.identification.config import IdentificationPolicy
 
 __all__ = ["RoutedOpportunity", "route_nifty_options"]
@@ -28,7 +28,7 @@ class RoutedOpportunity:
     setup_features: SetupFeatures | None
 
 
-def route_nifty_options(
+def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
     market: MarketState,
     *,
     long_option: BoundCandidates,
@@ -39,7 +39,11 @@ def route_nifty_options(
     cooldown_active: bool = False,
     allowed_families: frozenset[str] | None = None,
 ) -> tuple[RouteDecision, tuple[RoutedOpportunity, ...]]:
-    families = allowed_families if allowed_families is not None else allowed_families_for(market, policy)
+    families = (
+        allowed_families
+        if allowed_families is not None
+        else allowed_families_for(market, policy)
+    )
     candidates = {
         "positional_long_option": long_option,
         "debit_spread": debit_spread,

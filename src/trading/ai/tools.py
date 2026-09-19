@@ -107,7 +107,9 @@ ADVISE_TOOL_SPECS: list[dict[str, Any]] = [
     *[spec for spec in TOOL_SPECS if spec["name"] != "emit_proposal"],
     {
         "name": "emit_advice",
-        "description": "Emit bounded StructureAdvice. Cannot ENABLE live or place orders.",
+        "description": (
+            "Emit bounded StructureAdvice. Cannot ENABLE live or place orders."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"advice": {"type": "object"}},
