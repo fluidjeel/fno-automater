@@ -13,7 +13,7 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.common import ContractRef
-from trading.domain.enums import ExitScope, Side, TradeState
+from trading.domain.enums import ExecutionMode, ExitScope, Side, TradeState
 from trading.domain.primitives import Money, Price
 
 __all__ = ["ExitPolicy", "PositionLegState", "PositionState"]
@@ -66,6 +66,9 @@ class PositionState(VersionedModel):
     trade_id: NonEmptyStr
     intent_id: NonEmptyStr
     strategy_id: NonEmptyStr
+    strategy_version: NonEmptyStr
+    experiment_id: NonEmptyStr
+    execution_mode: ExecutionMode
     state: TradeState
     legs: tuple[PositionLegState, ...]
     exit_policy: ExitPolicy

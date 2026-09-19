@@ -30,7 +30,8 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.common import ContractRef
-from trading.domain.enums import AssetClass, Side
+from trading.domain.contracts.identification import SetupFeatures
+from trading.domain.enums import AssetClass, ExecutionMode, Side
 from trading.domain.primitives import Money, Percent
 
 __all__ = [
@@ -136,6 +137,8 @@ class TradeIntent(VersionedModel):
     strategy_id: NonEmptyStr
     strategy_version: NonEmptyStr
     snapshot_id: NonEmptyStr
+    experiment_id: NonEmptyStr
+    execution_mode: ExecutionMode
     promoted_config_version: NonEmptyStr
     promoted_proposal_id: NonEmptyStr | None = None
     supersedes_intent_id: NonEmptyStr | None = None
@@ -149,6 +152,7 @@ class TradeIntent(VersionedModel):
     estimated_max_loss: Money
     setup_code: NonEmptyStr
     strategy_confidence: ExactDecimal = Field(ge=Decimal(0), le=Decimal(1))
+    setup_features: SetupFeatures | None = None
     created_at: UtcDatetime
     expires_at: UtcDatetime
 

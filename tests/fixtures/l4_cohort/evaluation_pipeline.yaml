@@ -1,0 +1,32 @@
+# Pipeline-only evaluation policy. Verified charges exist so eligibility can
+# reach ELIGIBLE in tests. This is not a go-live schedule.
+
+schema_version: "1"
+policy_version: "pipeline-test-1"
+
+fill_model:
+  version: "conservative-v1"
+  slippage_ticks: 1
+  legging_delay_ticks: 2
+  require_traded_through: true
+  charges_per_lot:
+    value: "10"
+    source: "test fixture contract note"
+    verified_at: 2026-09-14
+
+eligibility:
+  min_observation_days: 1
+  min_signals: 2
+  min_closed_trades: 2
+  min_expectancy_amount: "0"
+  max_drawdown_amount: "50000"
+  max_consecutive_losses: 8
+  min_fill_rate: "0.50"
+  max_reject_rate: "0.30"
+  max_average_slippage_amount: "500"
+  max_single_trade_pnl_share: "0.80"
+  min_regime_count: 2
+  require_daily_reconciliation: true
+  require_no_p0_p1: true
+  require_confirmed_costs: true
+  currency: INR

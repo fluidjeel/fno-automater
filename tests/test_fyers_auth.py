@@ -14,10 +14,12 @@ import pytest
 from trading.data.fyers import auth as auth_mod
 from trading.data.fyers.auth import (
     _auth_code_from_text,
+    _is_sebi_refresh_disabled,
     _token_expiry,
     _token_is_fresh,
     extract_auth_code,
     refresh_access_token,
+    run_refresh,
     run_telegram_auth,
 )
 from trading.data.settings import FyersSettings
@@ -105,6 +107,48 @@ class TestRefreshAccessToken:
             refresh_access_token(
                 settings, refresh_token="refresh-123", transport=transport
             )
+
+    def test_sebi_disabled_is_detected(self) -> None:
+        assert _is_sebi_refresh_disabled(
+            "refresh failed: Refresh token API is currently disabled "
+            "to comply with SEBI regulations."
+        )
+        assert not _is_sebi_refresh_disabled("invalid pin")
+
+    def test_run_refresh_sebi_disabled_is_not_an_alarm(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        settings = _settings_with_pin(monkeypatch)
+        notes: list[str] = []
+
+        def fake_notify(_settings: FyersSettings, text: str) -> bool:
+            notes.append(text)
+            return True
+
+        monkeypatch.setattr(
+            auth_mod.FyersSettings,
+            "from_repo_root",
+            classmethod(lambda cls, root: settings),
+        )
+        monkeypatch.setattr(
+            FyersSettings,
+            "load_refresh_token",
+            lambda self, root: "refresh-123",
+        )
+        def boom(*args: object, **kwargs: object) -> str:
+            raise ValueError(
+                "refresh failed: Refresh token API is currently "
+                "disabled to comply with SEBI regulations."
+            )
+
+        monkeypatch.setattr(auth_mod, "refresh_access_token", boom)
+        monkeypatch.setattr(auth_mod, "_notify", fake_notify)
+        assert run_refresh(tmp_path) == 1
+        assert notes
+        assert "FAILED" not in notes[0]
+        assert "SEBI" in notes[0]
 
 
 class TestAuthCodeFromText:

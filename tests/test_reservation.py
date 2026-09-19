@@ -283,9 +283,7 @@ class TestConcurrentReserve:
             except BaseException as exc:
                 errors.append(exc)
 
-        threads = [
-            threading.Thread(target=worker, args=plan) for plan in plans
-        ]
+        threads = [threading.Thread(target=worker, args=plan) for plan in plans]
         for thread in threads:
             thread.start()
         for thread in threads:

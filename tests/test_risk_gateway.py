@@ -6,7 +6,8 @@ Invariant 14: approvals reserve capital before submission.
 
 from __future__ import annotations
 
-from datetime import date
+from dataclasses import replace
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -150,10 +151,80 @@ def _gateway_request(
         feature_snapshot=snap,
         portfolio_snapshot=portfolio_snapshot or f.portfolio_snapshot(),
         instrument=instrument or instrument_spec(),
+        event_risk_state=f.event_risk_state(),
     )
 
 
 class TestRiskGateway:
+    def test_required_event_blackout_state_fails_closed_when_missing(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        decision = gateway.evaluate(replace(_gateway_request(), event_risk_state=None))
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.EVENT_BLACKOUT,)
+
+    def test_required_event_blackout_blocks_entry(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        decision = gateway.evaluate(
+            replace(
+                _gateway_request(),
+                event_risk_state=f.event_risk_state(state="BLOCK_NEW_ENTRIES"),
+            )
+        )
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.EVENT_BLACKOUT,)
+
+    @pytest.mark.parametrize(
+        "event_overrides",
+        [
+            {"scope": "BANKNIFTY"},
+            {"expires_at": NOW - timedelta(seconds=1)},
+            {"quality_state": "STALE"},
+            {"state": "MARKET_EMERGENCY"},
+        ],
+        ids=("wrong-scope", "expired", "stale-quality", "emergency"),
+    )
+    def test_event_blackout_evidence_must_be_usable(
+        self,
+        gateway: RiskGateway,
+        event_overrides: dict[str, object],
+    ) -> None:
+        request = replace(
+            _gateway_request(),
+            event_risk_state=f.event_risk_state(**event_overrides),
+        )
+        decision = gateway.evaluate(request)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.EVENT_BLACKOUT,)
+
+    def test_layer2_rejects_missing_required_open_interest(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        assert snap.derivatives is not None
+        snap = snap.model_copy(
+            update={
+                "derivatives": snap.derivatives.model_copy(
+                    update={"open_interest": None}
+                )
+            }
+        )
+        decision = gateway.evaluate(
+            _gateway_request(
+                feature_snapshot=snap,
+                intent=f.intent(
+                    snapshot_id=snap.snapshot_id,
+                    constraints=f.constraints(min_open_interest=1000),
+                ),
+            )
+        )
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.DEPTH_INSUFFICIENT,)
+
     def test_approves_long_call_with_reserved_capital(
         self,
         gateway: RiskGateway,
@@ -194,6 +265,7 @@ class TestRiskGateway:
             feature_snapshot=snap,
             portfolio_snapshot=f.portfolio_snapshot(),
             instrument=instrument_spec(trading_symbol="NSE:UNKNOWN26SEP24000CE"),
+            event_risk_state=f.event_risk_state(),
         )
         decision = gateway.evaluate(request)
         assert decision.action is RiskAction.REJECT
@@ -221,6 +293,7 @@ class TestRiskGateway:
             feature_snapshot=snap,
             portfolio_snapshot=f.portfolio_snapshot(),
             instrument=instrument_spec(),
+            event_risk_state=f.event_risk_state(),
         )
         decision = gateway.evaluate(request)
         assert decision.action is RiskAction.REJECT
@@ -249,6 +322,7 @@ class TestRiskGateway:
             feature_snapshot=snap,
             portfolio_snapshot=f.portfolio_snapshot(),
             instrument=instrument_spec(),
+            event_risk_state=f.event_risk_state(),
         )
         high = RiskGatewayRequest(
             intent=f.intent(
@@ -260,6 +334,7 @@ class TestRiskGateway:
             feature_snapshot=snap,
             portfolio_snapshot=f.portfolio_snapshot(),
             instrument=instrument_spec(),
+            event_risk_state=f.event_risk_state(),
         )
         low_decision = gateway.evaluate(low)
         high_decision = gateway.evaluate(high)

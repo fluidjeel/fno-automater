@@ -1,27 +1,38 @@
-"""Deterministic paper broker: immediate full fill at limit price (slice 1)."""
+"""Deterministic paper broker: LIMIT fills, optional conservative re-price."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+from trading.analytics.fills import simulate_fill
 from trading.broker.paper.fixtures import PaperBrokerFixtures
 from trading.broker.ports import (
     BrokerError,
     BrokerFunds,
     BrokerSubmitRequest,
     DuplicateBrokerOrderError,
+    MarginPreviewLeg,
     MarginPreviewRequest,
     MarginPreviewResult,
 )
+from trading.config.evaluation import FillModelConfig
 from trading.domain.clock import Clock
 from trading.domain.contracts.order import OrderCommand, OrderEvent
 from trading.domain.contracts.portfolio import (
     PendingOrderSummary,
     PositionRecord,
 )
-from trading.domain.enums import OrderState, OrderType, Side
+from trading.domain.contracts.snapshot import MarketQuote
+from trading.domain.enums import (
+    FillOutcome,
+    InstrumentKind,
+    OrderState,
+    OrderType,
+    Side,
+)
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Money, Price
 
@@ -48,7 +59,7 @@ class _PaperState:
 
 
 class PaperBroker:
-    """Offline broker implementing immediate full fills for LIMIT orders."""
+    """Offline broker. Immediate LIMIT fills unless a conservative fill model is set."""
 
     def __init__(
         self,
@@ -56,10 +67,17 @@ class PaperBroker:
         clock: Clock,
         id_factory: IdFactory,
         fixtures: PaperBrokerFixtures,
+        fill_model: FillModelConfig | None = None,
+        synthetic_margin: bool = False,
+        future_margin_fraction: Decimal | None = None,
     ) -> None:
         self._clock = clock
         self._ids = id_factory
         self._fixtures = fixtures
+        self._fill_model = fill_model
+        self._synthetic_margin = synthetic_margin
+        self._future_margin_fraction = future_margin_fraction
+        self._quotes: dict[str, MarketQuote] = {}
         self._state = _PaperState(
             funds=fixtures.account,
             positions={
@@ -75,16 +93,51 @@ class PaperBroker:
         *,
         clock: Clock,
         id_factory: IdFactory,
+        fill_model: FillModelConfig | None = None,
     ) -> PaperBroker:
         """Construct a paper broker from tests/fixtures/broker/."""
         return cls(
             clock=clock,
             id_factory=id_factory,
             fixtures=PaperBrokerFixtures.load(root),
+            fill_model=fill_model,
         )
 
+    @classmethod
+    def for_session(
+        cls,
+        *,
+        clock: Clock,
+        id_factory: IdFactory,
+        funds: BrokerFunds,
+        fill_model: FillModelConfig | None = None,
+        future_margin_fraction: Decimal | None = None,
+    ) -> PaperBroker:
+        """Live-symbol paper broker: empty fixtures, synthetic margin previews."""
+        return cls(
+            clock=clock,
+            id_factory=id_factory,
+            fixtures=PaperBrokerFixtures(
+                account=funds,
+                positions=(),
+                margin_previews={},
+            ),
+            fill_model=fill_model,
+            synthetic_margin=True,
+            future_margin_fraction=future_margin_fraction,
+        )
+
+    def publish_quote(self, symbol: str, quote: MarketQuote) -> None:
+        """Publish the decision-time book used by the conservative fill model."""
+        self._quotes[symbol] = quote
+
+    @property
+    def fill_model(self) -> FillModelConfig | None:
+        """Conservative fill model, or None for immediate limit fills."""
+        return self._fill_model
+
     def submit(self, request: BrokerSubmitRequest) -> OrderEvent:
-        """Submit one order and fill immediately at the limit price."""
+        """Submit one order; fill immediately or via the conservative model."""
         order = request.order
         key = order.identity.idempotency_key
         existing = self._state.orders_by_idempotency_key.get(key)
@@ -93,30 +146,23 @@ class PaperBroker:
                 raise DuplicateBrokerOrderError(key, existing)
             return existing
 
-        fill_price = self._resolve_fill_price(order.command)
         now = self._clock.now_utc()
         broker_order_id = self._ids.new_id("PBRK")
-        event = OrderEvent.model_validate(
-            {
-                "event_id": self._ids.new_id("EVT"),
-                "identity": {
-                    **order.identity.model_dump(mode="python"),
-                    "broker_order_id": broker_order_id,
-                },
-                "command": order.command.model_dump(mode="python"),
-                "state": OrderState.FILLED,
-                "attempt_number": request.attempt_number,
-                "acknowledged_quantity": order.command.quantity_contracts,
-                "filled_quantity": order.command.quantity_contracts,
-                "average_fill_price": fill_price,
-                "sent_at": now,
-                "received_at": now,
-                "broker_time": now,
-                "raw_broker_status": "FILLED",
-                "raw_payload_ref": f"paper://orders/{broker_order_id}",
-            }
-        )
-        self._apply_fill(request, event, fill_price)
+        if self._fill_model is None:
+            fill_price = self._resolve_limit_price(order.command)
+            event = self._filled_event(
+                request, broker_order_id=broker_order_id, fill_price=fill_price, now=now
+            )
+            self._apply_fill(request, event, fill_price)
+        else:
+            event = self._conservative_event(
+                request, broker_order_id=broker_order_id, now=now
+            )
+            if (
+                event.state is OrderState.FILLED
+                and event.average_fill_price is not None
+            ):
+                self._apply_fill(request, event, event.average_fill_price)
         self._state.orders_by_internal_id[order.identity.internal_order_id] = event
         self._state.orders_by_idempotency_key[key] = event
         return event
@@ -193,10 +239,14 @@ class PaperBroker:
                 leg.quantity_contracts,
             )
             preview = self._fixtures.margin_previews.get(key)
-            if preview is None or not preview.confirmed:
+            if preview is not None and preview.confirmed:
+                total = total + preview.margin_required
+                continue
+            estimated = self._synthetic_leg_margin(leg)
+            if estimated is None:
                 all_confirmed = False
                 continue
-            total = total + preview.margin_required
+            total = total + estimated
         if not all_confirmed or total.is_zero:
             return MarginPreviewResult(
                 request_id=request.request_id,
@@ -212,6 +262,70 @@ class PaperBroker:
             margin_available_after=self._state.funds.margin_available - total,
             confirmed=True,
         )
+
+    def _synthetic_leg_margin(self, leg: MarginPreviewLeg) -> Money | None:
+        """PAPER-only estimate when the fixture table has no live weekly key."""
+        if not self._synthetic_margin:
+            return None
+        quote = self._quotes.get(leg.contract.symbol)
+        currency = self._state.funds.equity.currency
+        qty = Decimal(leg.quantity_contracts)
+        if leg.contract.instrument_kind is InstrumentKind.FUTURE:
+            if self._future_margin_fraction is None:
+                return None
+            notional = _quote_notional(quote)
+            if notional is None:
+                return None
+            amount = notional * qty * self._future_margin_fraction
+            return Money.of(str(amount), currency)
+        premium = _option_premium(quote, leg.side)
+        if premium is None:
+            return None
+        return Money.of(str(premium * qty), currency)
+
+    def dump_state(self) -> dict[str, object]:
+        """Serialize funds, positions and idempotent orders for process restart."""
+        return {
+            "funds": self._state.funds.model_dump(mode="json"),
+            "positions": [
+                position.model_dump(mode="json")
+                for position in self._state.positions.values()
+            ],
+            "orders": [
+                event.model_dump(mode="json")
+                for event in self._state.orders_by_idempotency_key.values()
+            ],
+        }
+
+    def load_state(self, payload: dict[str, object]) -> None:
+        """Restore a dump from a previous PAPER process."""
+        funds_raw = payload.get("funds")
+        if not isinstance(funds_raw, dict):
+            raise BrokerError("broker state dump is missing funds")
+        self._state.funds = BrokerFunds.model_validate(funds_raw)
+        positions_raw = payload.get("positions", [])
+        if not isinstance(positions_raw, list):
+            raise BrokerError("broker state dump positions must be a list")
+        self._state.positions = {}
+        for row in positions_raw:
+            if not isinstance(row, dict):
+                continue
+            position = PositionRecord.model_validate(row)
+            self._state.positions[
+                _position_key(position.trade_id, position.contract.symbol)
+            ] = position
+        orders_raw = payload.get("orders", [])
+        if not isinstance(orders_raw, list):
+            raise BrokerError("broker state dump orders must be a list")
+        self._state.orders_by_idempotency_key = {}
+        self._state.orders_by_internal_id = {}
+        for row in orders_raw:
+            if not isinstance(row, dict):
+                continue
+            event = OrderEvent.model_validate(row)
+            key = event.identity.idempotency_key
+            self._state.orders_by_idempotency_key[key] = event
+            self._state.orders_by_internal_id[event.identity.internal_order_id] = event
 
     def _apply_fill(
         self,
@@ -320,12 +434,141 @@ class PaperBroker:
         )
 
     @staticmethod
-    def _resolve_fill_price(command: OrderCommand) -> Price:
+    def _resolve_limit_price(command: OrderCommand) -> Price:
         if command.order_type is not OrderType.LIMIT:
             raise BrokerError(
-                f"paper broker slice 1 supports LIMIT orders only, got "
-                f"{command.order_type}"
+                f"paper broker supports LIMIT orders only, got {command.order_type}"
             )
         if command.limit_price is None:
             raise BrokerError("LIMIT order requires a limit price")
         return command.limit_price
+
+    def _filled_event(
+        self,
+        request: BrokerSubmitRequest,
+        *,
+        broker_order_id: str,
+        fill_price: Price,
+        now: datetime,
+    ) -> OrderEvent:
+        order = request.order
+        return OrderEvent.model_validate(
+            {
+                "event_id": self._ids.new_id("EVT"),
+                "identity": {
+                    **order.identity.model_dump(mode="python"),
+                    "broker_order_id": broker_order_id,
+                },
+                "command": order.command.model_dump(mode="python"),
+                "state": OrderState.FILLED,
+                "attempt_number": request.attempt_number,
+                "acknowledged_quantity": order.command.quantity_contracts,
+                "filled_quantity": order.command.quantity_contracts,
+                "average_fill_price": fill_price,
+                "sent_at": now,
+                "received_at": now,
+                "broker_time": now,
+                "raw_broker_status": "FILLED",
+                "raw_payload_ref": f"paper://orders/{broker_order_id}",
+            }
+        )
+
+    def _conservative_event(
+        self,
+        request: BrokerSubmitRequest,
+        *,
+        broker_order_id: str,
+        now: datetime,
+    ) -> OrderEvent:
+        command = request.order.command
+        self._resolve_limit_price(command)
+        policy = self._fill_model
+        if policy is None:
+            raise BrokerError("conservative fill requires a fill model")
+        quote = self._quotes.get(command.contract.symbol)
+        if quote is None:
+            return self._rejected_event(
+                request,
+                broker_order_id=broker_order_id,
+                now=now,
+                reason_code="PRICE_UNAVAILABLE",
+                detail="conservative paper fill requires a published quote",
+            )
+        simulation = simulate_fill(command, quote, policy=policy)
+        if (
+            simulation.outcome is FillOutcome.FILLED
+            and simulation.fill_price is not None
+        ):
+            event = self._filled_event(
+                request,
+                broker_order_id=broker_order_id,
+                fill_price=simulation.fill_price,
+                now=now,
+            )
+            return event.model_copy(
+                update={
+                    "reason_code": simulation.reason_code,
+                    "reason_detail": simulation.reason_detail,
+                }
+            )
+        return self._rejected_event(
+            request,
+            broker_order_id=broker_order_id,
+            now=now,
+            reason_code=simulation.reason_code.value,
+            detail=simulation.reason_detail or simulation.outcome.value,
+        )
+
+    def _rejected_event(
+        self,
+        request: BrokerSubmitRequest,
+        *,
+        broker_order_id: str,
+        now: datetime,
+        reason_code: str,
+        detail: str,
+    ) -> OrderEvent:
+        order = request.order
+        return OrderEvent.model_validate(
+            {
+                "event_id": self._ids.new_id("EVT"),
+                "identity": {
+                    **order.identity.model_dump(mode="python"),
+                    "broker_order_id": broker_order_id,
+                },
+                "command": order.command.model_dump(mode="python"),
+                "state": OrderState.REJECTED,
+                "attempt_number": request.attempt_number,
+                "acknowledged_quantity": 0,
+                "filled_quantity": 0,
+                "average_fill_price": None,
+                "sent_at": now,
+                "received_at": now,
+                "broker_time": now,
+                "reason_code": reason_code,
+                "reason_detail": detail,
+                "raw_broker_status": "REJECTED",
+                "raw_payload_ref": f"paper://orders/{broker_order_id}",
+            }
+        )
+
+
+def _quote_notional(quote: MarketQuote | None) -> Decimal | None:
+    if quote is None:
+        return None
+    for price in (quote.last, quote.ask, quote.bid):
+        if price is not None:
+            return price.value
+    return None
+
+
+def _option_premium(quote: MarketQuote | None, side: Side) -> Decimal | None:
+    if quote is None:
+        return None
+    if side is Side.BUY and quote.ask is not None:
+        return quote.ask.value
+    if side is Side.SELL and quote.bid is not None:
+        return quote.bid.value
+    if quote.last is not None:
+        return quote.last.value
+    return None

@@ -14,12 +14,15 @@ from trading.domain.contracts import (
     AIProposal,
     ApprovedLeg,
     CapitalReservation,
+    CohortPackage,
+    CohortSignal,
     ContractRef,
     DataQualityReport,
     EntryPolicy,
     EvidenceRef,
     ExitPolicy,
     ExitTemplate,
+    ExperimentDefinition,
     ExposureSnapshot,
     FeatureSnapshot,
     IntentConstraints,
@@ -56,6 +59,7 @@ from trading.domain.enums import (
     DataQuality,
     DifferenceClass,
     Exchange,
+    ExecutionMode,
     ExitScope,
     InstrumentKind,
     OptionType,
@@ -84,6 +88,11 @@ from trading.domain.primitives import (
     Price,
     TickSize,
 )
+from trading.news.contracts import (
+    EventRiskState,
+    EventRiskStatus,
+    NewsQuality,
+)
 
 NOW = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 LATER = NOW + timedelta(hours=1)
@@ -98,6 +107,21 @@ def price(value: str) -> Price:
 
 def money(value: str) -> Money:
     return Money.of(value, INR)
+
+
+def event_risk_state(**overrides: Any) -> EventRiskState:
+    return EventRiskState.model_validate(
+        {
+            "scope": "NIFTY",
+            "state": EventRiskStatus.NORMAL,
+            "as_of": NOW - timedelta(minutes=1),
+            "expires_at": NOW + timedelta(hours=1),
+            "event_ids": (),
+            "reason_codes": (),
+            "quality_state": NewsQuality.VALID,
+            **overrides,
+        }
+    )
 
 
 def index_contract(**overrides: Any) -> ContractRef:
@@ -286,6 +310,8 @@ def intent(**overrides: Any) -> TradeIntent:
             "strategy_id": "positional_index_options_poc",
             "strategy_version": "0.1.0",
             "snapshot_id": "SNAP-1",
+            "experiment_id": "EXP-1",
+            "execution_mode": ExecutionMode.PAPER,
             "promoted_config_version": "1",
             "underlying": "NIFTY",
             "asset_class": AssetClass.EQUITY_INDEX,
@@ -330,6 +356,8 @@ def risk_decision(**overrides: Any) -> RiskDecision:
             "decision_id": "DEC-1",
             "intent_id": "INT-1",
             "correlation_id": "COR-1",
+            "experiment_id": "EXP-1",
+            "execution_mode": ExecutionMode.PAPER,
             "policy_version": "1",
             "config_version": "1",
             "action": RiskAction.APPROVE,
@@ -359,6 +387,8 @@ def order_identity(**overrides: Any) -> OrderIdentity:
             "risk_decision_id": "DEC-1",
             "trade_id": "TRD-1",
             "correlation_id": "COR-1",
+            "experiment_id": "EXP-1",
+            "execution_mode": ExecutionMode.PAPER,
             **overrides,
         }
     )
@@ -634,6 +664,9 @@ def position_state(**overrides: Any) -> PositionState:
             "trade_id": "TRD-1",
             "intent_id": "INT-1",
             "strategy_id": "positional_index_options_poc",
+            "strategy_version": "0.1.0",
+            "experiment_id": "EXP-1",
+            "execution_mode": ExecutionMode.PAPER,
             "state": TradeState.OPEN,
             "legs": (position_leg_state(),),
             "exit_policy": exit_policy(),
@@ -661,7 +694,174 @@ def reconciliation_result(**overrides: Any) -> ReconciliationResult:
     )
 
 
+def experiment(**overrides: Any) -> ExperimentDefinition:
+    return ExperimentDefinition.model_validate(
+        {
+            "experiment_id": "EXP-LO-PAPER-1",
+            "strategy_id": "positional_long_option",
+            "strategy_version": "long-option-v1",
+            "parameter_version": "1",
+            "execution_mode": ExecutionMode.PAPER,
+            "started_at": NOW - timedelta(days=21),
+            "capital_limit": money("700000"),
+            "parameters_frozen": True,
+            "feature_set_version": "1",
+            "risk_policy_version": "1",
+            "fill_model_version": "conservative-v1",
+            "code_version": "0.1.0",
+            **overrides,
+        }
+    )
+
+
+def cohort_signal(**overrides: Any) -> CohortSignal:
+    return CohortSignal.model_validate(
+        {
+            "signal_id": "SIG-1",
+            "snapshot_id": "SNAP-1",
+            "created_at": NOW,
+            "intent": intent(),
+            "risk_action": RiskAction.APPROVE,
+            "entry_quote": quote(bid_size=300, ask_size=300),
+            "lots": 1,
+            **overrides,
+        }
+    )
+
+
+def long_option_cohort_package(**overrides: Any) -> CohortPackage:
+    """Offline long-option cohort derived from L2 slice-1 quotes, with rejects."""
+    exp = experiment()
+    entry = quote(
+        bid=price("91.95"),
+        ask=price("92.00"),
+        last=price("92.00"),
+        bid_size=300,
+        ask_size=300,
+    )
+    win_exit = quote(
+        bid=price("95.00"),
+        ask=price("95.05"),
+        last=price("95.00"),
+        bid_size=300,
+        ask_size=300,
+    )
+    loss_exit = quote(
+        bid=price("89.95"),
+        ask=price("90.00"),
+        last=price("89.95"),
+        bid_size=300,
+        ask_size=300,
+    )
+    buy = order_command(
+        side=Side.BUY, quantity_contracts=75, limit_price=price("92.00")
+    )
+    sell_win = order_command(
+        side=Side.SELL, quantity_contracts=75, limit_price=price("95.00")
+    )
+    sell_loss = order_command(
+        side=Side.SELL, quantity_contracts=75, limit_price=price("89.95")
+    )
+
+    def stamped_intent(intent_id: str, snapshot_id: str) -> TradeIntent:
+        return intent(
+            intent_id=intent_id,
+            snapshot_id=snapshot_id,
+            experiment_id=exp.experiment_id,
+            execution_mode=exp.execution_mode,
+            strategy_id=exp.strategy_id,
+            strategy_version=exp.strategy_version,
+        )
+
+    signals = (
+        CohortSignal.model_validate(
+            {
+                "signal_id": "SIG-WIN-1",
+                "snapshot_id": "SNAP-WIN-1",
+                "created_at": NOW - timedelta(days=14),
+                "intent": stamped_intent("INT-WIN-1", "SNAP-WIN-1"),
+                "risk_action": RiskAction.APPROVE,
+                "entry_quote": entry,
+                "exit_quote": win_exit,
+                "entry_command": buy,
+                "exit_command": sell_win,
+                "traded_through_entry": True,
+                "traded_through_exit": True,
+                "mae": money("40"),
+                "mfe": money("250"),
+                "regime": "trend",
+                "days_to_expiry": 10,
+                "session_label": "NSE_REGULAR",
+                "reconciled": True,
+                "lots": 1,
+            }
+        ),
+        CohortSignal.model_validate(
+            {
+                "signal_id": "SIG-LOSS-1",
+                "snapshot_id": "SNAP-LOSS-1",
+                "created_at": NOW - timedelta(days=7),
+                "intent": stamped_intent("INT-LOSS-1", "SNAP-LOSS-1"),
+                "risk_action": RiskAction.APPROVE,
+                "entry_quote": entry,
+                "exit_quote": loss_exit,
+                "entry_command": buy,
+                "exit_command": sell_loss,
+                "traded_through_entry": True,
+                "traded_through_exit": True,
+                "mae": money("180"),
+                "mfe": money("20"),
+                "regime": "range",
+                "days_to_expiry": 8,
+                "session_label": "NSE_REGULAR",
+                "reconciled": True,
+                "lots": 1,
+            }
+        ),
+        CohortSignal.model_validate(
+            {
+                "signal_id": "SIG-DECLINE-1",
+                "snapshot_id": "SNAP-DECLINE-1",
+                "created_at": NOW - timedelta(days=3),
+                "declined": True,
+                "rejection_reason": ReasonCode.SPREAD_TOO_WIDE,
+                "entry_quote": entry,
+                "regime": "trend",
+                "days_to_expiry": 9,
+                "session_label": "NSE_REGULAR",
+                "reconciled": True,
+            }
+        ),
+        CohortSignal.model_validate(
+            {
+                "signal_id": "SIG-REJECT-1",
+                "snapshot_id": "SNAP-REJECT-1",
+                "created_at": NOW - timedelta(days=1),
+                "intent": stamped_intent("INT-REJECT-1", "SNAP-REJECT-1"),
+                "risk_action": RiskAction.REJECT,
+                "risk_reasons": (ReasonCode.RISK_LIMIT_TRADE,),
+                "rejection_reason": ReasonCode.RISK_LIMIT_TRADE,
+                "entry_quote": entry,
+                "regime": "range",
+                "days_to_expiry": 6,
+                "session_label": "NSE_REGULAR",
+                "reconciled": True,
+            }
+        ),
+    )
+    return CohortPackage.model_validate(
+        {
+            "experiment": exp,
+            "signals": signals,
+            "observation_start": NOW - timedelta(days=21),
+            "observation_end": NOW,
+            **overrides,
+        }
+    )
+
+
 ALL_FACTORIES = (
+    event_risk_state,
     index_contract,
     option_contract,
     quality,
@@ -688,4 +888,6 @@ ALL_FACTORIES = (
     order_plan,
     position_state,
     reconciliation_result,
+    experiment,
+    long_option_cohort_package,
 )

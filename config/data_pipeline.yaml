@@ -16,7 +16,7 @@ fyers:
   option_chain_strike_count: 25
   poll_interval_seconds: 60
   bar_resolutions: ["5"]
-  bar_lookback_days: 5
+  bar_lookback_days: 45
   chain_greeks: true
   history_oi_flag: true
   fetch_depth: true
@@ -35,7 +35,7 @@ fyers:
 reference:
   instrument_subdir: reference/instruments
   symbol_master_url_template: "https://public.fyers.in/sym_details/{segment}_sym_master.json"
-  segments: ["NSE_CM", "NSE_FO"]
+  segments: ["NSE_CM", "NSE_FO", "MCX_COM"]
   timeout_seconds: 60.0
   # Fyers `exInstType` for a cash-segment index row, observed on
   # NSE:NIFTY50-INDEX in NSE_CM_sym_master.json.

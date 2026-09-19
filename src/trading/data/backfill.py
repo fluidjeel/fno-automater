@@ -30,6 +30,12 @@ __all__ = [
     "history_windows",
 ]
 
+_SEGMENT_EXCHANGE = {
+    "NSE_CM": Exchange.NSE,
+    "NSE_FO": Exchange.NSE,
+    "MCX_COM": Exchange.MCX,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class InstrumentBackfillResult:
@@ -114,7 +120,7 @@ def backfill_instruments(
         specs = parse_symbol_master(
             capture,
             segment=segment,
-            exchange=Exchange.NSE,
+            exchange=_SEGMENT_EXCHANGE.get(segment, Exchange.NSE),
             timezone=pipeline_config.session.timezone,
             index_instrument_type=reference.index_instrument_type,
             source=source,

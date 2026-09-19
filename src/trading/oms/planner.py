@@ -133,6 +133,8 @@ class OrderPlanPlanner:
                 risk_decision_id=decision.decision_id,
                 trade_id=trade_id,
                 correlation_id=intent.correlation_id,
+                experiment_id=intent.experiment_id,
+                execution_mode=intent.execution_mode,
             )
             command = OrderCommand(
                 contract=intent_leg.contract,

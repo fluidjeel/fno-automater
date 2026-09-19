@@ -236,9 +236,9 @@ class DebitSpreadSizingEngine:
         if slots <= 0:
             return 0
 
-        premium_budget = (
-            equity * policy.options_premium_budget_fraction
-        ).quantized(Rounding.FLOOR)
+        premium_budget = (equity * policy.options_premium_budget_fraction).quantized(
+            Rounding.FLOOR
+        )
         premium_remaining = premium_budget - premium_budget_used(portfolio)
         premium_lots = floor_divide_money(premium_remaining, cost_per_lot)
 

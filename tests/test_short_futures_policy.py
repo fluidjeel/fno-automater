@@ -228,6 +228,7 @@ def _future_request(side: Side) -> RiskGatewayRequest:
         feature_snapshot=snap,
         portfolio_snapshot=f.portfolio_snapshot(),
         instrument=future_instrument_spec(),
+        event_risk_state=f.event_risk_state(scope="CRUDEOIL"),
     )
 
 
@@ -294,6 +295,7 @@ class TestCarveOutIsNarrow:
             feature_snapshot=snap,
             portfolio_snapshot=f.portfolio_snapshot(),
             instrument=option_instrument_spec(),
+            event_risk_state=f.event_risk_state(),
         )
         decision = gateway.evaluate(request)
         assert not decision.permits_submission
@@ -326,6 +328,7 @@ class TestUnallocatedStrategyFailsClosed:
                 feature_snapshot=snap,
                 portfolio_snapshot=f.portfolio_snapshot(),
                 instrument=future_instrument_spec(),
+                event_risk_state=f.event_risk_state(scope="CRUDEOIL"),
             )
         )
         assert not decision.permits_submission
@@ -499,6 +502,7 @@ class TestRealStrategyReadIsApproved:
                 feature_snapshot=underlying,
                 portfolio_snapshot=f.portfolio_snapshot(),
                 instrument=future_instrument_spec(),
+                event_risk_state=f.event_risk_state(scope="CRUDEOIL"),
             )
         )
         assert risk.permits_submission, risk.reason_codes

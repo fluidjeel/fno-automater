@@ -53,6 +53,10 @@ class InstrumentSpecStore:
             self._index = index
         return self._index.get(trading_symbol)
 
+    def list_all(self) -> tuple[InstrumentSpec, ...]:
+        """Return every stored spec. Empty when no catalog has been downloaded."""
+        return self._all()
+
     def _all(self) -> tuple[InstrumentSpec, ...]:
         specs: list[InstrumentSpec] = []
         for path in sorted(self._root.glob("*.jsonl")):

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from trading.config.loader import ConfigLoadError
 from trading.domain.contracts.base import (
@@ -65,6 +65,26 @@ class RiskPolicyConfig(VersionedModel):
     # Defaults to False so a policy that omits the key refuses stop-bounded
     # futures shorts: the fail-closed direction for a new risk class.
     allow_stop_bounded_futures_short: StrictBool = False
+    # PAPER SPAN substitute. Null fails closed for live-symbol futures sizing.
+    paper_future_margin_fraction: ExactDecimal | None = Field(
+        default=None, gt=0, le=Decimal("1")
+    )
+
+    @model_validator(mode="after")
+    def _allocations_fit_equity(self) -> RiskPolicyConfig:
+        allocated = sum(
+            (
+                allocation.allocation_fraction
+                for allocation in self.strategy_allocations.values()
+            ),
+            Decimal(0),
+        )
+        if allocated > Decimal(1):
+            raise ValueError(
+                f"strategy allocations total {allocated}; aggregate allocation "
+                "cannot exceed account equity"
+            )
+        return self
 
     def has_allocation(self, strategy_id: str) -> bool:
         """Whether policy scopes capital to this strategy.

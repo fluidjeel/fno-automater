@@ -7,10 +7,10 @@ External data -> Layer 1 FeatureSnapshot -> Layer 3 TradeIntent
               -> Layer 2 RiskDecision/OMS -> Broker
 
 Broker events -> Layer 2 reconciliation/portfolio/trade management
-Audit evidence -> Layer 4 evaluation -> candidate proposal -> promotion gate
+Audit evidence -> Layer 4 forward validation -> eligibility / proposal -> promotion gate
 ```
 
-No arrow goes directly from AI or a strategy to the broker.
+No arrow goes directly from AI or a strategy to the broker. Layers 1–3 must remain live-safe if every Layer 4 job is down.
 
 ## Layer 1: Core Foundations and Data
 
@@ -59,23 +59,56 @@ Strategy systems:
 Each plug-in owns its setup logic and requested risk, but not final quantity,
 portfolio acceptance, broker execution, or protective lifecycle.
 
-## Layer 4: Analytics and Self-Improvement
+## Layer 4: Forward Validation, Evaluation and Controlled Promotion
 
-Asynchronous components:
+Layer 4 answers whether a *frozen* strategy version has shown reliable
+live-forward behaviour under conservative fills, enough observations and zero
+safety violations — and whether it is eligible for a tightly limited canary.
+It does not answer whether a historical backtest Sharpe looked good.
 
-- Weekly macro/regime strategist using bounded enums and grounded evidence.
-- Universe ranking after deterministic eligibility/liquidity filtering.
-- Post-market evaluator and failure clustering.
-- Parameter/strategy hypotheses.
-- Drift, calibration, execution-quality and data-quality analytics.
-- Backtest, replay, walk-forward, shadow and paper evaluation.
+It also runs an **asynchronous weekly agent loop** that may propose which
+already-coded strategy families to enable, shadow or halt for a period. That
+loop never sizes, stops or submits. Intraday decisions stay Layer 3 + Layer 2.
 
-Output is an evidence package. It cannot mutate live configuration. Promotion:
+Nested cadence:
+
+| Horizon | Who decides | LLM? |
+| --- | --- | --- |
+| Intraday | L3 intents + L2 risk/OMS | Never |
+| Pre-open day | Deterministic readiness + last unexpired weekly proposal | No, unless a blocker needs the operator |
+| Week / period | Bounded L4 tool loop over scorecards and evidence | Yes, capped; fail closed to `ABSTAIN` |
+
+Asynchronous, advisory components (local `trading.analytics` and `trading.ai`):
+
+- Conservative fill reconstruction from decision-time bid/ask/depth.
+- Deterministic post-trade / EOD scorecards over one experiment + fill-model
+  version. Versions are never pooled.
+- Fail-closed promotion eligibility (`ELIGIBLE` / `INELIGIBLE` /
+  `INSUFFICIENT_SAMPLE`). Win rate or gross P&L alone never pass.
+- Operator `AttentionRequest` for charges, CAS features and unverified LIVE
+  config. Telegram/CLI only; no live levers.
+- Weekly Anthropic-style tool loop (`read_scorecard`, `read_eligibility`,
+  `query_cohort`, `fetch_market`, `fetch_news_snapshot`,
+  `request_operator_attention`, `emit_proposal`) emitting an expiring
+  `STRATEGY_FAMILY` `AIProposal`. Token/iteration caps live in `config/agent.yaml`
+  (`enabled: false` until paper evidence exists). Deterministic scorecards remain
+  authoritative P&L.
+
+Output is an evidence package. It cannot mutate live configuration, raise
+account risk, enable naked shorts, touch the kill switch, swap credentials or
+convert `PAPER`→`LIVE`. Promotion:
 
 ```text
-proposal -> schema validation -> deterministic evaluation -> risk tests
-         -> shadow/paper -> approval record -> signed config -> deployment
+SHADOW -> PAPER -> CANARY_REAL -> LIMITED_REAL -> NORMAL_REAL
+                                  \-> SUSPENDED
+
+scorecard -> eligibility (ELIGIBLE / INELIGIBLE / INSUFFICIENT_SAMPLE)
+         -> human + deterministic gate
+         -> signed config (never written by Layer 4) -> deployment
 ```
+
+Full historical backtest / walk-forward is out of the promotion path. Recorded
+session replay stays for incident reconstruction only.
 
 ## Cross-cutting pillars
 
@@ -86,18 +119,18 @@ proposal -> schema validation -> deterministic evaluation -> risk tests
 
 ## Runtime placement
 
-Persistent VPS/process group:
+Oracle VM (must trade safely if every Layer 4 job is down):
 
-- Active feed adapters and Layer 1 calculations.
-- Layer 2 portfolio/risk/OMS/reconciliation/exits/safety.
-- Active Layer 3 strategies.
-- Durable events and live-safe observability.
+- Layer 1 feeds and features, Layer 2 risk/OMS/exits/kill switch, Layer 3
+  strategies, paper fill routing, approved config, local health.
 
-Asynchronous scheduled/serverless:
+Asynchronous jobs (local `trading.analytics` / `trading.ai`; OCI Functions later):
 
-- Macro/news aggregation and weekly proposal.
-- Post-market evaluator and reports.
-- Parameter research and large backtests when suitable.
+- Scorecard, eligibility, operator attention scan, weekly `STRATEGY_FAMILY` loop.
+- External VM-heartbeat watchdog (later ops slice; must not place orders).
+
+If Layer 4 is down: existing positions keep Layer 2 exits; no new parameter
+versions; trading halts only if a strategy **requires** fresh macro context.
 
 The persistent core cannot require a cross-cloud or LLM call to remain live-safe.
 

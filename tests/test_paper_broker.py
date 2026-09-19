@@ -7,6 +7,7 @@ Invariant 11: duplicate idempotency keys fail closed at the broker boundary.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ from trading.broker.ports import (
 )
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import OrderEvent
-from trading.domain.enums import OrderState, Side
+from trading.domain.enums import InstrumentKind, OrderState, Side
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Money
 
@@ -126,9 +127,7 @@ class TestOrderLifecycle:
         """Invariant 11: a different order cannot reuse an idempotency key."""
         broker.submit(_submit_request())
         conflicting = _submit_request(
-            order=f.planned_order(
-                identity=f.order_identity(internal_order_id="ORD-2")
-            )
+            order=f.planned_order(identity=f.order_identity(internal_order_id="ORD-2"))
         )
         with pytest.raises(DuplicateBrokerOrderError) as exc_info:
             broker.submit(conflicting)
@@ -197,3 +196,69 @@ class TestMarginPreview:
         result = broker.preview_margin(request)
         assert result.confirmed is False
         assert result.margin_required == Money.zero(f.money("0").currency)
+
+
+class TestSyntheticPaperMargin:
+    def test_missing_fixture_uses_ask_times_quantity(
+        self, clock: FrozenClock, id_factory: SequentialIdFactory
+    ) -> None:
+        funds = PaperBrokerFixtures.load(FIXTURES).account
+        broker = PaperBroker.for_session(
+            clock=clock,
+            id_factory=id_factory,
+            funds=funds,
+            future_margin_fraction=Decimal("0.15"),
+        )
+        contract = f.option_contract(symbol="NSE:NIFTY26SEP24500CE")
+        broker.publish_quote(
+            contract.symbol,
+            f.quote(bid=f.price("90"), ask=f.price("92"), last=f.price("91")),
+        )
+        result = broker.preview_margin(
+            MarginPreviewRequest(
+                request_id="MARGIN-LIVE-1",
+                account_id="ACC-PAPER-1",
+                legs=(
+                    MarginPreviewLeg(
+                        contract=contract,
+                        side=Side.BUY,
+                        quantity_contracts=75,
+                    ),
+                ),
+            )
+        )
+        assert result.confirmed is True
+        assert result.margin_required == f.money("6900")
+
+    def test_future_without_fraction_fails_closed(
+        self, clock: FrozenClock, id_factory: SequentialIdFactory
+    ) -> None:
+        funds = PaperBrokerFixtures.load(FIXTURES).account
+        broker = PaperBroker.for_session(
+            clock=clock, id_factory=id_factory, funds=funds
+        )
+        contract = f.option_contract(
+            symbol="MCX:CRUDEOIL26SEPFUT",
+            exchange=f.option_contract().exchange,
+        )
+        future = contract.model_copy(
+            update={
+                "instrument_kind": InstrumentKind.FUTURE,
+                "option_type": None,
+                "strike": None,
+                "symbol": "MCX:CRUDEOIL26SEPFUT",
+            }
+        )
+        broker.publish_quote(future.symbol, f.quote(last=f.price("6000")))
+        result = broker.preview_margin(
+            MarginPreviewRequest(
+                request_id="MARGIN-FUT-1",
+                account_id="ACC-PAPER-1",
+                legs=(
+                    MarginPreviewLeg(
+                        contract=future, side=Side.BUY, quantity_contracts=1
+                    ),
+                ),
+            )
+        )
+        assert result.confirmed is False

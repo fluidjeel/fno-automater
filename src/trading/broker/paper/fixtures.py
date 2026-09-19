@@ -29,15 +29,11 @@ class PaperBrokerFixtures:
     @classmethod
     def load(cls, root: Path) -> PaperBrokerFixtures:
         """Load account, positions and margin preview fixtures from root."""
-        account = BrokerFunds.model_validate(
-            _read_json(root / "account_state.json")
-        )
+        account = BrokerFunds.model_validate(_read_json(root / "account_state.json"))
         positions_raw = _read_json(root / "positions.json")
         if not isinstance(positions_raw, list):
             raise ValueError("positions.json must contain a JSON array")
-        positions = tuple(
-            PositionRecord.model_validate(row) for row in positions_raw
-        )
+        positions = tuple(PositionRecord.model_validate(row) for row in positions_raw)
         previews_raw = _read_json(root / "margin_preview.json")
         if not isinstance(previews_raw, dict):
             raise ValueError("margin_preview.json must contain a JSON object")

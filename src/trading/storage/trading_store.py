@@ -459,9 +459,7 @@ def _utc_iso(value: datetime) -> str:
 def _row_to_stored_event(row: sqlite3.Row) -> StoredTradingEvent:
     payload = json.loads(row["payload"])
     if not isinstance(payload, dict):
-        raise TradingStoreError(
-            f"event {row['event_id']} payload is not a JSON object"
-        )
+        raise TradingStoreError(f"event {row['event_id']} payload is not a JSON object")
     key = row["idempotency_key"]
     return StoredTradingEvent(
         sequence=int(row["sequence"]),

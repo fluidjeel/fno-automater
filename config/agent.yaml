@@ -1,0 +1,13 @@
+# Layer 4 agent policy. Disabled until paper evidence exists.
+# Model/pricing target DeepSeek OpenAI-compat (see LLM_* / DEEPSEEK_API_KEY).
+# Changing values starts a new agent lineage (checksum).
+
+schema_version: "1"
+policy_version: "1"
+enabled: false
+model: "deepseek-chat"
+max_iterations: 8
+max_tokens_per_run: 20000
+monthly_budget_inr: "500"
+input_inr_per_million_tokens: "15"
+output_inr_per_million_tokens: "60"

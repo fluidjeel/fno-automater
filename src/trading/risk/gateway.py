@@ -29,6 +29,7 @@ from trading.domain.enums import (
 )
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Lots, LotSize, Money, Percent
+from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
 from trading.risk.limits import (
     build_sizing_limits,
     evaluate_pre_trade_limits,
@@ -91,6 +92,9 @@ class RiskGatewayRequest:
     portfolio_snapshot: PortfolioSnapshot
     instrument: InstrumentSpec
     leg_snapshots: Mapping[str, FeatureSnapshot] = field(default_factory=dict)
+    # None means the caller supplied no reviewed event state. A strategy that
+    # requires a clear blackout must then fail closed.
+    event_risk_state: EventRiskState | None = None
 
 
 class RiskGateway:
@@ -145,6 +149,15 @@ class RiskGateway:
         if not feature.permits_new_exposure:
             code = _quality_reason(feature.quality.state)
             return self._reject(intent, portfolio, reason_codes=(code,), decided_at=now)
+
+        constraint_reason = _constraint_reason(request, now=now)
+        if constraint_reason is not None:
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(constraint_reason,),
+                decided_at=now,
+            )
 
         structure = _detect_structure(request)
         if structure is None:
@@ -311,6 +324,8 @@ class RiskGateway:
             decision_id=decision_id,
             intent_id=intent.intent_id,
             correlation_id=intent.correlation_id,
+            experiment_id=intent.experiment_id,
+            execution_mode=intent.execution_mode,
             policy_version=policy.policy_version,
             config_version=self._account_config.version,
             action=action,
@@ -342,6 +357,8 @@ class RiskGateway:
             decision_id=self._ids.new_id("DEC"),
             intent_id=intent.intent_id,
             correlation_id=intent.correlation_id,
+            experiment_id=intent.experiment_id,
+            execution_mode=intent.execution_mode,
             policy_version=policy.policy_version,
             config_version=self._account_config.version,
             action=RiskAction.REJECT,
@@ -369,6 +386,43 @@ def _detect_structure(request: RiskGatewayRequest) -> _StructureKind | None:
         and request.instrument.instrument_kind is InstrumentKind.OPTION
     ):
         return _StructureKind.LONG_OPTION
+    return None
+
+
+def _constraint_reason(
+    request: RiskGatewayRequest,
+    *,
+    now: datetime,
+) -> ReasonCode | None:
+    """Revalidate strategy entry constraints against decision-time evidence."""
+    constraints = request.intent.constraints
+    if constraints.require_event_blackout_clear:
+        event_risk = request.event_risk_state
+        if (
+            event_risk is None
+            or event_risk.scope not in {request.intent.underlying, "GLOBAL"}
+            or now < event_risk.as_of
+            or now >= event_risk.expires_at
+            or event_risk.quality_state is not NewsQuality.VALID
+            or event_risk.state not in {EventRiskStatus.NORMAL, EventRiskStatus.CAUTION}
+        ):
+            return ReasonCode.EVENT_BLACKOUT
+
+    if request.leg_snapshots:
+        snapshots = tuple(request.leg_snapshots.values())
+    else:
+        snapshots = (request.feature_snapshot,)
+    for snapshot in snapshots:
+        derivatives = snapshot.derivatives
+        if derivatives is None:
+            return ReasonCode.INSTRUMENT_UNKNOWN
+        if derivatives.days_to_expiry < constraints.min_days_to_expiry:
+            return ReasonCode.CONTRACT_EXPIRED
+        minimum_oi = constraints.min_open_interest
+        if minimum_oi is not None and (
+            derivatives.open_interest is None or derivatives.open_interest < minimum_oi
+        ):
+            return ReasonCode.DEPTH_INSUFFICIENT
     return None
 
 

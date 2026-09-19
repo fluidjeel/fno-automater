@@ -254,5 +254,5 @@ schedule:
   midday: "12:30"
   pre_cas: "15:00"
   postmarket: "16:15"
-  weekly_proposal: "SUNDAY 19:00"
+  weekly_proposal: "SUNDAY 19:00"  # Layer 4 STRATEGY_FAMILY agent slot; news proposal still abstains
   monday_invalidation: "MONDAY 08:15"

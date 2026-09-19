@@ -179,6 +179,8 @@ def _build_exit_plan(
                     risk_decision_id=decision.decision_id,
                     trade_id=trade_id,
                     correlation_id=intent.correlation_id,
+                    experiment_id=intent.experiment_id,
+                    execution_mode=intent.execution_mode,
                 ),
                 command=OrderCommand(
                     contract=position_leg.contract,
@@ -284,6 +286,7 @@ def _approve_intent(
             feature_snapshot=entry_feature,
             portfolio_snapshot=portfolio,
             instrument=instrument_spec(),
+            event_risk_state=f.event_risk_state(),
         )
     )
     assert decision.action in {RiskAction.APPROVE, RiskAction.RESIZE}

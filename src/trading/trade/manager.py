@@ -325,6 +325,9 @@ class TradeManager:
             trade_id=trade_id,
             intent_id=intent.intent_id,
             strategy_id=intent.strategy_id,
+            strategy_version=intent.strategy_version,
+            experiment_id=intent.experiment_id,
+            execution_mode=intent.execution_mode,
             state=TradeState.OPENING,
             legs=(
                 PositionLegState(

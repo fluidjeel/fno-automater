@@ -23,6 +23,7 @@ import pytest
 
 from tests.factories import (
     NOW,
+    event_risk_state,
     future_contract,
     index_contract,
     option_contract,
@@ -69,6 +70,7 @@ from trading.strategies.cas_microstructure import (
     FEATURE_AUCTION_IMBALANCE,
     FEATURE_MICROPRICE_EDGE_BPS,
     FEATURE_QUOTE_INSTABILITY,
+    FEATURE_SET_VERSION,
     FEATURE_TRADE_FLOW_IMBALANCE,
 )
 
@@ -130,12 +132,14 @@ def _underlying(
     features: dict[str, Decimal] | None = None,
     derivatives: DerivativesContext | None = None,
     instant: datetime = NOW_CTX,
+    feature_set_version: str = "1",
 ) -> FeatureSnapshot:
     return snapshot(
         snapshot_id="SNAP-UNDER",
         contract=contract if contract is not None else index_contract(),
         times=_times(instant),
         market=quote(last=price(last), close=price(close)),
+        feature_set_version=feature_set_version,
         features={} if features is None else features,
         derivatives=derivatives,
     )
@@ -285,7 +289,11 @@ def _cases() -> list[_Case]:
             CasMicrostructureStrategy,
             StrategyContext(
                 _underlying(
-                    "24100", "24000", features=_cas_features(""), instant=CAS_NOW
+                    "24100",
+                    "24000",
+                    features=_cas_features(""),
+                    instant=CAS_NOW,
+                    feature_set_version=FEATURE_SET_VERSION,
                 ),
                 (_option(OptionType.CALL, "24000", CAS_NOW),),
                 portfolio_view(),
@@ -299,7 +307,11 @@ def _cases() -> list[_Case]:
             CasMicrostructureStrategy,
             StrategyContext(
                 _underlying(
-                    "23900", "24000", features=_cas_features("-"), instant=CAS_NOW
+                    "23900",
+                    "24000",
+                    features=_cas_features("-"),
+                    instant=CAS_NOW,
+                    feature_set_version=FEATURE_SET_VERSION,
                 ),
                 (_option(OptionType.PUT, "24000", CAS_NOW),),
                 portfolio_view(),
@@ -338,6 +350,18 @@ def _cases() -> list[_Case]:
 CASES = _cases()
 
 
+def test_every_layer3_strategy_has_a_layer2_capital_allocation() -> None:
+    root = Path(__file__).resolve().parent.parent
+    policy = load_risk_policy(root / "config" / "risk.yaml").config
+    strategy_ids = {case.factory().strategy_id for case in CASES}
+    missing = sorted(
+        strategy_id
+        for strategy_id in strategy_ids
+        if not policy.has_allocation(strategy_id)
+    )
+    assert not missing, f"Layer 3 strategies lack Layer 2 allocations: {missing}"
+
+
 def _request(case: _Case) -> tuple[RiskGatewayRequest, TradeIntent]:
     decision = case.factory().evaluate(case.ctx)
     assert decision.emits_intent, f"{case.label} emitted no intent"
@@ -348,6 +372,7 @@ def _request(case: _Case) -> tuple[RiskGatewayRequest, TradeIntent]:
             feature_snapshot=case.ctx.underlying,
             portfolio_snapshot=portfolio_snapshot(),
             instrument=case.spec,
+            event_risk_state=event_risk_state(scope=intent.underlying),
         ),
         intent,
     )

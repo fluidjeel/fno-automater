@@ -38,6 +38,7 @@ from trading.strategies import (
     StrategyContext,
     build_strategy,
 )
+from trading.strategies._common import technical_bias
 
 NOW_CTX = NOW + timedelta(seconds=60)
 
@@ -149,6 +150,13 @@ def test_fresh_confident_macro_overrides_technical() -> None:
     assert intent.strategy_confidence == Decimal("0.8")
 
 
+def test_sub_threshold_price_move_abstains_as_noise() -> None:
+    underlying = _underlying("24001", "24000")
+    assert technical_bias(underlying) is MacroBias.NEUTRAL
+    decision = LongOptionStrategy().evaluate(_ctx(underlying=underlying))
+    assert not decision.emits_intent
+
+
 def test_stale_macro_falls_back_to_technical() -> None:
     macro = _macro(MacroBias.BEARISH).model_copy(
         update={"fresh_until": NOW_CTX - timedelta(seconds=1)}
@@ -218,6 +226,21 @@ def test_short_expiry_option_is_ineligible() -> None:
 def test_low_open_interest_is_ineligible() -> None:
     ctx = _ctx(option=_option(open_interest=50))
     decision = LongOptionStrategy().evaluate(ctx)
+    assert not decision.emits_intent
+    assert decision.rejections[0].reason is ReasonCode.DEPTH_INSUFFICIENT
+
+
+def test_missing_open_interest_is_ineligible() -> None:
+    original = _option()
+    assert original.derivatives is not None
+    option = original.model_copy(
+        update={
+            "derivatives": original.derivatives.model_copy(
+                update={"open_interest": None}
+            )
+        }
+    )
+    decision = LongOptionStrategy().evaluate(_ctx(option=option))
     assert not decision.emits_intent
     assert decision.rejections[0].reason is ReasonCode.DEPTH_INSUFFICIENT
 

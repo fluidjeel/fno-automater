@@ -130,3 +130,74 @@ def test_no_module_reads_ambient_time_or_randomness() -> None:
         + "; ".join(violations)
         + ". Inject Clock or IdFactory instead."
     )
+
+
+ANALYTICS = SRC / "trading" / "analytics"
+AI = SRC / "trading" / "ai"
+FORBIDDEN_ANALYTICS_THIRD_PARTY = frozenset(
+    {
+        "httpx",
+        "requests",
+        "sqlite3",
+        "redis",
+        "duckdb",
+        "pandas",
+        "polars",
+        "fyers_apiv3",
+    }
+)
+LIVE_PATH_PREFIXES = (
+    "trading.broker",
+    "trading.oms",
+    "trading.storage",
+    "trading.safety",
+    "trading.trade",
+    "trading.risk",
+)
+
+
+def _imported_modules(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and node.module is not None
+        ):
+            modules.add(node.module)
+    return modules
+
+
+@pytest.mark.parametrize("path", _python_files(ANALYTICS), ids=lambda p: p.name)
+def test_analytics_stays_off_the_live_path(path: Path) -> None:
+    """Layer 4 jobs must not import broker, OMS or storage."""
+    imported = _imported_modules(path)
+    live = {
+        module
+        for module in imported
+        for prefix in LIVE_PATH_PREFIXES
+        if module == prefix or module.startswith(f"{prefix}.")
+    }
+    assert not live, f"{path.name} imports live-path modules {sorted(live)}"
+    third_party = {
+        module.split(".")[0]
+        for module in imported
+        if module.split(".")[0] in FORBIDDEN_ANALYTICS_THIRD_PARTY
+    }
+    assert not third_party, f"{path.name} imports {sorted(third_party)}"
+
+
+@pytest.mark.parametrize("path", _python_files(AI), ids=lambda p: p.name)
+def test_agent_stays_off_the_live_path(path: Path) -> None:
+    """The weekly agent must not import broker, OMS or the trading store."""
+    imported = _imported_modules(path)
+    live = {
+        module
+        for module in imported
+        for prefix in LIVE_PATH_PREFIXES
+        if module == prefix or module.startswith(f"{prefix}.")
+    }
+    assert not live, f"{path.name} imports live-path modules {sorted(live)}"

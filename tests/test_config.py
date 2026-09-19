@@ -24,12 +24,19 @@ from trading.config import (
     RiskLimits,
     StorageRules,
     VerifiedValue,
+    load_agent_config,
     load_config,
     load_config_text,
+    load_evaluation_config,
 )
+from trading.config.risk_policy import load_risk_policy_text
 from trading.domain.enums import Exchange, ReasonCode
 
 BASE_CONFIG = Path(__file__).resolve().parent.parent / "config" / "base.yaml"
+RISK_CONFIG = Path(__file__).resolve().parent.parent / "config" / "risk.yaml"
+EVALUATION_CONFIG = (
+    Path(__file__).resolve().parent.parent / "config" / "evaluation.yaml"
+)
 
 
 def base_text() -> str:
@@ -58,6 +65,21 @@ class TestShippedConfiguration:
         config = load_config(BASE_CONFIG).config
         with pytest.raises(ConfigNotVerifiedError):
             config.require_ready_for(Environment.LIVE)
+
+    def test_evaluation_policy_loads_with_unverified_charges(self) -> None:
+        loaded = load_evaluation_config(EVALUATION_CONFIG)
+        assert loaded.config.fill_model.version == "conservative-v1"
+        with pytest.raises(ConfigNotVerifiedError):
+            loaded.config.fill_model.charges_per_lot.require(
+                "fill_model.charges_per_lot"
+            )
+
+    def test_agent_policy_ships_disabled(self) -> None:
+        loaded = load_agent_config(
+            Path(__file__).resolve().parent.parent / "config" / "agent.yaml"
+        )
+        assert loaded.config.enabled is False
+        assert loaded.config.max_iterations >= 1
 
     def test_no_market_rule_literal_appears_in_domain_code(self) -> None:
         """The stale figures from docs/research must not have leaked into code."""
@@ -122,6 +144,13 @@ class TestUnverifiedValuesFailClosed:
 
 
 class TestLoaderRejectsBadInput:
+    def test_strategy_allocations_cannot_exceed_equity(self) -> None:
+        raw = RISK_CONFIG.read_text(encoding="utf-8")
+        payload = yaml.safe_load(raw)
+        payload["strategy_allocations"]["overflow"] = {"allocation_fraction": "0.50"}
+        with pytest.raises(ValueError, match="cannot exceed account equity"):
+            load_risk_policy_text(yaml.safe_dump(payload))
+
     def test_unknown_key_is_rejected(self) -> None:
         payload = base_payload()
         payload["unexpected_section"] = {}

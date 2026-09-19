@@ -14,23 +14,34 @@ from trading.strategies.macro import MacroAssessment, MacroBias, accepted_macro_
 __all__ = [
     "DEFAULT_MACRO_MIN_CONFIDENCE",
     "DEFAULT_TECHNICAL_CONFIDENCE",
+    "MIN_TECHNICAL_MOVE_FRACTION",
     "resolve_direction",
     "technical_bias",
 ]
 
 DEFAULT_MACRO_MIN_CONFIDENCE = Decimal("0.6")
 DEFAULT_TECHNICAL_CONFIDENCE = Decimal("0.5")
+# Paper-stage hypothesis. This prevents quote noise from becoming a directional
+# signal; forward paper evidence must calibrate it before live promotion.
+MIN_TECHNICAL_MOVE_FRACTION = Decimal("0.001")
 
 
-def technical_bias(underlying: FeatureSnapshot) -> MacroBias:
-    """Price above the previous close is bullish, below is bearish."""
+def technical_bias(
+    underlying: FeatureSnapshot,
+    *,
+    min_move_fraction: Decimal = MIN_TECHNICAL_MOVE_FRACTION,
+) -> MacroBias:
+    """Return a direction only when the close-relative move clears noise."""
     last = underlying.market.last
     close = underlying.market.close
     if last is None or close is None:
         return MacroBias.NEUTRAL
-    if last.value > close.value:
+    if close.value <= 0 or min_move_fraction < 0:
+        return MacroBias.NEUTRAL
+    move = (last.value - close.value) / close.value
+    if move >= min_move_fraction:
         return MacroBias.BULLISH
-    if last.value < close.value:
+    if move <= -min_move_fraction:
         return MacroBias.BEARISH
     return MacroBias.NEUTRAL
 

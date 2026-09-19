@@ -28,6 +28,7 @@ from trading.domain.contracts import (
     ContractError,
     DerivativesContext,
     ExitTemplate,
+    FamilyAction,
     FeatureSnapshot,
     Greeks,
     IntentLeg,
@@ -41,8 +42,10 @@ from trading.domain.contracts import (
 from trading.domain.enums import (
     DataQuality,
     DifferenceClass,
+    FamilyStance,
     OrderState,
     OrderType,
+    ProposalType,
     ReasonCode,
     Recommendation,
     RiskAction,
@@ -398,6 +401,23 @@ class TestAIProposal:
                         allowed_maximum=Decimal("2"),
                     ),
                 ),
+            )
+
+    def test_strategy_family_requires_unique_actions(self) -> None:
+        action = FamilyAction(
+            strategy_id="positional_long_option", stance=FamilyStance.ENABLE
+        )
+        with pytest.raises(ValidationError, match="at least one family action"):
+            f.proposal(
+                proposal_type=ProposalType.STRATEGY_FAMILY,
+                recommendation=Recommendation.REVISE,
+                family_actions=(),
+            )
+        with pytest.raises(ValidationError, match="must be unique"):
+            f.proposal(
+                proposal_type=ProposalType.STRATEGY_FAMILY,
+                recommendation=Recommendation.REVISE,
+                family_actions=(action, action),
             )
 
     def test_parameter_outside_its_allowed_range_is_rejected(self) -> None:

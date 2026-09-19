@@ -56,9 +56,9 @@ def build_sizing_limits(
     allocation = policy.allocation_for(strategy_id)
     equity = portfolio.exposure.equity
     currency = equity.currency
-    max_loss_per_trade = (
-        equity * account_risk.max_loss_per_trade_fraction
-    ).quantized(Rounding.FLOOR)
+    max_loss_per_trade = (equity * account_risk.max_loss_per_trade_fraction).quantized(
+        Rounding.FLOOR
+    )
     daily_cap = (equity * account_risk.daily_loss_cap_fraction).quantized(
         Rounding.FLOOR
     )
@@ -142,9 +142,9 @@ def evaluate_pre_trade_limits(
         reasons.append(ReasonCode.RISK_LIMIT_STRATEGY)
         applied.append("strategy_allocation_remaining")
     equity = portfolio.exposure.equity
-    premium_budget = (
-        equity * policy.options_premium_budget_fraction
-    ).quantized(Rounding.FLOOR)
+    premium_budget = (equity * policy.options_premium_budget_fraction).quantized(
+        Rounding.FLOOR
+    )
     premium_remaining = premium_budget - premium_budget_used(portfolio)
     if recalculated_max_loss > premium_remaining:
         reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
@@ -152,9 +152,9 @@ def evaluate_pre_trade_limits(
     if open_trade_slots(portfolio, account_risk) <= 0:
         reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
         applied.append("max_concurrent_trades")
-    concentration_cap = (
-        equity * policy.underlying_concentration_fraction
-    ).quantized(Rounding.FLOOR)
+    concentration_cap = (equity * policy.underlying_concentration_fraction).quantized(
+        Rounding.FLOOR
+    )
     current = underlying_exposure_for(portfolio, intent.underlying)
     current_notional = (
         current.gross_notional if current is not None else Money.zero(equity.currency)

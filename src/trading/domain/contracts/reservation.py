@@ -46,10 +46,7 @@ class CapitalReservation(VersionedModel):
         elif self.amount.is_negative or self.amount.is_zero:
             raise ValueError("active reservation amount must be positive")
 
-        if (
-            self.state is ReservationState.RELEASED
-            and self.released_at is None
-        ):
+        if self.state is ReservationState.RELEASED and self.released_at is None:
             raise ValueError("released reservation must record released_at")
         if self.state.holds_capital and self.released_at is not None:
             raise ValueError("a holding reservation cannot already be released")

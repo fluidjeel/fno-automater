@@ -129,6 +129,12 @@ def refresh_access_token(
     return access_token
 
 
+def _is_sebi_refresh_disabled(message: str) -> bool:
+    """True when Fyers rejected refresh because the API is SEBI-disabled."""
+    lowered = message.lower()
+    return "sebi" in lowered and "disabled" in lowered
+
+
 def _notify(settings: FyersSettings, text: str) -> bool:
     """Send a Telegram operator alert using the configured credentials."""
     return send_telegram_message(
@@ -216,7 +222,10 @@ def run_interactive_auth(
     print(f"\nToken saved to {cache_path}")
     print(f"Token preview: {token[:30]}...")
     if refresh_token:
-        print("Refresh token saved; run 'trading auth refresh' daily.")
+        print(
+            "Refresh token saved, but Fyers may reject silent refresh under "
+            "SEBI rules. Re-login via Telegram when the access token expires."
+        )
     else:
         print("WARN: no refresh token returned; daily refresh will be unavailable.")
     _notify(settings, "Fyers access token obtained (interactive login).")
@@ -245,7 +254,16 @@ def run_refresh(repo_root: Path) -> int:
         access_token = refresh_access_token(settings, refresh_token=refresh_token)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        _notify(settings, f"Fyers token refresh FAILED: {exc}")
+        if _is_sebi_refresh_disabled(str(exc)):
+            _notify(
+                settings,
+                "Fyers silent token refresh is disabled under SEBI rules. "
+                "This is expected. Reply to the next login link, or run "
+                "`trading auth telegram`, when the access token expires. "
+                "The cached access token was not renewed.",
+            )
+        else:
+            _notify(settings, f"Fyers token refresh FAILED: {exc}")
         return 1
 
     settings.save_cached_token(repo_root, access_token)

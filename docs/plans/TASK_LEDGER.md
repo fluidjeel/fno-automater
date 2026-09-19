@@ -1,9 +1,8 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 4
+ACTIVE_PLAN_VERSION: 8
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
-`READY` or `IN_PROGRESS` (none; slice 1 complete).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: PAPER-005.
 
 ## Phase 2–3: Layer 2 control plane
 
@@ -20,7 +19,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Exactly one task may be
 | L2-009 | DONE | Safety controls + readiness | `src/trading/safety/controls.py`, `safety/readiness.py`, tests | Daily loss kill switch (inv 24); stale snapshot blocks entry (inv 6); system RECOVERY gating | L2-004 |
 | L2-010 | DONE | E2E vertical slice 1: long call/put paper | `tests/test_l2_slice1_long_option.py` | Full path intent→RiskDecision→OrderPlan→fill→exit→reconcile→audit; replay deterministic | L2-007, L2-008, L2-009 |
 
-## Deferred (post slice 1)
+## Additional Layer 2 vertical slices
 
 | ID | Status | Outcome | Scope | Verification | Dependency |
 | --- | --- | --- | --- | --- | --- |
@@ -44,6 +43,30 @@ Layer 3 slices L3-001..L3-005 are complete. An iron condor was considered for
 L3-005 and deliberately left out of `defined-risk-multileg-v1`: the two-leg
 credit spreads already deliver the defined-risk structure, and a four-leg
 variant needs a neutral-regime rule that is not yet specified.
+
+## Phase 4: Layer 4 forward validation (offline first)
+
+| ID | Status | Outcome | Scope | Verification | Dependency |
+| --- | --- | --- | --- | --- | --- |
+| L4-001 | DONE | Experiment identity + lineage stamps | `ExecutionMode`, `ExperimentDefinition`; `experiment_id`/`execution_mode` on `TradeIntent`, `OrderIdentity`, `RiskDecision`, `PositionState` | Frozen-after-start; REAL modes require `Environment.LIVE`; inv 22 | L3-001 |
+| L4-002 | DONE | Conservative fill calculator | `src/trading/analytics/fills.py`, `config/evaluation.yaml` | Bid/ask/depth rules; unverified charges fail closed; paper broker E2E unchanged | L4-001 |
+| L4-003 | DONE | Deterministic scorecard | `src/trading/analytics/scorecard.py`, `tests/fixtures/l4_cohort/` | Long-option cohort including rejects; no cross-version pooling | L4-002 |
+| L4-004 | DONE | Fail-closed eligibility + read-only CLI | `PromotionEligibilityResult`, `trading evaluate scorecard/eligibility` | Cannot write live config; win rate / gross P&L never pass; fixture `ELIGIBLE` is pipeline-only | L4-003 |
+
+## Phase 4–5: Forward paper validation and live readiness
+
+| ID | Status | Outcome | Verification |
+| --- | --- | --- | --- |
+| SAFE-001 | DONE | Noise threshold, missing-OI fail-close, event-risk enforcement, L3 allocation coverage and CAS feature-version gate | Ruff and mypy clean; 819 tests pass, 5 skip |
+| L4-001..004 | DONE | Forward-validation contracts, conservative fills, scorecard, eligibility CLI | 853 tests pass, 5 skip; inv 22 covered |
+| PAPER-001 | DONE | Supervised PAPER runner joining L1 snapshots, event risk, L3, L2 and paper OMS with credential isolation | No live broker submit path in PAPER; cycle lineage; `trading paper isolate-check` |
+| PAPER-002 | DONE | Conservative fill model optional on the paper broker | Immediate fill remains default for L2 E2E; conservative path uses ask+slip / trade-through / depth |
+| L4-HUMAN-001 | DONE | `AttentionRequest` + CLI/Telegram for charges, CAS features, LIVE config | Advisory only; `trading attention scan` |
+| L4-AGENT-001 | DONE | Bounded weekly tool loop, `STRATEGY_FAMILY` proposal, cost/iteration caps | Timeout, injection prefix, budget abort → `ABSTAIN`; `enabled: false` |
+| PAPER-003 | DONE | Versioned paper evidence store and cohort report | EOD writes `CohortPackage` JSON under `data/paper/cohorts/`; `trading evaluate scorecard|eligibility` remains read-only |
+| PAPER-004 | DONE | Isolation, stale/event-risk, restart idempotency, Telegram advisory copy | `tests/test_paper_session.py`; Fyers txn adapter still refused |
+| PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
+| CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 
 ## Prior milestones (complete)
 
@@ -69,5 +92,13 @@ L2-012 commodity futures sizing + E2E vertical slice 3 done.
 L2-013 credit spread sizing + partial-fill repair + E2E slice 4 done.
 L2-014 iron condor sizing + STRATEGY_PNL exits + E2E slice 5 done.
 L2-015 live Fyers broker adapter done.
-Next implementation task: none queued (see ACTIVE_PLAN.md).
+Layer 2 milestone complete. Layer 3 strategies L3-001..L3-005 done.
+SAFE-001 paper-readiness constraint hardening done.
+L4-001..L4-004 forward-validation slice done (experiment, fills, scorecard,
+eligibility CLI). Offline fixture ELIGIBLE is not a go-live.
+PAPER-001 supervised paper runner with isolation done.
+PAPER-002 conservative paper fills (opt-in) done.
+L4-HUMAN-001 operator attention and L4-AGENT-001 weekly loop done.
+CAS-001 Layer 1 cas-microstructure-v1 producer done; live CAS cohort is next.
+Next implementation task: PAPER-003 (versioned paper evidence store).
 ```

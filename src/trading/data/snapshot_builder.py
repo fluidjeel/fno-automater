@@ -7,6 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from trading.data.cas_features import cas_snapshot_version, compute_cas_features
 from trading.data.config import UnderlyingConfig
 from trading.data.events import CanonicalMarketEvent
 from trading.data.prices import positive_decimal as _positive
@@ -267,6 +268,11 @@ class MarketSnapshotBuilder:
                 features["depth_bid_qty"] = Decimal(buy)
             if sell is not None:
                 features["depth_ask_qty"] = Decimal(sell)
+        for key, value in compute_cas_features(events).items():
+            features[key] = value
+        feature_set_version = (
+            cas_snapshot_version(features) or self._underlying.feature_set_version
+        )
         macro = chain.payload.get("macro_news_factor")
         if isinstance(macro, dict):
             sentiment = macro.get("sentiment")
@@ -309,7 +315,7 @@ class MarketSnapshotBuilder:
             contract=contract,
             times=times,
             market=market,
-            feature_set_version=self._underlying.feature_set_version,
+            feature_set_version=feature_set_version,
             features=features,
             quality=quality,
             lineage=lineage,

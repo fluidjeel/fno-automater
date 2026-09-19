@@ -23,7 +23,7 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.common import ExposureSnapshot
-from trading.domain.enums import ReasonCode, RiskAction
+from trading.domain.enums import ExecutionMode, ReasonCode, RiskAction
 from trading.domain.primitives import Lots, LotSize, Money, Quantity
 
 __all__ = ["ApprovedLeg", "RiskDecision"]
@@ -55,6 +55,8 @@ class RiskDecision(VersionedModel):
     decision_id: NonEmptyStr
     intent_id: NonEmptyStr
     correlation_id: NonEmptyStr
+    experiment_id: NonEmptyStr
+    execution_mode: ExecutionMode
     policy_version: NonEmptyStr
     config_version: NonEmptyStr
     action: RiskAction

@@ -77,3 +77,23 @@ exposure/margin/P&L discrepancy, protective coverage and AI cost/schema failures
 Critical alerts require owner, severity and tested runbook. Keep IDs/symbols out
 of metric labels and in structured logs/traces.
 
+## Monday PAPER session
+
+Human steps that cannot be coded: put Fyers and Telegram credentials in `.env`,
+run `trading data backfill instruments` on Sunday, then start
+`trading paper session` (tmux/systemd) before the open. The process sends the
+Fyers login URL on Telegram; after you paste the redirect it runs unattended.
+
+- Config: `--config config/paper.yaml` (default). Do not point this process at
+  LIVE `base.yaml`.
+- Session window: 09:15–15:30 IST from `config/data_pipeline.yaml`. EOD Telegram
+  plus `data/paper/cohorts/*.json` around 15:40 IST.
+- Live Fyers is data and OAuth only. Orders go to the paper broker.
+- Missing or stale event-risk blocks new entries. Existing paper positions keep
+  deterministic exits.
+- Restart reuses `data/paper/trading.sqlite` and `data/paper/broker_state.json`
+  so the same idempotency key does not double-submit.
+- Net expectancy on the EOD card stays unknown until
+  `charges_per_lot.verified_at` is set. That is not required for paper fills.
+
+

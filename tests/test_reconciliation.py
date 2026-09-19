@@ -130,9 +130,7 @@ class TestBootReconcile:
             event = row.deserialize()
             assert isinstance(event, ReconciliationEvent)
             events.append(event)
-        assert any(
-            event.difference_class is DifferenceClass.NONE for event in events
-        )
+        assert any(event.difference_class is DifferenceClass.NONE for event in events)
         assert store.get_system_state()[1] == outcome.result.result_id
 
     def test_local_working_order_absent_at_broker_blocks_entries(

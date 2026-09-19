@@ -174,11 +174,7 @@ def map_fyers_order_state(
     if status == _STATUS_TRADED:
         if filled_qty <= 0:
             return OrderState.ACKNOWLEDGED
-        return (
-            OrderState.PARTIAL
-            if filled_qty < requested_qty
-            else OrderState.FILLED
-        )
+        return OrderState.PARTIAL if filled_qty < requested_qty else OrderState.FILLED
     terminal = {
         _STATUS_PENDING: OrderState.ACKNOWLEDGED,
         _STATUS_TRANSIT: OrderState.SUBMITTING,
@@ -222,11 +218,7 @@ def parse_order_event(
         if state is OrderState.UNKNOWN
         else None
     )
-    acknowledged = (
-        requested_qty
-        if state.is_working
-        else min(filled_qty, requested_qty)
-    )
+    acknowledged = requested_qty if state.is_working else min(filled_qty, requested_qty)
     return OrderEvent.model_validate(
         {
             "event_id": event_id,

@@ -27,11 +27,12 @@ from trading.domain.contracts.base import (
     UtcDatetime,
     VersionedModel,
 )
-from trading.domain.enums import ProposalType, Recommendation
+from trading.domain.enums import FamilyStance, ProposalType, Recommendation
 
 __all__ = [
     "AIProposal",
     "EvidenceRef",
+    "FamilyAction",
     "ModelVersions",
     "ParameterProposal",
 ]
@@ -65,6 +66,13 @@ class ModelVersions(StrictModel):
     prompt_version: NonEmptyStr
     retrieval_version: NonEmptyStr
     policy_version: NonEmptyStr
+
+
+class FamilyAction(StrictModel):
+    """Proposed paper/shadow posture for one strategy id. Never a live switch."""
+
+    strategy_id: NonEmptyStr
+    stance: FamilyStance
 
 
 class ParameterProposal(StrictModel):
@@ -103,6 +111,7 @@ class AIProposal(VersionedModel):
     calibration_reference: NonEmptyStr | None = None
     evidence: tuple[EvidenceRef, ...] = ()
     parameter_proposals: tuple[ParameterProposal, ...] = ()
+    family_actions: tuple[FamilyAction, ...] = ()
     assumptions: tuple[NonEmptyStr, ...] = ()
     contradictions: tuple[NonEmptyStr, ...] = ()
     missing_data: tuple[NonEmptyStr, ...] = ()
@@ -118,6 +127,8 @@ class AIProposal(VersionedModel):
         if self.recommendation is Recommendation.ABSTAIN:
             if self.parameter_proposals:
                 raise ValueError("an abstaining proposal must not propose parameters")
+            if self.family_actions:
+                raise ValueError("an abstaining proposal must not propose families")
             return self
         if not self.evidence:
             raise ValueError(
@@ -131,6 +142,16 @@ class AIProposal(VersionedModel):
                 f"{self.as_of_time}; time-bounded retrieval was violated, which is "
                 "lookahead in a research context and manipulation risk in a live one"
             )
+        if (
+            self.proposal_type is ProposalType.STRATEGY_FAMILY
+            and not self.family_actions
+        ):
+            raise ValueError(
+                "STRATEGY_FAMILY recommendations require at least one family action"
+            )
+        ids = [action.strategy_id for action in self.family_actions]
+        if len(set(ids)) != len(ids):
+            raise ValueError("family_actions strategy_id values must be unique")
         return self
 
     def is_usable_at(self, now: datetime) -> bool:

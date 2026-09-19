@@ -1,0 +1,94 @@
+# PAPER process identity. Live market rules stay unverified on purpose:
+# Environment.PAPER skips require_ready_for. Do not copy this environment into
+# base.yaml; tests and BACKTEST tooling expect BACKTEST there.
+
+schema_version: "1"
+environment: PAPER
+account_id: "ACC-PAPER-1"
+base_currency: INR
+
+exchanges:
+  - exchange: NSE
+    timezone: Asia/Kolkata
+    session_open_local: "09:15"
+    session_close_local: "15:30"
+    max_orders_per_second:
+      value: null
+      source: "broker API documentation and exchange order-rate circular"
+      verified_at: null
+    max_orders_per_day:
+      value: null
+      source: "broker API documentation"
+      verified_at: null
+    algo_id_required_above_ops:
+      value: null
+      source: "SEBI algorithmic trading framework, current circular"
+      verified_at: null
+
+  - exchange: NFO
+    timezone: Asia/Kolkata
+    session_open_local: "09:15"
+    session_close_local: "15:30"
+    max_orders_per_second:
+      value: null
+      source: "broker API documentation and exchange order-rate circular"
+      verified_at: null
+    max_orders_per_day:
+      value: null
+      source: "broker API documentation"
+      verified_at: null
+    algo_id_required_above_ops:
+      value: null
+      source: "SEBI algorithmic trading framework, current circular"
+      verified_at: null
+
+  - exchange: MCX
+    timezone: Asia/Kolkata
+    session_open_local: "09:15"
+    session_close_local: "15:30"
+    max_orders_per_second:
+      value: null
+      source: "broker API documentation and exchange order-rate circular"
+      verified_at: null
+    max_orders_per_day:
+      value: null
+      source: "broker API documentation"
+      verified_at: null
+    algo_id_required_above_ops:
+      value: null
+      source: "SEBI algorithmic trading framework, current circular"
+      verified_at: null
+
+instruments: []
+
+margin:
+  min_cash_fraction_of_margin:
+    value: null
+    source: "SEBI margin composition circular in force on the trading date"
+    verified_at: null
+    note: "Applies to open F&O positions. Verify the effective date, not just the rule."
+  expiry_day_short_option_elm_fraction:
+    value: null
+    source: "exchange extreme loss margin schedule"
+    verified_at: null
+  margin_buffer_fraction:
+    value: null
+    source: "internal policy, sized against observed intraday margin moves"
+    verified_at: null
+
+risk:
+  max_loss_per_trade_fraction: "0.01"
+  daily_loss_cap_fraction: "0.03"
+  max_portfolio_risk_fraction: "0.10"
+  max_concurrent_trades: 3
+  max_margin_utilisation_fraction: "0.50"
+
+freshness:
+  max_age_ms_by_timeframe: {}
+  warmup_bars_by_timeframe: {}
+  max_clock_drift_ms: 500
+
+storage:
+  durable_write_required_before_submit: true
+  raw_retention_days: 90
+  audit_retention_days: 2555

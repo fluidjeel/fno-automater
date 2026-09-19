@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from trading.domain.contracts import FeatureSnapshot, PortfolioView, TradeIntent
-from trading.domain.enums import ReasonCode
+from trading.domain.enums import ExecutionMode, ReasonCode
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from trading.strategies.macro import MacroAssessment
@@ -66,6 +66,8 @@ class StrategyContext:
     candidates: tuple[FeatureSnapshot, ...]
     view: PortfolioView
     now: datetime
+    experiment_id: str = "EXP-PAPER-DEFAULT"
+    execution_mode: ExecutionMode = ExecutionMode.PAPER
     macro: MacroAssessment | None = None
 
 

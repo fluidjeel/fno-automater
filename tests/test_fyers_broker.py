@@ -166,9 +166,7 @@ class TestOrderLifecycle:
         """Invariant 11: a different order cannot reuse an idempotency key."""
         broker.submit(_submit_request())
         conflicting = _submit_request(
-            order=f.planned_order(
-                identity=f.order_identity(internal_order_id="ORD-2")
-            )
+            order=f.planned_order(identity=f.order_identity(internal_order_id="ORD-2"))
         )
         with pytest.raises(DuplicateBrokerOrderError) as exc_info:
             broker.submit(conflicting)

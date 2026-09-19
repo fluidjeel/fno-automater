@@ -5,20 +5,50 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
+from pydantic import ValidationError
+
+from trading.ai.history_ports import (
+    SnapshotMarketPort,
+    StaticNewsPort,
+    history_evidence,
+)
+from trading.ai.llm_settings import load_llm_settings
+from trading.ai.loop import run_weekly_agent
+from trading.ai.openai_compat import OpenAICompatLlm
+from trading.ai.ports import LlmTimeoutError, LlmTurn
+from trading.ai.recording import RecordingLlm, persist_agent_run
+from trading.ai.tools import ToolContext
+from trading.analytics.eligibility import evaluate_eligibility
+from trading.analytics.scorecard import EvaluationError, build_scorecard
+from trading.config import (
+    AgentConfigError,
+    EvaluationConfigError,
+    LoadedEvaluationConfig,
+    load_agent_config,
+    load_config,
+    load_evaluation_config,
+)
+from trading.config.schema import Environment
 from trading.data.backfill import backfill_history, backfill_instruments
 from trading.data.config import load_data_pipeline_config
 from trading.data.fyers.auth import run_interactive_auth, run_refresh, run_telegram_auth
-from trading.data.fyers.client import FyersMarketFeed
+from trading.data.fyers.client import FyersApiError, FyersMarketFeed
+from trading.data.fyers.telegram import send_telegram_message, telegram_configured
 from trading.data.fyers.ws import FyersTickStream
 from trading.data.macro_news import format_macro_summary, load_macro_news_jsonl
+from trading.data.normalize import normalize_fyers_history
 from trading.data.pipeline import build_pipeline
 from trading.data.replay import build_replay_engine
 from trading.data.settings import FyersSettings
 from trading.data.storage.catalog import CatalogWriter
 from trading.data.storage.parquet_store import JsonlEventStore
-from trading.domain.clock import WallClock
+from trading.domain.clock import WallClock, ensure_utc
+from trading.domain.contracts import CohortPackage
+from trading.domain.ids import SequentialIdFactory
 from trading.news.cluster import cluster_news
 from trading.news.config import NewsSubsystemConfig, load_news_config
 from trading.news.contracts import NewsSourceTier, SentimentSnapshot
@@ -31,6 +61,12 @@ from trading.news.sentiment import (
 )
 from trading.news.sources import NewsCollector, normalize_news_item
 from trading.news.storage import NewsJsonlStore
+from trading.ops.attention import (
+    AttentionSink,
+    scan_attention_blockers,
+    telegram_attention_sink,
+)
+from trading.runtime.paper_session import run_paper_session
 
 __all__ = ["main"]
 
@@ -408,6 +444,384 @@ def _cmd_news(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_repo_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else _repo_root() / path
+
+
+def _evaluation_inputs(
+    args: argparse.Namespace,
+) -> tuple[CohortPackage, LoadedEvaluationConfig, datetime]:
+    """Load a frozen cohort and evaluation policy. Never writes configuration."""
+    package = CohortPackage.model_validate_json(
+        _resolve_repo_path(args.cohort).read_text(encoding="utf-8")
+    )
+    loaded = load_evaluation_config(_resolve_repo_path(args.config))
+    if args.as_of:
+        as_of = ensure_utc(datetime.fromisoformat(args.as_of))
+    else:
+        as_of = package.observation_end
+    return package, loaded, as_of
+
+
+def _cmd_evaluate_scorecard(args: argparse.Namespace) -> int:
+    try:
+        package, loaded, as_of = _evaluation_inputs(args)
+        scorecard = build_scorecard(package, loaded.config.fill_model, as_of=as_of)
+    except (
+        OSError,
+        EvaluationError,
+        EvaluationConfigError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        print(f"evaluate: {exc}", file=sys.stderr)
+        return 1
+    print(scorecard.model_dump_json(indent=2))
+    return 0
+
+
+def _cmd_evaluate_eligibility(args: argparse.Namespace) -> int:
+    try:
+        package, loaded, as_of = _evaluation_inputs(args)
+        scorecard = build_scorecard(package, loaded.config.fill_model, as_of=as_of)
+        result = evaluate_eligibility(
+            scorecard,
+            loaded.config.eligibility,
+            evaluated_at=as_of,
+            threshold_checksum=loaded.checksum,
+        )
+    except (
+        OSError,
+        EvaluationError,
+        EvaluationConfigError,
+        ValidationError,
+        ValueError,
+    ) as exc:
+        print(f"evaluate: {exc}", file=sys.stderr)
+        return 1
+    print(result.model_dump_json(indent=2))
+    return 0
+
+
+def _cmd_paper_session(args: argparse.Namespace) -> int:
+    """Telegram auth then unattended PAPER loop. Live Fyers is data+OAuth only."""
+    return run_paper_session(
+        _repo_root(),
+        account_config_path=_resolve_repo_path(args.config),
+        skip_auth=bool(args.skip_auth),
+        once=bool(args.once),
+    )
+
+
+def _cmd_paper_isolate_check(args: argparse.Namespace) -> int:
+    """Refuse to proceed unless the process config is PAPER."""
+    try:
+        loaded = load_config(_resolve_repo_path(args.config))
+    except (OSError, ValidationError, ValueError) as exc:
+        print(f"paper: {exc}", file=sys.stderr)
+        return 1
+    if loaded.config.environment is not Environment.PAPER:
+        print(
+            f"paper: environment is {loaded.config.environment}; "
+            "isolate-check requires PAPER",
+            file=sys.stderr,
+        )
+        return 1
+    print("paper: Environment.PAPER; live transaction adapters are not constructed")
+    return 0
+
+
+def _cmd_attention_scan(args: argparse.Namespace) -> int:
+    try:
+        evaluation = load_evaluation_config(_resolve_repo_path(args.config))
+        agent = load_agent_config(_resolve_repo_path(args.agent_config))
+        base = load_config(_resolve_repo_path(args.base_config))
+    except (OSError, ValidationError, ValueError, AgentConfigError) as exc:
+        print(f"attention: {exc}", file=sys.stderr)
+        return 1
+    clock = WallClock()
+    ids = SequentialIdFactory(clock.now_utc())
+    notify = _attention_sink(bool(args.notify))
+    requests = scan_attention_blockers(
+        clock=clock,
+        id_factory=ids,
+        evaluation=evaluation,
+        cas_features_complete=False,
+        live_unverified_paths=base.config.unverified_paths(),
+        agent_enabled=agent.config.enabled,
+        notify=notify,
+    )
+    print(f"attention_requests: {len(requests)}")
+    for request in requests:
+        print(request.model_dump_json())
+    return 0
+
+
+def _attention_sink(notify: bool) -> AttentionSink | None:
+    if not notify:
+        return None
+    try:
+        settings = FyersSettings.from_repo_root(_repo_root())
+    except ValidationError:
+        print(
+            "attention: Telegram credentials missing; CLI output only",
+            file=sys.stderr,
+        )
+        return None
+    if not telegram_configured(
+        settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
+    ):
+        print(
+            "attention: Telegram is not configured; CLI output only",
+            file=sys.stderr,
+        )
+        return None
+    return telegram_attention_sink(
+        lambda text: send_telegram_message(
+            text,
+            token=settings.a2a_telegram_bot_token,
+            chat_id=settings.a2a_telegram_chat_id,
+        )
+    )
+
+
+class _UnavailableLlm:
+    def complete(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> LlmTurn:
+        raise LlmTimeoutError("no production LLM client is wired")
+
+
+def _cmd_agent_weekly(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    try:
+        evaluation = load_evaluation_config(_resolve_repo_path(args.config))
+        agent_loaded = load_agent_config(_resolve_repo_path(args.agent_config))
+        package = None
+        cohort_path = args.cohort
+        if not cohort_path and args.enable:
+            cohort_path = str(root / "tests/fixtures/l4_cohort/long_option.json")
+        if cohort_path:
+            package = CohortPackage.model_validate_json(
+                _resolve_repo_path(cohort_path).read_text(encoding="utf-8")
+            )
+    except (OSError, ValidationError, ValueError, AgentConfigError) as exc:
+        print(f"agent: {exc}", file=sys.stderr)
+        return 1
+    clock = WallClock()
+    config = agent_loaded.config
+    llm: _UnavailableLlm | OpenAICompatLlm | RecordingLlm = _UnavailableLlm()
+    recorder: RecordingLlm | None = None
+    history: dict[str, Any] = {}
+    market = None
+    news = None
+    model_name = config.model
+    if args.enable:
+        config = config.model_copy(update={"enabled": True})
+        try:
+            settings = load_llm_settings(root)
+            inner = OpenAICompatLlm(settings)
+        except ValueError as exc:
+            print(f"agent: {exc}", file=sys.stderr)
+            return 1
+        model_name = inner.model
+        config = config.model_copy(
+            update={
+                "enabled": True,
+                "model": model_name,
+                "max_tokens_per_run": max(config.max_tokens_per_run, 100000),
+                "input_inr_per_million_tokens": Decimal("15"),
+                "output_inr_per_million_tokens": Decimal("45"),
+            }
+        )
+        recorder = RecordingLlm(inner)
+        llm = recorder
+        try:
+            history, market = _trial_history_port(
+                root,
+                clock=clock,
+                symbol=args.symbol,
+                days=args.history_days,
+                resolution=args.resolution,
+            )
+        except (OSError, ValueError, FyersApiError) as exc:
+            print(f"agent history: {exc}", file=sys.stderr)
+            return 1
+        news = _trial_news_port(root)
+    ctx = ToolContext(
+        clock=clock,
+        id_factory=SequentialIdFactory(clock.now_utc()),
+        evaluation=evaluation,
+        cohort=package,
+        market=market,
+        news=news,
+        model_name=model_name,
+    )
+    prompt = (
+        "Propose STRATEGY_FAMILY stances for the next week using tools. "
+        "Markets may be closed; fetch_market is Fyers historical bars. "
+        f"Start with fetch_market for {args.symbol}, then scorecard and "
+        "eligibility. This run cannot place orders or change live config."
+    )
+    proposal = run_weekly_agent(
+        llm=llm,
+        config=config,
+        tools=ctx,
+        prompt=prompt,
+    )
+    print(proposal.model_dump_json(indent=2))
+    if recorder is not None:
+        stamp = clock.now_utc().strftime("%Y%m%dT%H%M%SZ")
+        out_dir = Path(args.out_dir)
+        if not out_dir.is_absolute():
+            out_dir = root / out_dir
+        run_dir = out_dir / f"{stamp}-{proposal.proposal_id}"
+        persist_agent_run(
+            out_dir=run_dir,
+            proposal=proposal,
+            turns=recorder.turns,
+            history=history,
+            meta={
+                "model": model_name,
+                "enabled_override": True,
+                "shipped_agent_enabled": agent_loaded.config.enabled,
+                "symbol": args.symbol,
+                "history_days": args.history_days,
+                "resolution": args.resolution,
+                "cohort": cohort_path,
+            },
+            attention=tuple(ctx.attention_requests),
+        )
+        print(f"reasoning: {run_dir / 'reasoning.md'}")
+        print(f"proposal: {run_dir / 'proposal.json'}")
+        print(f"transcript: {run_dir / 'transcript.jsonl'}")
+    return 0
+
+
+def _trial_history_port(
+    root: Path,
+    *,
+    clock: WallClock,
+    symbol: str,
+    days: int,
+    resolution: str,
+) -> tuple[dict[str, Any], SnapshotMarketPort]:
+    pipeline = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    targets = [item for item in pipeline.underlyings if item.symbol == symbol]
+    if not targets:
+        raise ValueError(f"no underlying matching {symbol!r}")
+    store = JsonlEventStore(root / pipeline.storage.root)
+    try:
+        feed = _fyers_feed(root)
+        results = backfill_history(
+            pipeline_config=pipeline,
+            repo_root=root,
+            feed=feed,
+            store=store,
+            clock=clock,
+            underlying=targets[0],
+            resolutions=(resolution,),
+            days=days,
+            catalog=None,
+        )
+        end = clock.now_utc().astimezone(UTC).date()
+        start = end - timedelta(days=max(days, 1))
+        capture = feed.fetch_history(
+            symbol,
+            resolution=resolution,
+            range_from=start.isoformat(),
+            range_to=end.isoformat(),
+        )
+        event = normalize_fyers_history(
+            capture,
+            symbol=symbol,
+            resolution=resolution,
+            normalization_version=pipeline.normalization_version,
+            raw_ref="agent-trial",
+        )
+        bars = _payload_bars(event.payload)[-80:]
+        snapshot = history_evidence(
+            symbol=symbol,
+            resolution=resolution,
+            bars=bars,
+            published_at=event.source_time,
+            clock=clock,
+        )
+        history: dict[str, Any] = {
+            "source": "fyers-live-history",
+            "backfill_events": [item.event_ids for item in results],
+            "snapshot": snapshot,
+        }
+        return history, SnapshotMarketPort({symbol: snapshot})
+    except FyersApiError as exc:
+        print(
+            f"agent history: live Fyers failed ({exc}); using local store",
+            file=sys.stderr,
+        )
+        return _local_history_port(store, symbol=symbol, clock=clock)
+
+
+def _local_history_port(
+    store: JsonlEventStore,
+    *,
+    symbol: str,
+    clock: WallClock,
+) -> tuple[dict[str, Any], SnapshotMarketPort]:
+    events = store.read_canonical(
+        symbol=symbol,
+        start=datetime(2020, 1, 1, tzinfo=UTC),
+        end=clock.now_utc(),
+    )
+    bars_events = [item for item in events if item.event_type == "BAR_SNAPSHOT"]
+    if not bars_events:
+        raise ValueError(
+            "no local BAR_SNAPSHOT for this symbol; re-auth with "
+            "'trading auth fyers' and retry"
+        )
+    latest = bars_events[-1]
+    bars = _payload_bars(latest.payload)[-80:]
+    resolution = str(latest.payload.get("resolution") or "unknown")
+    snapshot = history_evidence(
+        symbol=symbol,
+        resolution=resolution,
+        bars=bars,
+        published_at=latest.source_time,
+        clock=clock,
+    )
+    snapshot["source"] = "fyers-history-local"
+    snapshot["note"] = (
+        "Fyers live history unavailable; last persisted Fyers BAR_SNAPSHOT used"
+    )
+    history = {
+        "source": "local-canonical",
+        "event_id": latest.event_id,
+        "snapshot": snapshot,
+    }
+    return history, SnapshotMarketPort({symbol: snapshot})
+
+
+def _payload_bars(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    bars_raw = payload.get("bars", [])
+    if not isinstance(bars_raw, list):
+        return []
+    return [row for row in bars_raw if isinstance(row, dict)]
+
+
+def _trial_news_port(root: Path) -> StaticNewsPort:
+    path = root / "data" / "macro_news.jsonl"
+    if not path.is_file():
+        return StaticNewsPort({"items": [], "note": "no data/macro_news.jsonl on disk"})
+    loaded = load_macro_news_jsonl(path)
+    return StaticNewsPort(
+        {
+            "item_count": len(loaded.items),
+            "errors": list(loaded.errors),
+            "items": [item.model_dump(mode="json") for item in loaded.items[:20]],
+        }
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trading")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -520,6 +934,94 @@ def main(argv: list[str] | None = None) -> int:
             operation.add_argument("--start", required=True, help="UTC start date")
             operation.add_argument("--end", required=True, help="UTC end date")
         operation.set_defaults(func=_cmd_news)
+
+    evaluate = sub.add_parser(
+        "evaluate",
+        help="read-only Layer 4 scorecard and eligibility reports",
+    )
+    evaluate_sub = evaluate.add_subparsers(dest="evaluate_cmd", required=True)
+    for command, help_text, handler in (
+        (
+            "scorecard",
+            "print a deterministic cohort scorecard as JSON",
+            _cmd_evaluate_scorecard,
+        ),
+        (
+            "eligibility",
+            "print a fail-closed promotion eligibility report as JSON",
+            _cmd_evaluate_eligibility,
+        ),
+    ):
+        operation = evaluate_sub.add_parser(command, help=help_text)
+        operation.add_argument("cohort", help="path to a frozen CohortPackage JSON")
+        operation.add_argument(
+            "--config",
+            default="config/evaluation.yaml",
+            help="evaluation policy path (read-only)",
+        )
+        operation.add_argument(
+            "--as-of",
+            default="",
+            help="UTC evaluation instant (default: cohort observation_end)",
+        )
+        operation.set_defaults(func=handler)
+
+    paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
+    paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)
+    isolate = paper_sub.add_parser(
+        "isolate-check",
+        help="verify PAPER environment cannot select a live transaction adapter",
+    )
+    isolate.add_argument("--config", default="config/base.yaml")
+    isolate.set_defaults(func=_cmd_paper_isolate_check)
+    session = paper_sub.add_parser(
+        "session",
+        help="unattended PAPER session after Telegram Fyers login",
+    )
+    session.add_argument("--config", default="config/paper.yaml")
+    session.add_argument(
+        "--skip-auth",
+        action="store_true",
+        help="skip Telegram OAuth (tests and already-cached tokens)",
+    )
+    session.add_argument(
+        "--once",
+        action="store_true",
+        help="run one cycle then exit (no sleep loop)",
+    )
+    session.set_defaults(func=_cmd_paper_session)
+
+    attention = sub.add_parser("attention", help="operator attention requests")
+    attention_sub = attention.add_subparsers(dest="attention_cmd", required=True)
+    scan = attention_sub.add_parser("scan", help="print current Layer 4 blockers")
+    scan.add_argument("--config", default="config/evaluation.yaml")
+    scan.add_argument("--agent-config", default="config/agent.yaml")
+    scan.add_argument("--base-config", default="config/base.yaml")
+    scan.add_argument(
+        "--notify",
+        action="store_true",
+        help="also send blockers to Telegram when credentials are configured",
+    )
+    scan.set_defaults(func=_cmd_attention_scan)
+
+    agent = sub.add_parser("agent", help="Layer 4 weekly proposal loop")
+    agent_sub = agent.add_subparsers(dest="agent_cmd", required=True)
+    weekly = agent_sub.add_parser(
+        "weekly", help="run the bounded weekly agent (ABSTAIN when disabled)"
+    )
+    weekly.add_argument("cohort", nargs="?", default="", help="CohortPackage JSON")
+    weekly.add_argument("--config", default="config/evaluation.yaml")
+    weekly.add_argument("--agent-config", default="config/agent.yaml")
+    weekly.add_argument(
+        "--enable",
+        action="store_true",
+        help="in-memory enable plus DeepSeek; shipped agent.yaml stays disabled",
+    )
+    weekly.add_argument("--symbol", default="NSE:NIFTY50-INDEX")
+    weekly.add_argument("--history-days", type=int, default=20)
+    weekly.add_argument("--resolution", default="D")
+    weekly.add_argument("--out-dir", default="data/paper/agent_runs")
+    weekly.set_defaults(func=_cmd_agent_weekly)
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)

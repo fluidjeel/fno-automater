@@ -35,6 +35,7 @@ from trading.strategies.cas_microstructure import (
     FEATURE_AUCTION_IMBALANCE,
     FEATURE_MICROPRICE_EDGE_BPS,
     FEATURE_QUOTE_INSTABILITY,
+    FEATURE_SET_VERSION,
     FEATURE_TRADE_FLOW_IMBALANCE,
     MAX_HOLDING_DAYS,
 )
@@ -76,6 +77,7 @@ def _underlying(
         contract=index_contract(),
         times=_times(instant),
         market=quote(last=price(last), close=price(close)),
+        feature_set_version=FEATURE_SET_VERSION,
         features=BULLISH_FEATURES if features is None else features,
     )
 
@@ -111,6 +113,17 @@ def _ctx(candidates: tuple[FeatureSnapshot, ...], **overrides: Any) -> StrategyC
         now=overrides.get("now", CAS_NOW),
         macro=overrides.get("macro"),
     )
+
+
+def test_wrong_feature_set_version_blocks_entry() -> None:
+    underlying = _underlying("24100", "24000").model_copy(
+        update={"feature_set_version": "different-feature-contract"}
+    )
+    decision = CasMicrostructureStrategy().evaluate(
+        _ctx((_option(OptionType.CALL),), underlying=underlying)
+    )
+    assert not decision.emits_intent
+    assert decision.rejections[0].reason is ReasonCode.DATA_INVALID
 
 
 def _intent(ctx: StrategyContext) -> TradeIntent:

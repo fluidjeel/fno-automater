@@ -1,5 +1,6 @@
 """Typed, versioned contracts. Semantics and authority are fixed here."""
 
+from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
     ContractError,
@@ -12,6 +13,26 @@ from trading.domain.contracts.common import (
     ExposureSnapshot,
     Lineage,
     Versions,
+)
+from trading.domain.contracts.evaluation import (
+    CohortPackage,
+    CohortScorecard,
+    CohortSignal,
+    ExperimentDefinition,
+    FillSimulation,
+    PromotionEligibilityResult,
+    ReasonCount,
+)
+from trading.domain.contracts.identification import (
+    CandidateBinding,
+    ConfidenceKind,
+    MacroStatus,
+    MarketState,
+    RouteDecision,
+    SetupFeatures,
+    StructureKind,
+    TrendState,
+    VolatilityState,
 )
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import (
@@ -42,6 +63,7 @@ from trading.domain.contracts.position import (
 from trading.domain.contracts.proposal import (
     AIProposal,
     EvidenceRef,
+    FamilyAction,
     ModelVersions,
     ParameterProposal,
 )
@@ -67,7 +89,13 @@ __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
     "ApprovedLeg",
+    "AttentionRequest",
+    "CandidateBinding",
     "CapitalReservation",
+    "CohortPackage",
+    "CohortScorecard",
+    "CohortSignal",
+    "ConfidenceKind",
     "ContractError",
     "ContractRef",
     "DataQualityReport",
@@ -76,14 +104,19 @@ __all__ = [
     "EvidenceRef",
     "ExitPolicy",
     "ExitTemplate",
+    "ExperimentDefinition",
     "ExposureSnapshot",
+    "FamilyAction",
     "FeatureSnapshot",
+    "FillSimulation",
     "Greeks",
     "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
     "Lineage",
+    "MacroStatus",
     "MarketQuote",
+    "MarketState",
     "ModelVersions",
     "OrderCommand",
     "OrderEvent",
@@ -97,18 +130,25 @@ __all__ = [
     "PositionLegState",
     "PositionRecord",
     "PositionState",
+    "PromotionEligibilityResult",
     "ProtectiveOrderStub",
+    "ReasonCount",
     "ReconciliationEvent",
     "ReconciliationResult",
     "RiskDecision",
+    "RouteDecision",
+    "SetupFeatures",
     "SizingDecision",
     "SizingLegResult",
     "SizingLimits",
     "SizingRequest",
     "SnapshotTimes",
     "StrictModel",
+    "StructureKind",
     "TradeIntent",
+    "TrendState",
     "UnderlyingExposure",
     "VersionedModel",
     "Versions",
+    "VolatilityState",
 ]

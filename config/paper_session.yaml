@@ -1,0 +1,24 @@
+# Unattended PAPER session. Changing experiment_prefix starts a new cohort.
+schema_version: "1"
+poll_interval_seconds: 60
+eod_local: "15:40"
+option_strikes_each_side: 2
+experiment_prefix: "EXP-PAPER"
+strategy_ids:
+  - positional_long_option
+  - debit_spread
+  - defined_risk_multileg
+  - cas_microstructure
+  - commodity_futures_trend
+strategy_stances:
+  positional_long_option: PAPER
+  debit_spread: PAPER
+  defined_risk_multileg: SHADOW
+  cas_microstructure: SUSPENDED
+  commodity_futures_trend: SHADOW
+commodity_underlying: CRUDEOIL
+commodity_exchange: MCX
+commodity_segment: MCX_COM
+cohort_dir: data/paper/cohorts
+store_path: data/paper/trading.sqlite
+broker_state_path: data/paper/broker_state.json

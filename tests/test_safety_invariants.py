@@ -32,11 +32,14 @@ from trading.config import (
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import (
     AIProposal,
+    CohortScorecard,
     DataQualityReport,
     ExitTemplate,
+    ExperimentDefinition,
     FeatureSnapshot,
     Lineage,
     OrderEvent,
+    PromotionEligibilityResult,
     ReconciliationEvent,
     RiskDecision,
     SnapshotTimes,
@@ -71,7 +74,7 @@ BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
 
 # Invariants this module tests at Phase 0.
 COVERED = frozenset(
-    {2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 23, 24, 25}
+    {2, 3, 4, 5, 6, 7, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24, 25}
 )
 
 # Invariants that require a component Phase 0 does not build yet.
@@ -81,7 +84,6 @@ DEFERRED: dict[int, str] = {
     10: "Phase 2: needs a durable store and a real clock-drift monitor",
     15: "Phase 3: needs an execution planner to invoke the repair policy",
     20: "Phase 1: needs the replay harness to check for lookahead",
-    22: "Phase 6: needs the evaluator and the promotion pipeline",
 }
 
 
@@ -373,6 +375,31 @@ class TestDataAndReplay:
         assert Money.of("-1.111", f.INR).quantized(
             Rounding.TOWARD_ZERO
         ).amount == Decimal("-1.11")
+
+    def test_invariant_22_evaluator_output_cannot_deploy(self) -> None:
+        """AI/evaluator output is a proposal, never a deployment."""
+        forbidden = {
+            "broker",
+            "promoted",
+            "approved",
+            "deploy",
+            "deployment",
+            "write",
+            "kill",
+            "credential",
+            "order",
+            "quantity",
+            "lots",
+        }
+        for model in (
+            PromotionEligibilityResult,
+            CohortScorecard,
+            ExperimentDefinition,
+        ):
+            for name in model.model_fields:
+                assert not forbidden & set(name.lower().split("_")), (
+                    f"{model.__name__}.{name} would give Layer 4 a live lever"
+                )
 
 
 class TestChangeControl:

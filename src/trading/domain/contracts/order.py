@@ -21,6 +21,7 @@ from trading.domain.contracts.base import (
 )
 from trading.domain.contracts.common import ContractRef
 from trading.domain.enums import (
+    ExecutionMode,
     OrderState,
     OrderType,
     ReasonCode,
@@ -48,6 +49,8 @@ class OrderIdentity(StrictModel):
     risk_decision_id: NonEmptyStr
     trade_id: NonEmptyStr
     correlation_id: NonEmptyStr
+    experiment_id: NonEmptyStr
+    execution_mode: ExecutionMode
 
 
 class OrderCommand(StrictModel):

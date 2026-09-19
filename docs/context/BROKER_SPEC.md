@@ -1,5 +1,17 @@
 # Broker Adapter and Reconciliation Specification
 
+## Implementations (2026-09-14)
+
+| Adapter | Path | Mode | Notes |
+| --- | --- | --- | --- |
+| Paper | `src/trading/broker/paper/` | Offline fixtures | Immediate LIMIT fill; reference for E2E slices |
+| Fyers | `src/trading/broker/fyers/` | Live API + offline tests | v3 `/orders/sync`, positions, funds; margin via `/multiorder/margin` when verified |
+
+Both implement `BrokerPort` and `MarginPreviewPort` from `broker/ports.py`. Live
+Fyers margin preview fails closed until `margin_preview_verified` is set after a
+real-account drill. E2E tests today use paper; Fyers is fixture-backed in
+`tests/test_fyers_broker.py`.
+
 ## Boundary
 
 The adapter translates canonical commands and broker responses. It contains no

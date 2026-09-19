@@ -148,9 +148,7 @@ class OmsEngine:
         if self._durable_write_required and not self._has_persisted_state(
             key, OrderState.CREATED
         ):
-            raise OmsError(
-                "durable OrderEvent(CREATED) missing before broker submit"
-            )
+            raise OmsError("durable OrderEvent(CREATED) missing before broker submit")
 
         request = BrokerSubmitRequest(
             account_id=account_id,

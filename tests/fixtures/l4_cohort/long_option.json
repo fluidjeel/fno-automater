@@ -1,0 +1,611 @@
+{
+  "schema_version": "1",
+  "experiment": {
+    "schema_version": "1",
+    "experiment_id": "EXP-LO-PAPER-1",
+    "strategy_id": "positional_long_option",
+    "strategy_version": "long-option-v1",
+    "parameter_version": "1",
+    "execution_mode": "PAPER",
+    "started_at": "2026-08-24T04:00:00Z",
+    "capital_limit": {
+      "amount": "700000",
+      "currency": "INR"
+    },
+    "parameters_frozen": true,
+    "feature_set_version": "1",
+    "risk_policy_version": "1",
+    "fill_model_version": "conservative-v1",
+    "code_version": "0.1.0"
+  },
+  "signals": [
+    {
+      "signal_id": "SIG-WIN-1",
+      "snapshot_id": "SNAP-WIN-1",
+      "created_at": "2026-08-31T04:00:00Z",
+      "declined": false,
+      "rejection_reason": null,
+      "intent": {
+        "schema_version": "1",
+        "intent_id": "INT-WIN-1",
+        "correlation_id": "COR-1",
+        "strategy_id": "positional_long_option",
+        "strategy_version": "long-option-v1",
+        "snapshot_id": "SNAP-WIN-1",
+        "experiment_id": "EXP-LO-PAPER-1",
+        "execution_mode": "PAPER",
+        "promoted_config_version": "1",
+        "promoted_proposal_id": null,
+        "supersedes_intent_id": null,
+        "underlying": "NIFTY",
+        "asset_class": "EQUITY_INDEX",
+        "legs": [
+          {
+            "leg_id": "leg-1",
+            "contract": {
+              "exchange": "NFO",
+              "symbol": "NIFTY26SEP24000CE",
+              "instrument_kind": "OPTION",
+              "asset_class": "EQUITY_INDEX",
+              "underlying": "NIFTY",
+              "broker_token": null,
+              "expiry": "2026-09-24",
+              "strike": "24000",
+              "option_type": "CALL"
+            },
+            "side": "BUY",
+            "ratio": 1
+          }
+        ],
+        "entry_policy": {
+          "limit_offset_ticks": 0,
+          "max_spread": {
+            "fraction": "0.01"
+          },
+          "max_slippage": {
+            "fraction": "0.0025"
+          },
+          "timeout_seconds": 30,
+          "max_attempts": 1,
+          "allow_market_fallback": false
+        },
+        "exit_template": {
+          "stop_distance_ticks": 200,
+          "target_distance_ticks": 400,
+          "break_even_trigger_ticks": null,
+          "trailing_activation_ticks": null,
+          "trailing_distance_ticks": null,
+          "time_exit": null,
+          "exit_before_expiry_days": null,
+          "invalidation_note": "underlying closes beyond short strike",
+          "partial_fill_policy": "unwind filled legs at market within 60s"
+        },
+        "constraints": {
+          "min_days_to_expiry": 7,
+          "max_holding_days": null,
+          "require_event_blackout_clear": true,
+          "min_open_interest": null,
+          "session_label": "NSE_REGULAR"
+        },
+        "requested_risk": {
+          "amount": "7000",
+          "currency": "INR"
+        },
+        "estimated_max_loss": {
+          "amount": "10000",
+          "currency": "INR"
+        },
+        "setup_code": "IV_PCTL_HIGH",
+        "strategy_confidence": "0.55",
+        "created_at": "2026-09-14T04:00:00Z",
+        "expires_at": "2026-09-14T05:00:00Z"
+      },
+      "risk_action": "APPROVE",
+      "risk_reasons": [],
+      "entry_quote": {
+        "bid": {
+          "value": "91.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "exit_quote": {
+        "bid": {
+          "value": "95.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "95.05",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "95.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "entry_command": {
+        "contract": {
+          "exchange": "NFO",
+          "symbol": "NIFTY26SEP24000CE",
+          "instrument_kind": "OPTION",
+          "asset_class": "EQUITY_INDEX",
+          "underlying": "NIFTY",
+          "broker_token": null,
+          "expiry": "2026-09-24",
+          "strike": "24000",
+          "option_type": "CALL"
+        },
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "time_in_force": "DAY",
+        "quantity_contracts": 75,
+        "limit_price": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "trigger_price": null
+      },
+      "exit_command": {
+        "contract": {
+          "exchange": "NFO",
+          "symbol": "NIFTY26SEP24000CE",
+          "instrument_kind": "OPTION",
+          "asset_class": "EQUITY_INDEX",
+          "underlying": "NIFTY",
+          "broker_token": null,
+          "expiry": "2026-09-24",
+          "strike": "24000",
+          "option_type": "CALL"
+        },
+        "side": "SELL",
+        "order_type": "LIMIT",
+        "time_in_force": "DAY",
+        "quantity_contracts": 75,
+        "limit_price": {
+          "value": "95.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "trigger_price": null
+      },
+      "traded_through_entry": true,
+      "traded_through_exit": true,
+      "mae": {
+        "amount": "40",
+        "currency": "INR"
+      },
+      "mfe": {
+        "amount": "250",
+        "currency": "INR"
+      },
+      "regime": "trend",
+      "days_to_expiry": 10,
+      "session_label": "NSE_REGULAR",
+      "incident_severity": null,
+      "reconciled": true,
+      "lots": 1
+    },
+    {
+      "signal_id": "SIG-LOSS-1",
+      "snapshot_id": "SNAP-LOSS-1",
+      "created_at": "2026-09-07T04:00:00Z",
+      "declined": false,
+      "rejection_reason": null,
+      "intent": {
+        "schema_version": "1",
+        "intent_id": "INT-LOSS-1",
+        "correlation_id": "COR-1",
+        "strategy_id": "positional_long_option",
+        "strategy_version": "long-option-v1",
+        "snapshot_id": "SNAP-LOSS-1",
+        "experiment_id": "EXP-LO-PAPER-1",
+        "execution_mode": "PAPER",
+        "promoted_config_version": "1",
+        "promoted_proposal_id": null,
+        "supersedes_intent_id": null,
+        "underlying": "NIFTY",
+        "asset_class": "EQUITY_INDEX",
+        "legs": [
+          {
+            "leg_id": "leg-1",
+            "contract": {
+              "exchange": "NFO",
+              "symbol": "NIFTY26SEP24000CE",
+              "instrument_kind": "OPTION",
+              "asset_class": "EQUITY_INDEX",
+              "underlying": "NIFTY",
+              "broker_token": null,
+              "expiry": "2026-09-24",
+              "strike": "24000",
+              "option_type": "CALL"
+            },
+            "side": "BUY",
+            "ratio": 1
+          }
+        ],
+        "entry_policy": {
+          "limit_offset_ticks": 0,
+          "max_spread": {
+            "fraction": "0.01"
+          },
+          "max_slippage": {
+            "fraction": "0.0025"
+          },
+          "timeout_seconds": 30,
+          "max_attempts": 1,
+          "allow_market_fallback": false
+        },
+        "exit_template": {
+          "stop_distance_ticks": 200,
+          "target_distance_ticks": 400,
+          "break_even_trigger_ticks": null,
+          "trailing_activation_ticks": null,
+          "trailing_distance_ticks": null,
+          "time_exit": null,
+          "exit_before_expiry_days": null,
+          "invalidation_note": "underlying closes beyond short strike",
+          "partial_fill_policy": "unwind filled legs at market within 60s"
+        },
+        "constraints": {
+          "min_days_to_expiry": 7,
+          "max_holding_days": null,
+          "require_event_blackout_clear": true,
+          "min_open_interest": null,
+          "session_label": "NSE_REGULAR"
+        },
+        "requested_risk": {
+          "amount": "7000",
+          "currency": "INR"
+        },
+        "estimated_max_loss": {
+          "amount": "10000",
+          "currency": "INR"
+        },
+        "setup_code": "IV_PCTL_HIGH",
+        "strategy_confidence": "0.55",
+        "created_at": "2026-09-14T04:00:00Z",
+        "expires_at": "2026-09-14T05:00:00Z"
+      },
+      "risk_action": "APPROVE",
+      "risk_reasons": [],
+      "entry_quote": {
+        "bid": {
+          "value": "91.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "exit_quote": {
+        "bid": {
+          "value": "89.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "90.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "89.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "entry_command": {
+        "contract": {
+          "exchange": "NFO",
+          "symbol": "NIFTY26SEP24000CE",
+          "instrument_kind": "OPTION",
+          "asset_class": "EQUITY_INDEX",
+          "underlying": "NIFTY",
+          "broker_token": null,
+          "expiry": "2026-09-24",
+          "strike": "24000",
+          "option_type": "CALL"
+        },
+        "side": "BUY",
+        "order_type": "LIMIT",
+        "time_in_force": "DAY",
+        "quantity_contracts": 75,
+        "limit_price": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "trigger_price": null
+      },
+      "exit_command": {
+        "contract": {
+          "exchange": "NFO",
+          "symbol": "NIFTY26SEP24000CE",
+          "instrument_kind": "OPTION",
+          "asset_class": "EQUITY_INDEX",
+          "underlying": "NIFTY",
+          "broker_token": null,
+          "expiry": "2026-09-24",
+          "strike": "24000",
+          "option_type": "CALL"
+        },
+        "side": "SELL",
+        "order_type": "LIMIT",
+        "time_in_force": "DAY",
+        "quantity_contracts": 75,
+        "limit_price": {
+          "value": "89.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "trigger_price": null
+      },
+      "traded_through_entry": true,
+      "traded_through_exit": true,
+      "mae": {
+        "amount": "180",
+        "currency": "INR"
+      },
+      "mfe": {
+        "amount": "20",
+        "currency": "INR"
+      },
+      "regime": "range",
+      "days_to_expiry": 8,
+      "session_label": "NSE_REGULAR",
+      "incident_severity": null,
+      "reconciled": true,
+      "lots": 1
+    },
+    {
+      "signal_id": "SIG-DECLINE-1",
+      "snapshot_id": "SNAP-DECLINE-1",
+      "created_at": "2026-09-11T04:00:00Z",
+      "declined": true,
+      "rejection_reason": "SPREAD_TOO_WIDE",
+      "intent": null,
+      "risk_action": null,
+      "risk_reasons": [],
+      "entry_quote": {
+        "bid": {
+          "value": "91.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "exit_quote": null,
+      "entry_command": null,
+      "exit_command": null,
+      "traded_through_entry": false,
+      "traded_through_exit": false,
+      "mae": null,
+      "mfe": null,
+      "regime": "trend",
+      "days_to_expiry": 9,
+      "session_label": "NSE_REGULAR",
+      "incident_severity": null,
+      "reconciled": true,
+      "lots": 1
+    },
+    {
+      "signal_id": "SIG-REJECT-1",
+      "snapshot_id": "SNAP-REJECT-1",
+      "created_at": "2026-09-13T04:00:00Z",
+      "declined": false,
+      "rejection_reason": "RISK_LIMIT_TRADE",
+      "intent": {
+        "schema_version": "1",
+        "intent_id": "INT-REJECT-1",
+        "correlation_id": "COR-1",
+        "strategy_id": "positional_long_option",
+        "strategy_version": "long-option-v1",
+        "snapshot_id": "SNAP-REJECT-1",
+        "experiment_id": "EXP-LO-PAPER-1",
+        "execution_mode": "PAPER",
+        "promoted_config_version": "1",
+        "promoted_proposal_id": null,
+        "supersedes_intent_id": null,
+        "underlying": "NIFTY",
+        "asset_class": "EQUITY_INDEX",
+        "legs": [
+          {
+            "leg_id": "leg-1",
+            "contract": {
+              "exchange": "NFO",
+              "symbol": "NIFTY26SEP24000CE",
+              "instrument_kind": "OPTION",
+              "asset_class": "EQUITY_INDEX",
+              "underlying": "NIFTY",
+              "broker_token": null,
+              "expiry": "2026-09-24",
+              "strike": "24000",
+              "option_type": "CALL"
+            },
+            "side": "BUY",
+            "ratio": 1
+          }
+        ],
+        "entry_policy": {
+          "limit_offset_ticks": 0,
+          "max_spread": {
+            "fraction": "0.01"
+          },
+          "max_slippage": {
+            "fraction": "0.0025"
+          },
+          "timeout_seconds": 30,
+          "max_attempts": 1,
+          "allow_market_fallback": false
+        },
+        "exit_template": {
+          "stop_distance_ticks": 200,
+          "target_distance_ticks": 400,
+          "break_even_trigger_ticks": null,
+          "trailing_activation_ticks": null,
+          "trailing_distance_ticks": null,
+          "time_exit": null,
+          "exit_before_expiry_days": null,
+          "invalidation_note": "underlying closes beyond short strike",
+          "partial_fill_policy": "unwind filled legs at market within 60s"
+        },
+        "constraints": {
+          "min_days_to_expiry": 7,
+          "max_holding_days": null,
+          "require_event_blackout_clear": true,
+          "min_open_interest": null,
+          "session_label": "NSE_REGULAR"
+        },
+        "requested_risk": {
+          "amount": "7000",
+          "currency": "INR"
+        },
+        "estimated_max_loss": {
+          "amount": "10000",
+          "currency": "INR"
+        },
+        "setup_code": "IV_PCTL_HIGH",
+        "strategy_confidence": "0.55",
+        "created_at": "2026-09-14T04:00:00Z",
+        "expires_at": "2026-09-14T05:00:00Z"
+      },
+      "risk_action": "REJECT",
+      "risk_reasons": [
+        "RISK_LIMIT_TRADE"
+      ],
+      "entry_quote": {
+        "bid": {
+          "value": "91.95",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "ask": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "last": {
+          "value": "92.00",
+          "tick": {
+            "value": "0.05"
+          }
+        },
+        "open": null,
+        "high": null,
+        "low": null,
+        "close": null,
+        "volume": null,
+        "bid_size": 300,
+        "ask_size": 300,
+        "bar_is_final": false
+      },
+      "exit_quote": null,
+      "entry_command": null,
+      "exit_command": null,
+      "traded_through_entry": false,
+      "traded_through_exit": false,
+      "mae": null,
+      "mfe": null,
+      "regime": "range",
+      "days_to_expiry": 6,
+      "session_label": "NSE_REGULAR",
+      "incident_severity": null,
+      "reconciled": true,
+      "lots": 1
+    }
+  ],
+  "observation_start": "2026-08-24T04:00:00Z",
+  "observation_end": "2026-09-14T04:00:00Z"
+}

@@ -1,0 +1,38 @@
+# PAPER-only identification hypotheses. Every change starts a new cohort.
+schema_version: "1"
+policy_version: "nifty-identification-v1"
+feature_version: "nifty-market-state-v1"
+binding_version: "nifty-contract-binding-v1"
+router_version: "nifty-structure-router-v1"
+
+warmup:
+  min_completed_bars: 50
+  min_sessions: 20
+
+regime:
+  trend_threshold: "0.60"
+  range_threshold: "0.25"
+  volatility_expansion_ratio: "1.25"
+  volatility_compression_ratio: "0.80"
+
+contracts:
+  min_open_interest: 1000
+  max_spread_fraction: "0.05"
+  long_delta_min: "0.45"
+  long_delta_max: "0.60"
+  short_delta_min: "0.20"
+  short_delta_max: "0.35"
+  weekly_dte_min: 5
+  weekly_dte_max: 12
+  monthly_dte_min: 20
+  monthly_dte_max: 35
+  min_reward_risk: "1.50"
+  estimated_round_trip_cost_per_lot: "200"
+
+router:
+  low_iv_percentile: "40"
+  low_iv_rv_ratio: "1.15"
+  min_winner_score: "0.70"
+  min_score_gap: "0.10"
+  cooldown_minutes: 30
+

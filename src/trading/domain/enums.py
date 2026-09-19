@@ -11,10 +11,15 @@ from enum import StrEnum, unique
 
 __all__ = [
     "AssetClass",
+    "AttentionBlocker",
     "DataQuality",
     "DifferenceClass",
+    "EligibilityStatus",
     "Exchange",
+    "ExecutionMode",
     "ExitScope",
+    "FamilyStance",
+    "FillOutcome",
     "InstrumentKind",
     "IntentState",
     "OptionType",
@@ -66,6 +71,45 @@ class InstrumentKind(StrEnum):
 class OptionType(StrEnum):
     CALL = "CALL"
     PUT = "PUT"
+
+
+@unique
+class ExecutionMode(StrEnum):
+    """Per-trade execution stage. Distinct from process Environment."""
+
+    SHADOW = "SHADOW"
+    PAPER = "PAPER"
+    CANARY_REAL = "CANARY_REAL"
+    LIMITED_REAL = "LIMITED_REAL"
+    NORMAL_REAL = "NORMAL_REAL"
+    SUSPENDED = "SUSPENDED"
+
+    @property
+    def touches_real_capital(self) -> bool:
+        return self in {
+            ExecutionMode.CANARY_REAL,
+            ExecutionMode.LIMITED_REAL,
+            ExecutionMode.NORMAL_REAL,
+        }
+
+
+@unique
+class FillOutcome(StrEnum):
+    """Conservative paper-fill calculator result. Not a broker fill."""
+
+    FILLED = "FILLED"
+    PARTIAL = "PARTIAL"
+    UNFILLED = "UNFILLED"
+    REJECTED = "REJECTED"
+
+
+@unique
+class EligibilityStatus(StrEnum):
+    """Deterministic promotion eligibility. Never deploys configuration."""
+
+    ELIGIBLE = "ELIGIBLE"
+    INELIGIBLE = "INELIGIBLE"
+    INSUFFICIENT_SAMPLE = "INSUFFICIENT_SAMPLE"
 
 
 @unique
@@ -297,6 +341,28 @@ class ProposalType(StrEnum):
     UNIVERSE_RANKING = "UNIVERSE_RANKING"
     PARAMETER_CANDIDATE = "PARAMETER_CANDIDATE"
     FAILURE_DIAGNOSIS = "FAILURE_DIAGNOSIS"
+    STRATEGY_FAMILY = "STRATEGY_FAMILY"
+
+
+@unique
+class FamilyStance(StrEnum):
+    """Proposed paper/shadow posture for one strategy family. Never a live switch."""
+
+    ENABLE = "ENABLE"
+    SHADOW = "SHADOW"
+    HALT = "HALT"
+
+
+@unique
+class AttentionBlocker(StrEnum):
+    """Why the advisory loop cannot proceed without an operator artifact."""
+
+    CHARGES_UNVERIFIED = "CHARGES_UNVERIFIED"
+    CAS_FEATURES_MISSING = "CAS_FEATURES_MISSING"
+    LIVE_CONFIG_UNVERIFIED = "LIVE_CONFIG_UNVERIFIED"
+    DATA_GAP = "DATA_GAP"
+    AGENT_DISABLED = "AGENT_DISABLED"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
 
 
 @unique
@@ -310,6 +376,7 @@ class Recommendation(StrEnum):
     NEUTRAL = "NEUTRAL"
     HIGH_VOLATILITY = "HIGH_VOLATILITY"
     LOW_VOLATILITY = "LOW_VOLATILITY"
+    REVISE = "REVISE"
 
 
 @unique
@@ -375,6 +442,7 @@ class ReasonCode(StrEnum):
     SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED"
     CONFIG_UNVERIFIED = "CONFIG_UNVERIFIED"
     DECISION_EXPIRED = "DECISION_EXPIRED"
+    SETUP_COOLDOWN = "SETUP_COOLDOWN"
     ILLEGAL_STATE_TRANSITION = "ILLEGAL_STATE_TRANSITION"
 
     # AI, all of which fall back to a deterministic baseline
@@ -384,3 +452,5 @@ class ReasonCode(StrEnum):
     AI_EVIDENCE_INSUFFICIENT = "AI_EVIDENCE_INSUFFICIENT"
     AI_ABSTAINED = "AI_ABSTAINED"
     AI_NOT_PROMOTED = "AI_NOT_PROMOTED"
+    AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"
+    OPERATOR_ATTENTION = "OPERATOR_ATTENTION"

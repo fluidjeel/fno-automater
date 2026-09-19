@@ -202,9 +202,7 @@ class TestStaleSnapshotBlocksEntry:
         )
         assert not stale.permits_new_exposure
 
-        report = ReadinessEvaluator().evaluate(
-            _ready_request(controls, feature=stale)
-        )
+        report = ReadinessEvaluator().evaluate(_ready_request(controls, feature=stale))
         assert not report.entries_permitted
         assert ReasonCode.DATA_STALE in report.reason_codes
         assert not report.levels[ReadinessLevel.ENTRY_READY]
@@ -277,9 +275,7 @@ class TestLiveSafe:
                 entries_blocked=False,
                 feature_snapshot=f.snapshot(),
                 safety_controls=controls,
-                open_positions=(
-                    f.position_state(state=TradeState.REPAIR_REQUIRED),
-                ),
+                open_positions=(f.position_state(state=TradeState.REPAIR_REQUIRED),),
             )
         )
         assert not report.levels[ReadinessLevel.LIVE_SAFE]

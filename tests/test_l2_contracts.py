@@ -78,9 +78,7 @@ class TestLayer2ContractsRoundTrip:
     def test_json_round_trip_preserves_every_field(self, instance: Any) -> None:
         assert instance.round_trip() == instance
 
-    @pytest.mark.parametrize(
-        "model", L2_VERSIONED_CONTRACTS, ids=lambda m: m.__name__
-    )
+    @pytest.mark.parametrize("model", L2_VERSIONED_CONTRACTS, ids=lambda m: m.__name__)
     def test_schema_version_is_declared(self, model: type[Any]) -> None:
         assert "schema_version" in model.model_fields
 

@@ -209,6 +209,8 @@ class CasMicrostructureStrategy:
     @staticmethod
     def _feature_reason(underlying: FeatureSnapshot) -> ReasonCode | None:
         """A declared feature that is absent is a gap, never a default."""
+        if underlying.feature_set_version != FEATURE_SET_VERSION:
+            return ReasonCode.DATA_INVALID
         if any(key not in underlying.features for key in REQUIRED_FEATURES):
             return ReasonCode.DATA_GAP
         if underlying.features[FEATURE_QUOTE_INSTABILITY] > MAX_QUOTE_INSTABILITY:
@@ -225,8 +227,8 @@ class CasMicrostructureStrategy:
         if derivatives.days_to_expiry < MIN_DAYS_TO_EXPIRY:
             return ReasonCode.CONTRACT_EXPIRED
         if (
-            derivatives.open_interest is not None
-            and derivatives.open_interest < MIN_OPEN_INTEREST
+            derivatives.open_interest is None
+            or derivatives.open_interest < MIN_OPEN_INTEREST
         ):
             return ReasonCode.DEPTH_INSUFFICIENT
         return self._spread_reason(option)
@@ -286,6 +288,8 @@ class CasMicrostructureStrategy:
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
             snapshot_id=ctx.underlying.snapshot_id,
+            experiment_id=ctx.experiment_id,
+            execution_mode=ctx.execution_mode,
             promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
