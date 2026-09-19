@@ -1,4 +1,8 @@
-"""Point-in-time NIFTY regime calculation from completed five-minute bars."""
+"""Point-in-time NIFTY regime calculation from completed five-minute bars.
+
+IV regime fields (`iv_percentile`, `iv_rv_ratio`) use India VIX history when
+provided; missing VIX is fail-visible via ReasonCode.DATA_GAP (no invented levels).
+"""
 
 from __future__ import annotations
 
@@ -39,11 +43,12 @@ def build_market_state(
     *,
     underlying: FeatureSnapshot,
     option_candidates: Sequence[FeatureSnapshot],
-    iv_history: Sequence[Decimal],
     event_risk: EventRiskState | None,
     macro: MacroAssessment | None,
     as_of: datetime,
     policy: IdentificationPolicy,
+    iv_history: Sequence[Decimal] = (),
+    vix_history: Sequence[Decimal] = (),
 ) -> MarketState:
     bars = _completed_bars(bar_event, as_of)
     sessions = {row[0].astimezone(_IST).date() for row in bars}
@@ -59,18 +64,29 @@ def build_market_state(
         reasons.append(ReasonCode.WARMUP_INCOMPLETE)
 
     values = _features(bars)
-    current_iv = _current_iv(option_candidates)
-    iv_percentile = (
-        _percentile(current_iv, iv_history)
-        if len(iv_history) >= policy.warmup.min_sessions
-        else None
-    )
+    # India VIX history is authoritative for iv_percentile / iv_rv_ratio.
+    # iv_history remains as a legacy alias for tests; vix_history wins when set.
+    vix_series = tuple(vix_history) if vix_history else tuple(iv_history)
+    current_vix = vix_series[-1] if vix_series else None
+    if current_vix is None:
+        # Spot VIX from option-chain payload when history has not warmed yet.
+        spot = underlying.features.get("india_vix")
+        if spot is not None and spot > 0:
+            current_vix = spot
+    min_sessions = policy.warmup.min_sessions
+    if len(vix_series) < min_sessions:
+        iv_percentile = None
+        reasons.append(ReasonCode.DATA_GAP)
+        warm = False
+    else:
+        iv_percentile = _percentile(current_vix, vix_series)
     rv = values.get("annualized_rv")
     iv_rv = None
-    if current_iv is not None and rv is not None and rv > 0:
-        iv_rv = _q(current_iv / rv)
+    if current_vix is not None and rv is not None and rv > 0:
+        iv_rv = _q(current_vix / rv)
     if iv_percentile is None or iv_rv is None:
-        reasons.append(ReasonCode.WARMUP_INCOMPLETE)
+        if ReasonCode.DATA_GAP not in reasons:
+            reasons.append(ReasonCode.DATA_GAP)
         warm = False
 
     trend_score = _trend_score(values)

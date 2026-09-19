@@ -55,6 +55,7 @@ class IdentificationPolicy(_Frozen):
     feature_version: str
     binding_version: str
     router_version: str
+    vix_symbol: str
     warmup: WarmupPolicy
     regime: RegimePolicy
     contracts: ContractPolicy

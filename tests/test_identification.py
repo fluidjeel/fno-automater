@@ -336,3 +336,49 @@ def test_router_pass_records_failed_gate_ids_without_fake_features() -> None:
     assert route.failed_gate_ids == ("min_score_gap",)
     assert all(item.setup_features is not None for item in opportunities)
 
+def test_vix_history_populates_iv_percentile_and_rv_ratio() -> None:
+    """Synthetic India VIX series fills iv_percentile and iv_rv_ratio."""
+    vix = tuple(Decimal(level) for level in range(10, 30))
+    state = build_market_state(
+        _bars(),
+        underlying=f.snapshot(
+            market=f.quote(last=f.price("23600"), close=f.price("23000"))
+        ),
+        option_candidates=(),
+        event_risk=None,
+        macro=None,
+        as_of=NOW,
+        policy=POLICY,
+        vix_history=vix,
+    )
+    assert state.iv_percentile is not None
+    assert state.iv_rv_ratio is not None
+    assert ReasonCode.DATA_GAP not in state.reason_codes
+
+
+def test_missing_vix_is_fail_visible() -> None:
+    """No VIX history leaves IV fields null and raises DATA_GAP."""
+    state = build_market_state(
+        _bars(),
+        underlying=f.snapshot(
+            market=f.quote(last=f.price("23600"), close=f.price("23000"))
+        ),
+        option_candidates=(),
+        event_risk=None,
+        macro=None,
+        as_of=NOW,
+        policy=POLICY,
+        vix_history=(),
+    )
+    assert state.iv_percentile is None
+    assert state.iv_rv_ratio is None
+    assert ReasonCode.DATA_GAP in state.reason_codes
+
+
+def test_resolve_vix_symbol_matches_instrument_master() -> None:
+    from trading.identification.vix import resolve_vix_symbol
+
+    root = Path("data/reference/instruments")
+    assert root.exists()
+    assert resolve_vix_symbol(POLICY, instrument_root=root) == "NSE:INDIAVIX-INDEX"
+

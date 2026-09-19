@@ -510,20 +510,20 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
                 snapshots[future_snap.contract.symbol] = future_snap
         if index_underlying is None:
             return (), snapshots
-        iv_history = _iv_history(
+        vix_history = _vix_history(
             snapshot_store,
-            symbol=index_underlying.contract.symbol,
+            symbol=identification.vix_symbol,
             now=now,
         )
         market_state = build_market_state(
             bar_event,
             underlying=index_underlying,
             option_candidates=option_candidates,
-            iv_history=iv_history,
             event_risk=event_risk,
             macro=macro,
             as_of=now,
             policy=identification,
+            vix_history=vix_history,
         )
         long_binding = bind_long_option(
             option_candidates, market=market_state, policy=identification
@@ -616,9 +616,10 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
     return build
 
 
-def _iv_history(
+def _vix_history(
     store: SnapshotStore, *, symbol: str, now: datetime
 ) -> tuple[Decimal, ...]:
+    """Daily India VIX closes from snapshot store (fail closed on empty)."""
     records = store.read(
         symbol=symbol,
         start=now - timedelta(days=45),
@@ -628,8 +629,14 @@ def _iv_history(
     for record in records:
         if record.snapshot is None:
             continue
-        iv = record.snapshot.features.get("atm_iv")
-        if iv is None or iv < 0:
+        snap = record.snapshot
+        level = snap.features.get("india_vix")
+        if level is None or level <= 0:
+            last = snap.market.last
+            close = snap.market.close
+            price = last if last is not None else close
+            level = None if price is None else price.value
+        if level is None or level <= 0:
             continue
-        daily[record.as_of.astimezone(_IST).date()] = iv
+        daily[record.as_of.astimezone(_IST).date()] = Decimal(level)
     return tuple(daily[key] for key in sorted(daily))

@@ -110,3 +110,10 @@ underlyings:
     underlying: NIFTY
     instrument_kind: INDEX
     asset_class: EQUITY_INDEX
+
+  - symbol: "NSE:INDIAVIX-INDEX"
+    feature_set_version: "india_vix_v1"
+    exchange: NSE
+    underlying: INDIAVIX
+    instrument_kind: INDEX
+    asset_class: EQUITY_INDEX
