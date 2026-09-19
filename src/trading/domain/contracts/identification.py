@@ -25,6 +25,7 @@ __all__ = [
     "ConfidenceKind",
     "MacroStatus",
     "MarketState",
+    "PaperTenor",
     "RouteDecision",
     "SetupFeatures",
     "StructureKind",
@@ -72,6 +73,14 @@ class StructureKind(StrEnum):
     CREDIT_SPREAD = "CREDIT_SPREAD"
     CAS_OPTION = "CAS_OPTION"
     COMMODITY_FUTURE = "COMMODITY_FUTURE"
+
+
+@unique
+class PaperTenor(StrEnum):
+    """Weekly versus positional holding horizon for a paper winner."""
+
+    WEEKLY = "WEEKLY"
+    POSITIONAL = "POSITIONAL"
 
 
 class MarketState(VersionedModel):
@@ -153,3 +162,5 @@ class RouteDecision(VersionedModel):
     failed_gate_ids: tuple[NonEmptyStr, ...] = ()
     winner_score: ExactDecimal | None = Field(default=None, ge=0, le=1)
     score_gap: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    forced_choice: StrictBool = False
+    paper_tenor: PaperTenor | None = None
