@@ -8,9 +8,11 @@ from pathlib import Path
 
 import tests.factories as f
 from trading.data.events import CanonicalMarketEvent
+from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.domain.contracts import (
     CandidateBinding,
     FeatureSnapshot,
+    InstrumentSpec,
     MarketState,
     SetupFeatures,
 )
@@ -21,7 +23,13 @@ from trading.domain.contracts.identification import (
     VolatilityState,
 )
 from trading.domain.contracts.snapshot import DerivativesContext, Greeks
-from trading.domain.enums import DataQuality, OptionType, ReasonCode
+from trading.domain.enums import (
+    DataQuality,
+    Exchange,
+    InstrumentKind,
+    OptionType,
+    ReasonCode,
+)
 from trading.identification import (
     BoundCandidates,
     IvBucket,
@@ -383,10 +391,30 @@ def test_missing_vix_is_fail_visible() -> None:
     assert ReasonCode.DATA_GAP in state.reason_codes
 
 
-def test_resolve_vix_symbol_matches_instrument_master() -> None:
-    root = Path("data/reference/instruments")
-    assert root.exists()
-    assert resolve_vix_symbol(POLICY, instrument_root=root) == "NSE:INDIAVIX-INDEX"
+def test_resolve_vix_symbol_matches_instrument_master(tmp_path: Path) -> None:
+    """Configured VIX ticker must exist in the instrument master; never invent one."""
+    store = InstrumentSpecStore(tmp_path)
+    store.write(
+        "NSE_CM",
+        (
+            InstrumentSpec(
+                trading_symbol=POLICY.vix_symbol,
+                exchange=Exchange.NSE,
+                segment="NSE_CM",
+                underlying="INDIAVIX",
+                instrument_kind=InstrumentKind.INDEX,
+                provider_token="1",
+                exchange_token=1,
+                lot_size=0,
+                tick_size=Decimal("0.01"),
+                price_precision=2,
+                trading_session="0915-1530",
+                source="test",
+                verified_at=date(2026, 9, 11),
+            ),
+        ),
+    )
+    assert resolve_vix_symbol(POLICY, instrument_root=tmp_path) == "NSE:INDIAVIX-INDEX"
 
 
 def test_allow_table_matrix_for_regime_buckets() -> None:
