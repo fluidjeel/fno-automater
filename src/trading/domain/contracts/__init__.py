@@ -1,5 +1,11 @@
 """Typed, versioned contracts. Semantics and authority are fixed here."""
 
+from trading.domain.contracts.advice import (
+    AdviceStance,
+    RankedStructure,
+    StructureAdvice,
+    StructureChoice,
+)
 from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
@@ -16,12 +22,12 @@ from trading.domain.contracts.common import (
 )
 from trading.domain.contracts.evaluation import (
     CohortPackage,
-    JudgmentReport,
-    JudgmentSignalResult,
     CohortScorecard,
     CohortSignal,
     ExperimentDefinition,
     FillSimulation,
+    JudgmentReport,
+    JudgmentSignalResult,
     PromotionEligibilityResult,
     ReasonCount,
 )
@@ -44,6 +50,10 @@ from trading.domain.contracts.intent import (
     IntentLeg,
     TradeIntent,
 )
+from trading.domain.contracts.lifecycle import (
+    PositionLifecycleRecord,
+    PositionReviewRecord,
+)
 from trading.domain.contracts.order import OrderCommand, OrderEvent, OrderIdentity
 from trading.domain.contracts.order_plan import (
     OrderPlan,
@@ -61,12 +71,6 @@ from trading.domain.contracts.position import (
     ExitPolicy,
     PositionLegState,
     PositionState,
-)
-from trading.domain.contracts.advice import (
-    AdviceStance,
-    RankedStructure,
-    StructureAdvice,
-    StructureChoice,
 )
 from trading.domain.contracts.proposal import (
     AIProposal,
@@ -97,16 +101,11 @@ __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
-    "RankedStructure",
-    "StructureAdvice",
-    "StructureChoice",
     "ApprovedLeg",
     "AttentionRequest",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
-    "JudgmentReport",
-    "JudgmentSignalResult",
     "CohortScorecard",
     "CohortSignal",
     "ConfidenceKind",
@@ -127,6 +126,8 @@ __all__ = [
     "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
+    "JudgmentReport",
+    "JudgmentSignalResult",
     "Lineage",
     "MacroStatus",
     "MarketQuote",
@@ -142,10 +143,13 @@ __all__ = [
     "PortfolioSnapshot",
     "PortfolioView",
     "PositionLegState",
+    "PositionLifecycleRecord",
     "PositionRecord",
+    "PositionReviewRecord",
     "PositionState",
     "PromotionEligibilityResult",
     "ProtectiveOrderStub",
+    "RankedStructure",
     "ReasonCount",
     "ReconciliationEvent",
     "ReconciliationResult",
@@ -158,6 +162,8 @@ __all__ = [
     "SizingRequest",
     "SnapshotTimes",
     "StrictModel",
+    "StructureAdvice",
+    "StructureChoice",
     "StructureKind",
     "TradeIntent",
     "TrendState",

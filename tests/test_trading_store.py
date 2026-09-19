@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -21,7 +21,7 @@ from trading.domain.contracts import (
     ReconciliationEvent,
     RiskDecision,
 )
-from trading.domain.enums import ReservationState, SystemState
+from trading.domain.enums import Exchange, ReservationState, ReviewSlotId, SystemState
 from trading.storage.trading_store import (
     AppendSpec,
     DuplicateIdempotencyKeyError,
@@ -221,6 +221,31 @@ class TestSupportingTables:
         store.upsert_reservation(released)
         assert store.get_reservation("RES-1") == released
 
+    def test_position_lifecycle_upsert_is_idempotent_by_trade_id(
+        self, store: TradingStore
+    ) -> None:
+        """Invariant 9: restart reads the latest lifecycle snapshot, not duplicates."""
+        first = f.position_lifecycle_record()
+        store.upsert_position_lifecycle(first, event_id="PLC-1")
+        tightened = first.model_copy(
+            update={
+                "position": first.position.model_copy(update={"as_of": LATER}),
+                "as_of": LATER,
+            }
+        )
+        store.upsert_position_lifecycle(tightened, event_id="PLC-2")
+        loaded = store.get_position_lifecycle(first.trade_id)
+        assert loaded is not None
+        assert loaded.as_of == LATER
+        listed = store.list_position_lifecycle()
+        assert len(listed) == 1
+        events = [
+            event
+            for event in store.read_events()
+            if event.event_type is TradingEventType.POSITION_LIFECYCLE
+        ]
+        assert len(events) == 2
+
     def test_system_state_round_trip(self, store: TradingStore) -> None:
         """System readiness persists across sessions."""
         assert store.get_system_state() == (SystemState.STARTING, None)
@@ -230,6 +255,27 @@ class TestSupportingTables:
             updated_at=NOW,
         )
         assert store.get_system_state() == (SystemState.RECOVERY, "REC-BOOT-1")
+
+    def test_review_slot_run_is_idempotent(self, store: TradingStore) -> None:
+        """Duplicate invocation of the same slot+day inserts once."""
+        first = store.record_review_slot_run(
+            slot_id=ReviewSlotId.NSE_MORNING,
+            session_date=date(2026, 9, 14),
+            venue=Exchange.NSE,
+            as_of=NOW,
+        )
+        second = store.record_review_slot_run(
+            slot_id=ReviewSlotId.NSE_MORNING,
+            session_date=date(2026, 9, 14),
+            venue=Exchange.NSE,
+            as_of=LATER,
+        )
+        assert first is True
+        assert second is False
+        assert store.has_review_slot_run(ReviewSlotId.NSE_MORNING, date(2026, 9, 14))
+        assert not store.has_review_slot_run(
+            ReviewSlotId.NSE_AFTERNOON, date(2026, 9, 14)
+        )
 
     def test_deserialize_preserves_contract_fields(self, store: TradingStore) -> None:
         """Recovered payloads round-trip through their contract types."""

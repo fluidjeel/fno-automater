@@ -20,6 +20,7 @@ __all__ = [
     "ExitScope",
     "FamilyStance",
     "FillOutcome",
+    "HoldingStyle",
     "InstrumentKind",
     "IntentState",
     "OptionType",
@@ -32,6 +33,8 @@ __all__ = [
     "Recommendation",
     "ReconciliationTrigger",
     "ReservationState",
+    "ReviewAction",
+    "ReviewSlotId",
     "RiskAction",
     "Severity",
     "Side",
@@ -225,6 +228,51 @@ class ExitScope(StrEnum):
     LEG_PRICE = "LEG_PRICE"
     UNDERLYING = "UNDERLYING"
     SPREAD_VALUE = "SPREAD_VALUE"
+
+
+@unique
+class HoldingStyle(StrEnum):
+    """Whether an open trade is held overnight or closed the same session."""
+
+    POSITIONAL = "POSITIONAL"
+    INTRADAY = "INTRADAY"
+
+
+@unique
+class ReviewAction(StrEnum):
+    """Deterministic twice-daily positional review outcome. Never an AI rewrite."""
+
+    HOLD = "HOLD"
+    TIGHTEN_STOP = "TIGHTEN_STOP"
+    PARTIAL_EXIT = "PARTIAL_EXIT"
+    FULL_EXIT = "FULL_EXIT"
+    PROPOSE_HEDGE = "PROPOSE_HEDGE"
+    PROPOSE_ROLL = "PROPOSE_ROLL"
+
+    @property
+    def is_proposal(self) -> bool:
+        """HEDGE/ROLL are new trades; they never auto-submit."""
+        return self in {ReviewAction.PROPOSE_HEDGE, ReviewAction.PROPOSE_ROLL}
+
+    @property
+    def submits_exit(self) -> bool:
+        return self in {ReviewAction.PARTIAL_EXIT, ReviewAction.FULL_EXIT}
+
+
+@unique
+class ReviewSlotId(StrEnum):
+    """Named review slots. NSE is the required path; MCX is config-ready."""
+
+    NSE_MORNING = "NSE_MORNING"
+    NSE_AFTERNOON = "NSE_AFTERNOON"
+    MCX_MORNING = "MCX_MORNING"
+    MCX_AFTERNOON = "MCX_AFTERNOON"
+
+    @property
+    def venue(self) -> Exchange:
+        if self in {ReviewSlotId.MCX_MORNING, ReviewSlotId.MCX_AFTERNOON}:
+            return Exchange.MCX
+        return Exchange.NSE
 
 
 @unique
@@ -444,6 +492,11 @@ class ReasonCode(StrEnum):
     DECISION_EXPIRED = "DECISION_EXPIRED"
     SETUP_COOLDOWN = "SETUP_COOLDOWN"
     ILLEGAL_STATE_TRANSITION = "ILLEGAL_STATE_TRANSITION"
+
+    # Positional review
+    REVIEW_DUPLICATE_SLOT = "REVIEW_DUPLICATE_SLOT"
+    REVIEW_PROPOSAL_REQUIRES_L2 = "REVIEW_PROPOSAL_REQUIRES_L2"
+    STOP_WIDEN_REJECTED = "STOP_WIDEN_REJECTED"
 
     # AI, all of which fall back to a deterministic baseline
     AI_UNAVAILABLE = "AI_UNAVAILABLE"

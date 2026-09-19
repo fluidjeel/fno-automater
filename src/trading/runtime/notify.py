@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from trading.domain.contracts.lifecycle import PositionReviewRecord
 from trading.domain.contracts.order import OrderEvent
 from trading.domain.enums import OrderState, RiskAction
-from trading.runtime.paper_runner import PaperCycleResult, PaperStrategyOutcome
+from trading.runtime.paper_runner import (
+    LifecycleAlert,
+    PaperCycleResult,
+    PaperStrategyOutcome,
+)
 
-__all__ = ["format_eod_report", "format_post_trade"]
+__all__ = [
+    "format_eod_report",
+    "format_lifecycle_alert",
+    "format_post_trade",
+    "format_review_decision",
+]
 
 
 def format_post_trade(
@@ -59,6 +69,35 @@ def format_eod_report(
     else:
         lines.append("net expectancy is unknown: charges_per_lot.verified_at is unset.")
     return "\n".join(lines)
+
+
+def format_lifecycle_alert(alert: LifecycleAlert) -> str:
+    """Advisory recovery alert. Not a promotion or flatten instruction."""
+    return (
+        f"PAPER recovery {alert.reason_code.value} trade={alert.trade_id} "
+        f"{alert.detail}"
+    )
+
+
+def format_review_decision(review: PositionReviewRecord) -> str:
+    """Advisory positional-review line. Not a broker-stop claim or promotion."""
+    stop = (
+        f" software_stop={review.tightened_stop_price.value}"
+        if review.tightened_stop_price is not None
+        else ""
+    )
+    qty = (
+        f" qty={review.exit_quantity_contracts}"
+        if review.exit_quantity_contracts is not None
+        else ""
+    )
+    submitted = " submitted" if review.submitted else " not-submitted"
+    return (
+        f"PAPER review {review.slot_id.value} {review.action.value} "
+        f"trade={review.trade_id} {review.reason_code.value} "
+        f"{review.detail}{stop}{qty}{submitted} "
+        f"(software-only protection; not broker-resident)"
+    )
 
 
 def _order_line(strategy_id: str, experiment_id: str, event: OrderEvent) -> str:

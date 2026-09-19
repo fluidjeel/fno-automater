@@ -26,10 +26,10 @@ from trading.domain.primitives import Currency, Money
 
 __all__ = [
     "EligibilityThresholds",
-    "JudgmentThresholds",
     "EvaluationConfig",
     "EvaluationConfigError",
     "FillModelConfig",
+    "JudgmentThresholds",
     "LoadedEvaluationConfig",
     "assert_execution_mode_allowed",
     "load_evaluation_config",
@@ -93,7 +93,6 @@ class JudgmentThresholds(StrictModel):
 
 
 class EvaluationConfig(VersionedModel):
-
     """Versioned Layer 4 evaluation policy."""
 
     policy_version: NonEmptyStr

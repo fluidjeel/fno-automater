@@ -438,6 +438,7 @@ def run_slice2(
         trade_id,
         exit_features["long"],
         intent,
+        leg_snapshots=exit_features,
     )
     assert evaluation.kind is ExitKind.STOP
     services.trade_manager.apply_exit_evaluation(trade_id, evaluation)

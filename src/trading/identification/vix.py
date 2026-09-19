@@ -1,4 +1,5 @@
 """Helpers for India VIX resolution."""
+
 from __future__ import annotations
 
 from pathlib import Path

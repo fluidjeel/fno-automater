@@ -65,6 +65,8 @@ variant needs a neutral-regime rule that is not yet specified.
 | L4-AGENT-001 | DONE | Bounded weekly tool loop, `STRATEGY_FAMILY` proposal, cost/iteration caps | Timeout, injection prefix, budget abort → `ABSTAIN`; `enabled: false` |
 | PAPER-003 | DONE | Versioned paper evidence store and cohort report | EOD writes `CohortPackage` JSON under `data/paper/cohorts/`; `trading evaluate scorecard|eligibility` remains read-only |
 | PAPER-004 | DONE | Isolation, stale/event-risk, restart idempotency, Telegram advisory copy | `tests/test_paper_session.py`; Fyers txn adapter still refused |
+| PAPER-006 | DONE | PAPER positional lifecycle persistence and restart recovery | `tests/test_paper_lifecycle.py`; software-only exits, 60s poll, no broker-resident PAPER stops |
+| PAPER-007 | DONE | Twice-daily PAPER positional review (10:30/14:30 IST) against persisted frozen policy | `tests/test_paper_review.py`; HOLD/TIGHTEN/PARTIAL/FULL; hedge/roll proposal-only; missed-slot restart |
 | PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
 | CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 
@@ -102,6 +104,11 @@ L4-HUMAN-001 operator attention and L4-AGENT-001 weekly loop done.
 CAS-001 Layer 1 cas-microstructure-v1 producer done; live CAS cohort is next.
 PAPER-003 versioned paper evidence store done.
 PAPER-004 isolation/stale/event-risk/restart drills done.
+PAPER-006 PAPER positional lifecycle persistence/recovery done.
+  Debit spreads keep frozen LEG_PRICE on the monitor long; not STRATEGY_PNL.
+PAPER-007 twice-daily PAPER positional review (NSE 10:30/14:30 IST) done.
+  Missed slots replay once before EOD; HEDGE/ROLL are L2 proposals (not auto-submitted).
+  Protective coverage remains software-only between 60s polls.
 Identification stack (market state, binders, router) wired into paper session.
 L4 weekly agent DeepSeek OpenAI-compat client landed; config/agent.yaml enabled:false.
 Next: PAPER-005 after verified charges_per_lot + live paper evidence; Monday live CAS depth window; optional trading agent weekly --trial.
