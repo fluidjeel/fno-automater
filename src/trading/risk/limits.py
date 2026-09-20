@@ -8,6 +8,7 @@ from decimal import ROUND_FLOOR, Decimal
 from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import RiskLimits
 from trading.domain.contracts.common import ExposureSnapshot
+from trading.domain.contracts.exposure import ExposureReport
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.portfolio import PortfolioSnapshot, UnderlyingExposure
 from trading.domain.contracts.sizing import SizingLimits
@@ -17,6 +18,7 @@ from trading.domain.primitives import Money, Rounding
 __all__ = [
     "LimitEvaluation",
     "build_sizing_limits",
+    "evaluate_exposure_limits",
     "evaluate_pre_trade_limits",
     "floor_divide_money",
     "open_trade_slots",
@@ -195,3 +197,65 @@ def project_post_trade_exposure(
         realized_pnl_today=exposure.realized_pnl_today,
         unrealized_pnl=exposure.unrealized_pnl,
     )
+
+def evaluate_exposure_limits(
+    report: ExposureReport,
+    policy: RiskPolicyConfig,
+) -> LimitEvaluation:
+    """Hard ADESK-A4 / PART 6 portfolio caps. Pure arithmetic; no LLM."""
+    reasons: list[ReasonCode] = []
+    applied: list[str] = []
+    equity = report.equity
+
+    if abs(report.net_delta) > Decimal(policy.net_delta_limit):
+        reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+        applied.append("net_delta_limit")
+
+    if abs(report.net_vega) > policy.net_vega_limit:
+        reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+        applied.append("net_vega_limit")
+
+    if equity.amount > 0:
+        expiry_cap = (equity * policy.expiry_day_notional_fraction).quantized(
+            Rounding.FLOOR
+        )
+        for bucket in report.notional_by_expiry:
+            if bucket.key == "NONE":
+                continue
+            if bucket.notional.amount > expiry_cap.amount:
+                reasons.append(ReasonCode.CONCENTRATION_LIMIT)
+                applied.append("expiry_day_notional_fraction")
+                break
+
+        event_cap = (equity * policy.single_event_exposure_fraction).quantized(
+            Rounding.FLOOR
+        )
+        for overlap in report.event_overlaps:
+            if overlap.notional.amount > event_cap.amount:
+                reasons.append(ReasonCode.CONCENTRATION_LIMIT)
+                applied.append("single_event_exposure_fraction")
+                break
+
+    if report.directional_agreement_ratio > policy.directional_agreement_max:
+        reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+        applied.append("directional_agreement_max")
+
+    if reasons:
+        # Deduplicate reason codes while preserving order.
+        seen: set[ReasonCode] = set()
+        unique_reasons: list[ReasonCode] = []
+        for code in reasons:
+            if code not in seen:
+                seen.add(code)
+                unique_reasons.append(code)
+        return LimitEvaluation(
+            passed=False,
+            reason_codes=tuple(unique_reasons),
+            applied_limits=tuple(dict.fromkeys(applied)),
+        )
+    return LimitEvaluation(
+        passed=True,
+        reason_codes=(ReasonCode.OK,),
+        applied_limits=(),
+    )
+

@@ -9,10 +9,6 @@ from trading.domain.contracts.advice import (
 from trading.domain.contracts.agent_decision import AgentDecision
 from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.authority import AuthorityGrant
-from trading.domain.contracts.trade_thesis import (
-    InvalidationCondition,
-    TradeThesis,
-)
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
     ContractError,
@@ -37,6 +33,12 @@ from trading.domain.contracts.evaluation import (
     JudgmentSignalResult,
     PromotionEligibilityResult,
     ReasonCount,
+)
+from trading.domain.contracts.exposure import (
+    CorrelationPair,
+    EventOverlap,
+    ExposureReport,
+    NotionalBucket,
 )
 from trading.domain.contracts.identification import (
     CandidateBinding,
@@ -118,6 +120,10 @@ from trading.domain.contracts.snapshot import (
     MarketQuote,
     SnapshotTimes,
 )
+from trading.domain.contracts.trade_thesis import (
+    InvalidationCondition,
+    TradeThesis,
+)
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -127,8 +133,6 @@ __all__ = [
     "ApprovedLeg",
     "AttentionRequest",
     "AuthorityGrant",
-    "InvalidationCondition",
-    "TradeThesis",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
@@ -137,14 +141,17 @@ __all__ = [
     "ConfidenceKind",
     "ContractError",
     "ContractRef",
+    "CorrelationPair",
     "DataQualityReport",
     "DerivativesContext",
     "EntryFreezeRecord",
     "EntryPolicy",
+    "EventOverlap",
     "EvidenceRef",
     "ExitPolicy",
     "ExitTemplate",
     "ExperimentDefinition",
+    "ExposureReport",
     "ExposureSnapshot",
     "FamilyAction",
     "FeatureSnapshot",
@@ -153,6 +160,7 @@ __all__ = [
     "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
+    "InvalidationCondition",
     "JudgmentReport",
     "JudgmentSignalResult",
     "LegQuoteRef",
@@ -161,6 +169,7 @@ __all__ = [
     "MarketQuote",
     "MarketState",
     "ModelVersions",
+    "NotionalBucket",
     "OrderCommand",
     "OrderEvent",
     "OrderIdentity",
@@ -205,6 +214,7 @@ __all__ = [
     "StructureChoice",
     "StructureKind",
     "TradeIntent",
+    "TradeThesis",
     "TrendState",
     "UnderlyingExposure",
     "VersionedModel",

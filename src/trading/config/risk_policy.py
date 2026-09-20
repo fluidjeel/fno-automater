@@ -71,6 +71,11 @@ class RiskPolicyConfig(VersionedModel):
     slippage_buffer_fraction: ExactDecimal = Field(ge=0, le=Decimal("0.1"))
     charges_per_lot: MoneyAmount
     net_delta_limit: StrictInt = Field(gt=0)
+    # ADESK-A4 portfolio exposure caps (PART 6).
+    net_vega_limit: ExactDecimal = Field(gt=0)
+    expiry_day_notional_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
+    directional_agreement_max: ExactDecimal = Field(gt=0, le=Decimal("1"))
+    single_event_exposure_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
     decision_ttl_seconds: StrictInt = Field(gt=0)
     # Defaults to False so a policy that omits the key refuses stop-bounded
     # futures shorts: the fail-closed direction for a new risk class.

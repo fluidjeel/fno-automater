@@ -14,6 +14,7 @@ from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, RiskPolicyConfig
 from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
+from trading.domain.contracts.exposure import ExposureReport
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.paper_data import PaperDataRequirements
@@ -34,6 +35,7 @@ from trading.domain.primitives import Lots, LotSize, Money, Percent
 from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
 from trading.risk.limits import (
     build_sizing_limits,
+    evaluate_exposure_limits,
     evaluate_pre_trade_limits,
     project_post_trade_exposure,
 )
@@ -101,6 +103,8 @@ class RiskGatewayRequest:
     event_risk_state: EventRiskState | None = None
     paper_requirements: PaperDataRequirements | None = None
     broker_state_ok: bool = True
+    # ADESK-A4: when supplied, PART 6 hard caps run after pre-trade limits.
+    exposure_report: ExposureReport | None = None
 
 
 class _SnapshotAudit(TypedDict):
@@ -134,7 +138,7 @@ class RiskGateway:
         self._iron_condor_sizer = IronCondorSizingEngine()
         self._commodity_future_sizer = CommodityFutureSizingEngine()
 
-    def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:
+    def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:  # noqa: PLR0915
         """Return an approval with reserved capital or a machine-readable rejection."""
         now = self._clock.now_utc()
         intent = request.intent
@@ -337,6 +341,20 @@ class RiskGateway:
                 decided_at=now,
                 audit=audit,
             )
+
+        if request.exposure_report is not None:
+            exposure_check = evaluate_exposure_limits(
+                request.exposure_report, policy
+            )
+            if not exposure_check.passed:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=exposure_check.reason_codes,
+                    applied_limits=exposure_check.applied_limits,
+                    decided_at=now,
+                    audit=audit,
+                )
 
         decision_id = self._ids.new_id("DEC")
         reservation = self._reservations.try_reserve(
