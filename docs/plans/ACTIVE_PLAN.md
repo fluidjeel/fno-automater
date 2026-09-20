@@ -5,7 +5,7 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B8 DONE; next: B9).**
+Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B9 DONE; next: B10).**
 
 ## Goal
 
@@ -63,7 +63,8 @@ There is **no** `ai/finance.py`. Do not invent one; migrate `advise.py`.
 - ADESK-B6 DONE: PORTFOLIO SHADOW + SAME_THESIS_DRIVER recall.
 - ADESK-B7 DONE: MacroCalendar + adversarial headline suite.
 - ADESK-B8 DONE: TradeAttribution + dual-entry journal hash.
-- Next READY: **ADESK-B9** FRAGILITY.
+- ADESK-B9 DONE: FRAGILITY StressReport narration (ADVISORY).
+- Next READY: **ADESK-B10** agent scorecard.
 
 ## ADESK-B1 scope (landed)
 
