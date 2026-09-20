@@ -28,6 +28,8 @@ __all__ = [
     "OrderState",
     "OrderType",
     "ProposalType",
+    "QuoteMonitorSource",
+    "ProtectionStatus",
     "ReadinessLevel",
     "ReasonCode",
     "Recommendation",
@@ -402,6 +404,25 @@ class FamilyStance(StrEnum):
 
 
 @unique
+class ProtectionStatus(StrEnum):
+    """Software protection monitor state for an open PAPER position."""
+
+    ACTIVE = "ACTIVE"
+    DEGRADED = "DEGRADED"
+    STOPPED = "STOPPED"
+
+
+@unique
+class QuoteMonitorSource(StrEnum):
+    """Where a protection-loop quote observation originated."""
+
+    WEBSOCKET = "WEBSOCKET"
+    REST = "REST"
+    SCRIPTED = "SCRIPTED"
+    ENTRY_POLL = "ENTRY_POLL"
+
+
+@unique
 class AttentionBlocker(StrEnum):
     """Why the advisory loop cannot proceed without an operator artifact."""
 
@@ -411,6 +432,7 @@ class AttentionBlocker(StrEnum):
     DATA_GAP = "DATA_GAP"
     AGENT_DISABLED = "AGENT_DISABLED"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    PROTECTION_DEGRADED = "PROTECTION_DEGRADED"
 
 
 @unique

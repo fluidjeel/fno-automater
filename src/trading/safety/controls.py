@@ -75,6 +75,7 @@ class _SafetyState:
     global_halt: bool = False
     daily_loss_kill_switch: bool = False
     halted_strategies: frozenset[str] = frozenset()
+    protection_degraded: bool = False
 
 
 class SafetyControls:
@@ -115,6 +116,7 @@ class SafetyControls:
                 global_halt=state.global_halt,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -139,6 +141,7 @@ class SafetyControls:
                 global_halt=state.global_halt,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -164,6 +167,7 @@ class SafetyControls:
                 global_halt=state.global_halt,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies | {strategy_id},
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -189,6 +193,7 @@ class SafetyControls:
                 global_halt=state.global_halt,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies - {strategy_id},
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -213,6 +218,7 @@ class SafetyControls:
                 global_halt=True,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -237,6 +243,7 @@ class SafetyControls:
                 global_halt=False,
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -267,6 +274,7 @@ class SafetyControls:
                 global_halt=state.global_halt,
                 daily_loss_kill_switch=True,
                 halted_strategies=state.halted_strategies,
+                protection_degraded=state.protection_degraded,
             ),
         )
 
@@ -284,9 +292,61 @@ class SafetyControls:
             reasons.append(ReasonCode.KILL_SWITCH_ACTIVE)
         if self._state.entry_frozen:
             reasons.append(ReasonCode.ENTRY_FROZEN)
+        if self._state.protection_degraded:
+            reasons.append(ReasonCode.PROTECTION_DEGRADED)
         if strategy_id is not None and strategy_id in self._state.halted_strategies:
             reasons.append(ReasonCode.STRATEGY_HALTED)
         return tuple(dict.fromkeys(reasons))
+
+    def degrade_protection(
+        self,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Block new entries when software protection monitoring is unreliable."""
+        return self._apply(
+            kind=SafetyControlKind.ENTRY_FREEZE,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.PROTECTION_DEGRADED,),
+            mutate=lambda state: state.__class__(
+                entry_frozen=state.entry_frozen,
+                global_halt=state.global_halt,
+                daily_loss_kill_switch=state.daily_loss_kill_switch,
+                halted_strategies=state.halted_strategies,
+                protection_degraded=True,
+            ),
+        )
+
+    def restore_protection(
+        self,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Clear protection degradation after fresh quotes return."""
+        return self._apply(
+            kind=SafetyControlKind.ENTRY_FREEZE_RELEASE,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.OK,),
+            mutate=lambda state: state.__class__(
+                entry_frozen=state.entry_frozen,
+                global_halt=state.global_halt,
+                daily_loss_kill_switch=state.daily_loss_kill_switch,
+                halted_strategies=state.halted_strategies,
+                protection_degraded=False,
+            ),
+        )
 
     def _apply(
         self,

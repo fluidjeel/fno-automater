@@ -49,6 +49,8 @@ from trading.domain.primitives import Currency, Money, Price
 from trading.runtime.isolation import PaperIsolationError, assert_paper_isolation
 from trading.runtime.paper_runner import PaperRunner, PaperStrategyRequest
 from trading.runtime.paper_session import PaperSession, load_paper_session_config
+from trading.runtime.protection import build_protection_coordinator
+from trading.runtime.rest_quote_monitor import RestQuoteMonitor
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment, MacroBias
 from trading.trade.exits import monitor_leg, tighten_exit_policy
@@ -326,6 +328,15 @@ class SimWorld:
             execution_mode=ExecutionMode.PAPER,
         )
         self._pending_obs: Observation | None = None
+        rest = RestQuoteMonitor(clock, lambda _symbols: {})
+        self.coordinator = build_protection_coordinator(
+            runner=self.runner,
+            clock=clock,
+            config=session_cfg.protection,
+            repo_root=ROOT,
+            rest_fetch=rest,
+            ws=None,
+        )
         self.session = PaperSession(
             runner=self.runner,
             clock=clock,
@@ -343,9 +354,11 @@ class SimWorld:
             cohort_dir=workdir / "cohorts",
             broker_state_path=self.broker_path,
             sleeper=lambda _s: None,
+            coordinator=self.coordinator,
         )
         self.isolation_ok, self.isolation_detail = isolation_holds(self.broker)
         self.runner.recover_lifecycle()
+        self.coordinator.start()
         self.restart_meta: dict[str, object] | None = None
 
     def overlay_exit_template(
@@ -490,6 +503,30 @@ class SimWorld:
             self.session.tick()
             self._persist()
         return self._trace_row(obs, reviews_before, orders_before)
+
+    def apply_quote(self, obs: Observation) -> TraceRow:
+        """Feed a protection-loop quote without running the entry poll."""
+        self.clock.set(obs.at)
+        snaps = self.snapshots_for(obs, obs.at)
+        self.coordinator.seed_snapshots(snaps)
+        quote_map = {
+            symbol: snap.market
+            for symbol, snap in snaps.items()
+            if symbol != "NIFTY"
+        }
+        quote_result = self.coordinator.publish_quotes(
+            quote_map,
+            received_at=obs.at,
+        )
+        reviews_before = self._review_ids()
+        orders_before = len(self.broker.list_orders())
+        self._persist()
+        row = self._trace_row(obs, reviews_before, orders_before)
+        if quote_result is not None and quote_result.detection_latency_ms is not None:
+            row.extras["stop_detection_latency_ms"] = (
+                quote_result.detection_latency_ms
+            )
+        return row
 
     def _review_ids(self) -> frozenset[str]:
         ids: set[str] = set()

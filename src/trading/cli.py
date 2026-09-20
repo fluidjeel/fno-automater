@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -69,7 +70,8 @@ from trading.ops.attention import (
     scan_attention_blockers,
     telegram_attention_sink,
 )
-from trading.runtime.paper_session import run_paper_session
+from trading.runtime.paper_session import load_paper_session_config, run_paper_session
+from trading.runtime.watchdog import run_paper_watchdog
 
 __all__ = ["main"]
 
@@ -540,6 +542,16 @@ def _cmd_paper_session(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_paper_watchdog(_args: argparse.Namespace) -> int:
+    """Check protection heartbeat freshness for open PAPER positions."""
+    repo = _repo_root()
+    session_cfg = load_paper_session_config(repo / "config" / "paper_session.yaml")
+    return run_paper_watchdog(
+        repo,
+        store_path=repo / session_cfg.store_path,
+    )
+
+
 def _cmd_paper_isolate_check(args: argparse.Namespace) -> int:
     """Refuse to proceed unless the process config is PAPER."""
     try:
@@ -993,6 +1005,40 @@ def _trial_news_port(root: Path) -> StaticNewsPort:
     )
 
 
+def _cmd_dashboard(args: argparse.Namespace) -> int:
+    """Serve the read-only terminal or emit one machine-readable snapshot."""
+    from trading.dashboard import (
+        DashboardConfig,
+        build_dashboard_snapshot,
+        serve_dashboard,
+    )
+
+    root = _repo_root()
+    if args.dashboard_cmd == "snapshot":
+        print(json.dumps(build_dashboard_snapshot(root, source=args.source)))
+        return 0
+    oracle_host = args.oracle_host or os.environ.get(
+        "TRADING_DASHBOARD_ORACLE_HOST", ""
+    )
+    key_raw = args.ssh_key or os.environ.get("TRADING_DASHBOARD_SSH_KEY", "")
+    oracle_root = args.oracle_root or os.environ.get(
+        "TRADING_DASHBOARD_ORACLE_ROOT", "~/fno-automated"
+    )
+    serve_dashboard(
+        DashboardConfig(
+            repo_root=root,
+            bind_host=args.bind,
+            port=args.port,
+            oracle_host=oracle_host,
+            ssh_key=Path(key_raw).expanduser() if key_raw else None,
+            oracle_root=oracle_root,
+            refresh_seconds=args.refresh_seconds,
+            open_browser=not args.no_browser,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trading")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1166,6 +1212,11 @@ def main(argv: list[str] | None = None) -> int:
         help="run one cycle then exit (no sleep loop)",
     )
     session.set_defaults(func=_cmd_paper_session)
+    watchdog = paper_sub.add_parser(
+        "watchdog",
+        help="verify protection heartbeat freshness for open PAPER positions",
+    )
+    watchdog.set_defaults(func=_cmd_paper_watchdog)
 
     attention = sub.add_parser("attention", help="operator attention requests")
     attention_sub = attention.add_subparsers(dest="attention_cmd", required=True)
@@ -1226,6 +1277,33 @@ def main(argv: list[str] | None = None) -> int:
     advise.add_argument("--resolution", default="D")
     advise.add_argument("--out-dir", default="data/paper/agent_runs")
     advise.set_defaults(func=_cmd_agent_advise)
+
+    dashboard = sub.add_parser("dashboard", help="read-only local Oracle desk terminal")
+    dashboard_sub = dashboard.add_subparsers(dest="dashboard_cmd", required=True)
+    dashboard_snapshot = dashboard_sub.add_parser(
+        "snapshot", help="print one redacted telemetry snapshot as JSON"
+    )
+    dashboard_snapshot.add_argument(
+        "--source", default="local", help="snapshot source label"
+    )
+    dashboard_snapshot.set_defaults(func=_cmd_dashboard)
+    dashboard_serve = dashboard_sub.add_parser(
+        "serve", help="serve the local dashboard, optionally probing Oracle over SSH"
+    )
+    dashboard_serve.add_argument("--bind", default="127.0.0.1")
+    dashboard_serve.add_argument("--port", type=int, default=8765)
+    dashboard_serve.add_argument(
+        "--oracle-host", default="", help="SSH target, for example ubuntu@host"
+    )
+    dashboard_serve.add_argument(
+        "--ssh-key", default="", help="private key used only by the local SSH client"
+    )
+    dashboard_serve.add_argument(
+        "--oracle-root", default="", help="repository path on Oracle"
+    )
+    dashboard_serve.add_argument("--refresh-seconds", type=int, default=5)
+    dashboard_serve.add_argument("--no-browser", action="store_true")
+    dashboard_serve.set_defaults(func=_cmd_dashboard)
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)

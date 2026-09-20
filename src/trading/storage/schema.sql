@@ -57,3 +57,11 @@ CREATE TABLE IF NOT EXISTS entry_freeze (
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS protection_state (
+    trade_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+

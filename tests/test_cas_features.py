@@ -14,6 +14,7 @@ from trading.data.cas_features import (
     CAS_FEATURE_SET_VERSION,
     compute_cas_features,
     select_prior_depth,
+    merge_cas_features_into_snapshot,
     with_cas_feature_set,
 )
 from trading.data.config import UnderlyingConfig

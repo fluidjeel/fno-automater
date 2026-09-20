@@ -24,6 +24,7 @@ __all__ = [
     "cas_snapshot_version",
     "compute_cas_features",
     "select_prior_depth",
+    "merge_cas_features_into_snapshot",
     "with_cas_feature_set",
 ]
 
@@ -221,3 +222,18 @@ def _level_size(levels: Any) -> Decimal | None:
     if not isinstance(first, dict):
         return None
     return _qty(first.get("volume"))
+
+def merge_cas_features_into_snapshot(
+    snapshot: FeatureSnapshot,
+    events: Sequence[CanonicalMarketEvent],
+) -> FeatureSnapshot:
+    """Merge computed CAS keys from depth history into an underlying snapshot."""
+    cas = compute_cas_features(events)
+    if not cas:
+        return snapshot
+    merged = {**snapshot.features, **cas}
+    version = cas_snapshot_version(merged) or snapshot.feature_set_version
+    return snapshot.model_copy(
+        update={"features": merged, "feature_set_version": version}
+    )
+

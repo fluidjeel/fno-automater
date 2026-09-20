@@ -1,0 +1,45 @@
+# Paper-only CAS depth collector. Isolated from execution storage.
+schema_version: "1"
+
+# Feature flags — do not enable live broker execution from this path.
+cas_data_mode: DEPTH_ONLY
+cas_live_orders: false
+
+storage:
+  root: data/cas_depth
+  raw_subdir: raw
+  normalized_subdir: normalized
+  snapshot_subdir: snapshots
+  metrics_subdir: metrics
+  sample_every_n: 10
+
+symbols:
+  index_or_future: "NSE:NIFTY50-INDEX"
+  options: []  # resolved at runtime from option chain when empty
+  stock_option_underlying: "NSE:RELIANCE-EQ"
+  mcx:
+    - "MCX:GOLDM"
+    - "MCX:CRUDEOILM"
+  max_options: 2
+
+collector:
+  queue_maxsize: 5000
+  batch_size: 100
+  batch_flush_seconds: 2.0
+  max_stale_seconds: 5.0
+  reconnect_attempts: 5
+  reconnect_backoff_seconds: 2.0
+  tbt_channel: "1"
+  data_ws_channel: 11
+  snapshot_publish_interval_seconds: 1.0
+  max_snapshots_per_symbol: 100
+
+resource_limits:
+  max_memory_mb: 512
+  restart_on_memory_exceeded: true
+  restart_max_attempts: 3
+  restart_backoff_seconds: 5.0
+
+benchmark:
+  duration_minutes: 30
+  report_subdir: benchmarks

@@ -1,0 +1,11 @@
+{
+  "http_status": 401,
+  "entitled": false,
+  "socket_url": null,
+  "message": "unauthorised access token",
+  "body": {
+    "code": -99,
+    "message": "unauthorised access token",
+    "s": "error"
+  }
+}

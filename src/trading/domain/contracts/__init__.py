@@ -89,6 +89,12 @@ from trading.domain.contracts.proposal import (
     ModelVersions,
     ParameterProposal,
 )
+from trading.domain.contracts.protection import (
+    ProtectionHeartbeat,
+    ProtectionObservation,
+    ProtectionStateRecord,
+    SessionProtectionState,
+)
 from trading.domain.contracts.reconciliation import ReconciliationEvent
 from trading.domain.contracts.reconciliation_result import ReconciliationResult
 from trading.domain.contracts.reservation import CapitalReservation
@@ -167,6 +173,9 @@ __all__ = [
     "PositionReviewRecord",
     "PositionState",
     "PromotionEligibilityResult",
+    "ProtectionHeartbeat",
+    "ProtectionObservation",
+    "ProtectionStateRecord",
     "ProtectiveOrderStub",
     "RankedStructure",
     "ReasonCount",
@@ -174,6 +183,7 @@ __all__ = [
     "ReconciliationResult",
     "RiskDecision",
     "RouteDecision",
+    "SessionProtectionState",
     "SetupFeatures",
     "SizingDecision",
     "SizingLegResult",

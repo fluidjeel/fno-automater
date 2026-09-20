@@ -23,8 +23,10 @@ from trading.domain.contracts import (
     EntryFreezeRecord,
     OrderEvent,
     PositionLifecycleRecord,
+    ProtectionStateRecord,
     ReconciliationEvent,
     RiskDecision,
+    SessionProtectionState,
     VersionedModel,
 )
 from trading.domain.enums import (
@@ -428,6 +430,67 @@ class TradingStore:
             PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
             for row in rows
         )
+
+    def upsert_protection_state(self, record: ProtectionStateRecord) -> None:
+        """Persist per-trade protection monitor state."""
+        stamp = _utc_iso(record.as_of)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO protection_state "
+                "(trade_id, status, payload, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(trade_id) DO UPDATE SET "
+                "status = excluded.status, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    record.trade_id,
+                    record.status.value,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+
+    def get_protection_state(self, trade_id: str) -> ProtectionStateRecord | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM protection_state WHERE trade_id = ?",
+                (trade_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return ProtectionStateRecord.model_validate(json.loads(row["payload"]))
+
+    def list_protection_states(self) -> tuple[ProtectionStateRecord, ...]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM protection_state ORDER BY trade_id ASC"
+            ).fetchall()
+        return tuple(
+            ProtectionStateRecord.model_validate(json.loads(row["payload"]))
+            for row in rows
+        )
+
+    def upsert_session_protection(self, state: SessionProtectionState) -> None:
+        stamp = _utc_iso(state.as_of)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO session_protection (singleton, payload, updated_at) "
+                "VALUES (1, ?, ?) "
+                "ON CONFLICT(singleton) DO UPDATE SET "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (state.model_dump_json(), stamp),
+            )
+
+    def get_session_protection(self) -> SessionProtectionState | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM session_protection WHERE singleton = 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return SessionProtectionState.model_validate(json.loads(row["payload"]))
 
     def record_review_slot_run(
         self,

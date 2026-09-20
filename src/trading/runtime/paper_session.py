@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -528,6 +529,44 @@ def _with_option_depth(
         )
         by_symbol[item.contract.symbol] = item.model_copy(update={"market": quote})
     return tuple(by_symbol[item.contract.symbol] for item in candidates)
+
+
+def _quotes_for_symbols(
+    capture: RawMarketCapture, symbols: tuple[str, ...]
+) -> dict[str, MarketQuote]:
+    """REST protection quotes when only trading symbols are known."""
+    if not symbols:
+        return {}
+    event = normalize_fyers_quotes(
+        capture,
+        symbol=symbols[0],
+        normalization_version="1",
+        raw_ref="paper://protection",
+    )
+    rows = event.payload.get("quotes", [])
+    if not isinstance(rows, list):
+        return {}
+    tick = TickSize.of(Decimal("0.05"))
+    quotes: dict[str, MarketQuote] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = row.get("symbol")
+        if symbol not in symbols:
+            continue
+        last = row.get("lp", row.get("ltp"))
+        bid = row.get("bid")
+        ask = row.get("ask")
+        if last is None:
+            continue
+        quote = MarketQuote(
+            last=Price.snap(str(last), tick),
+            bid=Price.snap(str(bid), tick) if bid else None,
+            ask=Price.snap(str(ask), tick) if ask else None,
+        )
+        if quote.bid is not None and quote.ask is not None:
+            quotes[str(symbol)] = quote
+    return quotes
 
 
 def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
