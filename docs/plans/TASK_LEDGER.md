@@ -1,6 +1,6 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 12
+ACTIVE_PLAN_VERSION: 13
 
 Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D1 (Stage D plan APPROVED; C1..C4 DONE).
 
@@ -196,7 +196,8 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
-- 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.
+- 2026-09-20: Token-efficiency pass: ACTIVE_PLAN digest v13 (Stage C recipes dropped; Stage D D1 remains READY). CURRENT_STATE reconciled with C1–C4 DONE.
+- 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest was v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.
 - 2026-09-20: ADESK-C4 DONE — terminal-policy cost vs flatten in R+INR (`analytics/terminal_policy_cost.py`, `tests/test_terminal_policy_cost.py`); CLI `evaluate terminal-cost`.
 - 2026-09-20: ADESK-C3 DONE — continuous enforcement + one-way revert.
 - 2026-09-20: ADESK-C2 DONE — freeze TerminalPolicy into ExitPolicy; restart preserve.
