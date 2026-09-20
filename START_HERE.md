@@ -12,6 +12,7 @@ trading system.
 | `docs/context/` | Canonical architecture, safety and specification set |
 | `docs/plans/` | Active implementation plan and task ledger |
 | `docs/research/` | Superseded source documents, kept for provenance only |
+| `docs/prompts/archive/` | Historical Cursor paste packs; do not paste into Agent |
 | `.cursor/rules/` | Agent rules: core plus file-scoped specifications |
 | `src/trading/` | Implementation |
 | `config/` | Versioned, validated configuration |

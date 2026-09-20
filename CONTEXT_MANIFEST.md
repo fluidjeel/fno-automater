@@ -45,6 +45,10 @@ originating chat transcript. They are provenance, not specification. The
 Service/Agent topology, AI-in-the-loop execution, CAS lottery trade, Redis as
 position authority and hard-coded exchange thresholds found there are rejected.
 
+`docs/prompts/archive/CURSOR_JUDGMENT_9_OF_10.md` is a historical paste pack
+(P0.1–P2.1). Do not paste it into Cursor. Current work uses `ACTIVE_PLAN.md`,
+`TASK_LEDGER.md`, and `.cursor/rules/`.
+
 ## Implementation memory
 
 - `docs/plans/ACTIVE_PLAN.md`: compact approved digest used after planning.

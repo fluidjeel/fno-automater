@@ -1,93 +1,17 @@
 # Autonomous Trading System - Core Rules
-# Canonical guidance lives in .cursor/rules/. This file is the legacy-compatible
-# mirror of .cursor/rules/00-core.mdc for tools that read only .cursorrules.
+#
+# Legacy stub for tools that only read `.cursorrules`. Canonical copy:
+# `.cursor/rules/00-core.mdc` (alwaysApply). Do not treat this file as a
+# second rule set.
 
-## AUTHORITY
+## Authority
 
-`docs/context/` is canonical. It defines a four-layer architecture in which
-deterministic code owns every live decision.
+`docs/context/` is canonical. Deterministic code owns every live decision.
 
-`docs/research/` holds three superseded design documents. They are historical
-input, kept for provenance. Never implement from them. In particular the
-Service-1/2/3 plus Agent-1/2/3/4 topology, the AI-in-the-loop order-flow
-detector, the CAS naked-call lottery trade, Redis as position authority, and
-every hard-coded SEBI threshold in those documents are rejected designs.
+`docs/research/` is superseded history (provenance only). Never implement from
+it.
 
-## NON-NEGOTIABLE INVARIANTS
+File-scoped agent rules live under `.cursor/rules/` (`10-` through `70-`, plus
+`01-planning-context.mdc` and `05-sq.mdc`).
 
-1. Deterministic versioned code exclusively controls live signals, sizing,
-   allocation, risk, order creation, stops, exits and flattening.
-2. AI is asynchronous and proposal-only. It never calls a broker, mutates live
-   state or config, or bypasses a gate. No LLM call in any live decision path.
-3. Strategies emit `TradeIntent` only. They never construct broker orders.
-4. Layer 2 recalculates every financially authoritative value at decision time.
-5. Broker orders, fills, positions and funds are external truth.
-6. Unknown, stale, inconsistent or invalid critical state blocks new exposure.
-   Existing positions keep deterministic protection regardless.
-7. One logical order uses one stable idempotency key across every retry. A
-   timeout never proves a fill. Unknown outcome blocks replacement until
-   reconciliation.
-8. Every open position maps to active deterministic protective coverage. Stops
-   only tighten.
-
-Full list: `docs/context/SAFETY_INVARIANTS.md`. Any change touching an
-invariant requires an explicit failure test.
-
-## LAYER OWNERSHIP
-
-| Layer | Owns | Never |
-| --- | --- | --- |
-| 1 Data | Feeds, quality state, features, IV/Greeks, replay | Trade selection, sizing |
-| 2 Risk | Portfolio, sizing, limits, OMS, exits, reconciliation | Setup detection |
-| 3 Strategy | Setup logic, requested risk, exit template | Final qty, broker calls |
-| 4 Analytics | Evaluation, proposals, backtest, shadow | Any live mutation |
-
-```text
-External data -> L1 FeatureSnapshot -> L3 TradeIntent
-              -> L2 RiskDecision/OMS -> Broker
-Broker events -> L2 reconciliation/portfolio/trade management
-Audit evidence -> L4 evaluation -> proposal -> promotion gate
-```
-
-No arrow goes directly from AI or a strategy to the broker.
-
-Domain and calculation code imports no infrastructure. Side effects live behind
-typed ports. Modular monolith first.
-
-## CONFIGURATION, NOT CONSTANTS
-
-Lot sizes, order-rate caps, margin composition rules, expiry penalties, loss
-caps, position limits and freshness thresholds are validated configuration in
-`config/`. Never a literal in domain logic. Never a remembered value: verify
-against current official documentation before use. Unverified config fails
-closed rather than defaulting.
-
-## MONEY AND TIME
-
-`Decimal` or integer minor units for anything financial; `float` never reaches
-an accounting or order-validation path. All timestamps timezone-aware, stored
-UTC, with exchange-local session logic. Time and IDs are injected via `Clock`
-and `IdFactory`, never read from ambient global state.
-
-## STORAGE
-
-Order, trade and configuration state requires a transactional store with
-durable commits. Polars for tabular calculation; DuckDB and Parquet for
-research and replay. JSONL is an append-only audit export, not the
-authoritative record. Redis only where coordination or caching is justified,
-and never as position authority.
-
-## TESTING
-
-Test boundaries and failure paths, not the happy path. Tests run offline and
-deterministically: no network, no wall clock, no ambient randomness. Name the
-safety invariant a test covers in its docstring.
-
-## STYLE
-
-Python 3.12, type hints mandatory, `mypy --strict` clean, `ruff` formatted.
-Docstrings one line. Comments explain why, not what. Patch minimally; never
-reformat untouched code. Reuse existing patterns instead of rewriting them.
-
-`SQ` in a user prompt means Short and Quick: answer first, few lines, minimal
-lookups. See `.cursor/rules/05-sq.mdc`.
+`SQ` in a user prompt: `.cursor/rules/05-sq.mdc`.

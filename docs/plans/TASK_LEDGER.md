@@ -1,6 +1,6 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 12
+ACTIVE_PLAN_VERSION: 13
 
 Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-E1 (Stage E plan APPROVED; D1–D6 DONE).
 
@@ -196,14 +196,15 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
-- 2026-09-20: Stage E `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-E1 only; E2+ BLOCKED until E1 DONE.
+- 2026-09-20: Token-efficiency pass: ACTIVE_PLAN digest v13 (finished-slice recipes dropped; Stage E E1 READY). CURRENT_STATE reconciled; `.cursorrules` stub; judgment prompt archived.
+- 2026-09-20: Stage E `ACTIVE_PLAN.md` APPROVED. Unlocks ADESK-E1 only; E2+ BLOCKED until E1 DONE.
 - 2026-09-20: ADESK-D6 DONE — Phase-2 deterministic upscale envelope (`phase2_sizing.py`, `tests/test_phase2_upscale.py`); Stage D complete.
 - 2026-09-20: ADESK-D5 DONE — ENTRY SHADOW/ADVISORY for veto/reduce; BOUNDED only config-promotion (`tests/test_entry_authority.py`).
 - 2026-09-20: ADESK-D4 DONE — POSITION SHADOW/ADVISORY only for tighten/partial (`tests/test_position_authority.py`).
 - 2026-09-20: ADESK-D3 DONE — PORTFOLIO BOUNDED config-promotion only (`BOUNDED_ACTIONS`, `maybe_log_portfolio_config_promotion`, `tests/test_portfolio_bounded.py`).
 - 2026-09-20: ADESK-D2 DONE — FRAGILITY/POSTTRADE grant-backed ADVISORY (`tests/test_advisory_promotion.py`); demote OBSERVE without grant.
 - 2026-09-20: ADESK-D1 DONE — ConfidenceBucket + Phase-1 downscale map (`confidence_sizing.py`, `tests/test_confidence_sizing.py`); agent `size_multiplier` le=1; unlocks D2.
-- 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.
+- 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest was v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.
 - 2026-09-20: ADESK-C4 DONE — terminal-policy cost vs flatten in R+INR (`analytics/terminal_policy_cost.py`, `tests/test_terminal_policy_cost.py`); CLI `evaluate terminal-cost`.
 - 2026-09-20: ADESK-C3 DONE — continuous enforcement + one-way revert.
 - 2026-09-20: ADESK-C2 DONE — freeze TerminalPolicy into ExitPolicy; restart preserve.
