@@ -5,7 +5,7 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage C — terminal policy (C1–C4).**
+Milestone: **Agent Desk Stage C — terminal policy (COMPLETE: C1..C4 DONE).**
 
 ## Goal
 
@@ -52,7 +52,7 @@ logged/scored; the deterministic default applies when ineligible or disabled.
 ## Progress
 
 - Stage A / B complete on `main` (tip includes B10 `478227b`).
-- ADESK-C1..C3 DONE. **ADESK-C4 READY**.
+- ADESK-C1..C4 DONE. Stage C complete.
 
 ## ADESK-C1 (DONE)
 

@@ -1,10 +1,12 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage C — terminal policy (C1–C3 DONE; C4 READY)
+CURRENT_MILESTONE: Agent Desk Stage C — terminal policy (COMPLETE C1..C4)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
+
+- Stage C (ADESK-C1..C4) complete on main; terminal path has zero LLM.
 
 - Deterministic code owns live signals, risk, orders and protection.
 - Weekly AI may propose strategy-family stances only; never sizes, stops, or submits.

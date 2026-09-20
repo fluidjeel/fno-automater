@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C4 (ADESK-C3 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage C ADESK-C1..C4 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -51,7 +51,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C4 (AD
 | ADESK-C1 | DONE | TerminalPolicy contracts + eligibility gate | Stage C plan |
 | ADESK-C2 | DONE | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
 | ADESK-C3 | DONE | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
-| ADESK-C4 | READY | Terminal-policy cost accounting in scorecard | ADESK-C3 |
+| ADESK-C4 | DONE | Terminal-policy cost accounting in scorecard | ADESK-C3 |
 
 ## Agent Desk Stage D — authority ladder (BLOCKED until Stage B/C; C1 = config-promotion only)
 
@@ -196,6 +196,9 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: ADESK-C4 DONE — terminal-policy cost vs flatten in R+INR (`analytics/terminal_policy_cost.py`, `tests/test_terminal_policy_cost.py`); CLI `evaluate terminal-cost`.
+- 2026-09-20: ADESK-C3 DONE — continuous enforcement + one-way revert.
+- 2026-09-20: ADESK-C2 DONE — freeze TerminalPolicy into ExitPolicy; restart preserve.
 - 2026-09-20: ADESK-C1 DONE — TerminalPolicy contracts + PART 5.2 eligibility gate; matrix tests; unlocks C2.
 - 2026-09-20: Stage C `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-C1 only; C2+ BLOCKED until C1 DONE.
 - 2026-09-20: Stage B `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-B1 only; B2+ remain BLOCKED until B1 DONE.

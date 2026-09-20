@@ -597,6 +597,36 @@ def _cmd_evaluate_reviews(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _cmd_evaluate_terminal_cost(args: argparse.Namespace) -> int:
+    """Print ADESK-C4 terminal-policy cost report (R + INR) as JSON."""
+    from decimal import Decimal
+
+    from trading.analytics.terminal_policy_cost import (
+        TerminalPolicyOutcomeRow,
+        build_terminal_policy_cost_report,
+    )
+    from trading.domain.enums import TerminalPolicyKind
+    from trading.domain.primitives import Currency, Money
+
+    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    rows: list[TerminalPolicyOutcomeRow] = []
+    if args.fixture:
+        rows.append(
+            TerminalPolicyOutcomeRow(
+                trade_id="fixture-run",
+                policy_kind=TerminalPolicyKind.RUN_TO_EXPIRY_DEFINED_RISK,
+                held_through_flatten_dte=True,
+                round_trip_charges_inr=Money.of(Decimal("50"), Currency.INR),
+                round_trip_spread_inr=Money.of(Decimal("30"), Currency.INR),
+                r_unit_inr=Money.of(Decimal("1000"), Currency.INR),
+            )
+        )
+    report = build_terminal_policy_cost_report(tuple(rows), as_of=as_of)
+    print(report.model_dump_json(indent=2))
+    return 0
+
+
 def _cmd_evaluate_desk(args: argparse.Namespace) -> int:
     """Print PART 14 agent desk scorecard as JSON (ADESK-B10)."""
     from trading.analytics.agent_scorecard import build_agent_scorecard
@@ -1378,6 +1408,19 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC evaluation instant (default: now)",
     )
     desk_parser.set_defaults(func=_cmd_evaluate_desk)
+
+
+    p_tc = evaluate_sub.add_parser(
+        "terminal-cost",
+        help="ADESK-C4 terminal-policy cost saved vs flatten (R + INR)",
+    )
+    p_tc.add_argument("--as-of", default=None, help="UTC timestamp")
+    p_tc.add_argument(
+        "--fixture",
+        action="store_true",
+        help="emit a deterministic sample row (smoke / demo)",
+    )
+    p_tc.set_defaults(func=_cmd_evaluate_terminal_cost)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)

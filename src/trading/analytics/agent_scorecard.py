@@ -144,6 +144,8 @@ class AgentDeskScorecard(VersionedModel):
     macro_classification_accuracy: ExactDecimal | None = None
     stress_coverage: ExactDecimal | None = None
     attribution_stability: ExactDecimal | None = None
+    terminal_policy_cost_saved_r: ExactDecimal | None = None
+    terminal_policy_cost_saved_inr: ExactDecimal | None = None
     detail: NonEmptyStr = "stub-ready"
 
 
@@ -154,6 +156,8 @@ def build_agent_scorecard(
     as_of: datetime,
     gap_count: int = 0,
     fetch_count: int = 0,
+    terminal_policy_cost_saved_r: Decimal | None = None,
+    terminal_policy_cost_saved_inr: Decimal | None = None,
 ) -> AgentDeskScorecard:
     """Compute universal PART 14 metrics; role-specific fields default None/0."""
     scoped = tuple(d for d in decisions if d.role is role)
@@ -183,5 +187,15 @@ def build_agent_scorecard(
         macro_classification_accuracy=Decimal("0") if role is DeskRole.MACRO else None,
         stress_coverage=Decimal("0") if role is DeskRole.FRAGILITY else None,
         attribution_stability=Decimal("0") if role is DeskRole.POSTTRADE else None,
+        terminal_policy_cost_saved_r=(
+            Decimal("0")
+            if terminal_policy_cost_saved_r is None and role is DeskRole.POSITION
+            else terminal_policy_cost_saved_r
+        ),
+        terminal_policy_cost_saved_inr=(
+            Decimal("0")
+            if terminal_policy_cost_saved_inr is None and role is DeskRole.POSITION
+            else terminal_policy_cost_saved_inr
+        ),
     )
     return card
