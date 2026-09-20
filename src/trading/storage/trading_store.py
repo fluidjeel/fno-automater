@@ -20,6 +20,7 @@ from typing import Any
 
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
+    AuthorityGrant,
     CapitalReservation,
     EntryFreezeRecord,
     OrderEvent,
@@ -32,6 +33,7 @@ from trading.domain.contracts import (
 )
 from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.enums import (
+    DeskRole,
     Exchange,
     ReasonCode,
     ReservationState,
@@ -602,6 +604,67 @@ class TradingStore:
                     stamp,
                 ),
             )
+
+    def insert_authority_grant(self, grant: AuthorityGrant) -> None:
+        """Persist an operator-signed grant. Re-validates C1 at write time.
+
+        Agents must never call this. There is no update or renew path.
+        """
+        verified = AuthorityGrant.model_validate(grant.model_dump(mode="json"))
+        stamp_granted = _utc_iso(verified.granted_at)
+        stamp_until = _utc_iso(verified.valid_until)
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO authority_grants ("
+                "grant_id, role, mode, model_id, prompt_version, policy_version, "
+                "environment, granted_at, valid_until, signed_by, checksum, payload"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    verified.grant_id,
+                    verified.role.value,
+                    verified.mode.value,
+                    verified.model_id,
+                    verified.prompt_version,
+                    verified.policy_version,
+                    verified.environment.value,
+                    stamp_granted,
+                    stamp_until,
+                    verified.signed_by,
+                    verified.checksum,
+                    verified.model_dump_json(),
+                ),
+            )
+
+    def get_authority_grant(self, grant_id: str) -> AuthorityGrant | None:
+        """Load one grant by id, or None when absent."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM authority_grants WHERE grant_id = ?",
+                (grant_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AuthorityGrant.model_validate(json.loads(row["payload"]))
+
+    def list_authority_grants(
+        self, *, role: DeskRole | None = None
+    ) -> tuple[AuthorityGrant, ...]:
+        """Return grants, newest first, optionally filtered by role."""
+        with self._lock:
+            if role is None:
+                rows = self._conn.execute(
+                    "SELECT payload FROM authority_grants "
+                    "ORDER BY granted_at DESC, grant_id ASC"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT payload FROM authority_grants WHERE role = ? "
+                    "ORDER BY granted_at DESC, grant_id ASC",
+                    (role.value,),
+                ).fetchall()
+        return tuple(
+            AuthorityGrant.model_validate(json.loads(row["payload"])) for row in rows
+        )
 
     def get_entry_freeze(self) -> EntryFreezeRecord | None:
         """Load the persisted entry-freeze latch, if any."""

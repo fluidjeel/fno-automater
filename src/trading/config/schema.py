@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from enum import StrEnum, unique
 from typing import Generic, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -30,7 +29,7 @@ from trading.domain.contracts.base import (
     StrictModel,
     VersionedModel,
 )
-from trading.domain.enums import Exchange, ReasonCode
+from trading.domain.enums import Environment, Exchange, ReasonCode
 
 __all__ = [
     "AppConfig",
@@ -46,6 +45,9 @@ __all__ = [
 ]
 
 T = TypeVar("T", int, Decimal, str)
+
+# Re-exported so existing `trading.config.schema.Environment` imports keep working.
+# The enum lives in domain so AuthorityGrant does not import configuration.
 
 
 class ConfigNotVerifiedError(RuntimeError):
@@ -66,17 +68,6 @@ class ConfigNotVerifiedError(RuntimeError):
         )
         self.path = path
         self.source = source
-
-
-@unique
-class Environment(StrEnum):
-    BACKTEST = "BACKTEST"
-    PAPER = "PAPER"
-    LIVE = "LIVE"
-
-    @property
-    def touches_real_capital(self) -> bool:
-        return self is Environment.LIVE
 
 
 class VerifiedValue(StrictModel, Generic[T]):

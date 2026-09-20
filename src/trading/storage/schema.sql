@@ -75,3 +75,22 @@ CREATE TABLE IF NOT EXISTS agent_budget_ledger (
     PRIMARY KEY (year_month, role)
 );
 
+-- Operator-signed Agent Desk grants. Agents never write this table.
+CREATE TABLE IF NOT EXISTS authority_grants (
+    grant_id TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    valid_until TEXT NOT NULL,
+    signed_by TEXT NOT NULL,
+    checksum TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_authority_grants_role_valid
+    ON authority_grants (role, valid_until);
+

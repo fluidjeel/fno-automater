@@ -7,6 +7,7 @@ from trading.domain.contracts.advice import (
     StructureChoice,
 )
 from trading.domain.contracts.attention import AttentionRequest
+from trading.domain.contracts.authority import AuthorityGrant
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
     ContractError,
@@ -119,6 +120,7 @@ __all__ = [
     "AdviceStance",
     "ApprovedLeg",
     "AttentionRequest",
+    "AuthorityGrant",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
