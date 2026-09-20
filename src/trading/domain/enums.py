@@ -27,6 +27,7 @@ __all__ = [
     "ExitScope",
     "FamilyStance",
     "FillOutcome",
+    "GateOutcome",
     "HoldingStyle",
     "InstrumentKind",
     "IntentState",
@@ -573,6 +574,15 @@ _FAMILY_STANCE_BY_ACTION: dict[AgentAction, FamilyStance] = {
     AgentAction.PROPOSE_FAMILY_SHADOW: FamilyStance.SHADOW,
     AgentAction.PROPOSE_FAMILY_HALT: FamilyStance.HALT,
 }
+
+
+@unique
+class GateOutcome(StrEnum):
+    """What the deterministic gate did with a logged desk output."""
+
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    SHADOW_ONLY = "SHADOW_ONLY"
 
 
 @unique

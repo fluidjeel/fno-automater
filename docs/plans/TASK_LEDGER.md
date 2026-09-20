@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A2 (ADESK-A1 DONE; C1 BOUNDED live-path reject proven).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A3 (ADESK-A2 DONE; DecisionLog round-trip + role/version queries).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -20,8 +20,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A2 (AD
 | ID | Status | Outcome | Scope / verification | Dependency |
 | --- | --- | --- | --- | --- |
 | ADESK-A1 | DONE | Authority enums + `AuthorityGrant` + demotion | `tests/test_authority_grant.py`: no/expired/triple-mismatch → OBSERVE (never an error); BOUNDED + TIGHTEN_STOP/VETO_ENTRY rejected at validate/write; PAPER BOUNDED config-promotion accepted; store round-trip | All ADESK-A0.*; C1 |
-| ADESK-A2 | READY | `agent_decisions` + `DecisionLog` | Round-trip; query by role + model/prompt/policy versions | ADESK-A1 |
-| ADESK-A3 | BLOCKED | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
+| ADESK-A2 | DONE | `agent_decisions` + `DecisionLog` | `tests/test_agent_decision.py`: round-trip write/read; query by role; query by model/prompt/policy triple; duplicate `decision_id` fails closed; JSON/tuple fields survive | ADESK-A1 |
+| ADESK-A3 | READY | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
 | ADESK-A4 | BLOCKED | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml`; gateway reject matrix | ADESK-A1 |
 | ADESK-A5 | BLOCKED | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on budget breach | ADESK-A1 |
 | ADESK-A6 | BLOCKED | `analytics/bias.py` battery | All 11 metrics on fixture cohort | ADESK-A2 |
@@ -189,5 +189,7 @@ Agent Desk Stage 0 complete (ADESK-A0.1..A0.6): dashboard landed, budget ledger,
 model lineage, agent Brier, charges/docs aligned.
 ADESK-A1 DONE: AuthorityGrant + C1 demotion (BOUNDED = config-promotion only;
 live-path actions rejected at write; missing/expired/mismatched grant → OBSERVE).
-Next: ADESK-A2 DecisionLog; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
+ADESK-A2 DONE: AgentDecision + agent_decisions + DecisionLog (round-trip, role
+and version-triple queries, duplicate decision_id fails closed).
+Next: ADESK-A3 TradeThesis + invalidation; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```
