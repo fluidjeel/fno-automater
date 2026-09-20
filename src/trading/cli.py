@@ -564,6 +564,33 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def _cmd_evaluate_research_weekly(args: argparse.Namespace) -> int:
+    """Build and persist RESEARCH weekly artifact (ADESK-E1)."""
+    from trading.analytics.research_weekly import (
+        build_research_weekly,
+        persist_research_weekly,
+    )
+    from trading.storage.trading_store import TradingStore
+
+    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    out_dir = Path(args.out_dir)
+    store = TradingStore.open(Path(args.store), clock=WallClock())
+    try:
+        records = list(store.list_improvement_records())
+        report = build_research_weekly(
+            records,
+            as_of=as_of,
+            cohort_id=args.cohort_id or f"store:{Path(args.store).name}",
+        )
+        written = persist_research_weekly(report, out_dir=out_dir)
+        print(report.model_dump_json(indent=2))
+        print(f"# wrote {written}", file=sys.stderr)
+    finally:
+        store.close()
+    return 0
+
+
 def _cmd_evaluate_reviews(args: argparse.Namespace) -> int:
     """Print review-level precision/capture JSON (ADESK-B4)."""
     from trading.analytics.judgment import evaluate_reviews, label_review
@@ -1372,6 +1399,33 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC instant for STALE marking (optional)",
     )
     improvements_parser.set_defaults(func=_cmd_evaluate_improvements)
+
+    research_weekly_parser = evaluate_sub.add_parser(
+        "research-weekly",
+        help="ADESK-E1 RESEARCH weekly: clusters, bias summary, playbook proposals",
+    )
+    research_weekly_parser.add_argument(
+        "--store",
+        default="data/trading.sqlite",
+        help="path to TradingStore sqlite file",
+    )
+    research_weekly_parser.add_argument(
+        "--out-dir",
+        default="data/agent_runs",
+        help="directory for weekly JSON artifact",
+    )
+    research_weekly_parser.add_argument(
+        "--as-of",
+        default="",
+        help="UTC evaluation instant (default: now)",
+    )
+    research_weekly_parser.add_argument(
+        "--cohort-id",
+        default="",
+        help="optional cohort label for bias/report identity",
+    )
+    research_weekly_parser.set_defaults(func=_cmd_evaluate_research_weekly)
+
 
     reviews_parser = evaluate_sub.add_parser(
         "reviews",

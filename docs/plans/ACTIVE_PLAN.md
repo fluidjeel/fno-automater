@@ -43,6 +43,9 @@ summary, structured playbook-edit proposals; persist under `data/agent_runs/`;
 focused tests. Out of scope: auto-implement edits, new promotion ladder (E2),
 monthly meta-report (E3), OMS/broker/live BOUNDED.
 
+- Stages A–D complete on `main`.
+- ADESK-E1 DONE. **ADESK-E2 READY**. E3 BLOCKED until E2 DONE.
+
 ## Acceptance
 
 E1–E3 DONE with focused tests + ledger/CURRENT_STATE; zero live-path LLM;

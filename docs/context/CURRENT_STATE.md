@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage E — research loop (plan APPROVED; E1 READY)
+CURRENT_MILESTONE: Agent Desk Stage E — research loop (E1 DONE; E2 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -12,8 +12,9 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - Stages 0/A/B/C/D DONE on `main`. Stage C terminal path has zero LLM.
 - Stage D under C1: live-path desks SHADOW/ADVISORY; Phase-2 upscale is
   deterministic envelope only (`size_multiplier` le=1 from agents).
-- Stage E plan APPROVED (2026-09-20); unlocks **ADESK-E1 only**; research /
-  advisory only under C1.
+- Stage E plan APPROVED (2026-09-20); research/advisory only under C1.
+- **ADESK-E1 DONE**: RESEARCH weekly runner, playbook proposals, bias summary,
+  JSON under `data/agent_runs/`, CLI `evaluate research-weekly`.
 
 ## Implemented (Agent Desk)
 
@@ -36,8 +37,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Next action
 
-Implement **ADESK-E1** only: RESEARCH weekly runner (cluster improvements + bias
-battery + playbook-edit proposals). E2+ stay BLOCKED. Monday ops outside this slice.
+Next: **ADESK-E2** — Hypothesis → ExperimentProposal into existing SHADOW
+promotion ladder. E3 stays BLOCKED until E2 DONE.
 
 ## Update rules
 

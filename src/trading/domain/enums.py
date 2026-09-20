@@ -51,6 +51,8 @@ __all__ = [
     "OrderPlanState",
     "OrderState",
     "OrderType",
+    "PlaybookEditKind",
+    "PlaybookTriggerKind",
     "ProposalType",
     "ProtectionStatus",
     "QuoteMonitorSource",
@@ -976,3 +978,26 @@ class TerminalPolicyRejectReason(StrEnum):
     TERMINAL_EXPOSURE_CAP = "TERMINAL_EXPOSURE_CAP"
     LIQUIDITY_BELOW_A = "LIQUIDITY_BELOW_A"
     EVENT_RISK_NOT_NORMAL = "EVENT_RISK_NOT_NORMAL"
+
+
+@unique
+class PlaybookTriggerKind(StrEnum):
+    """Detectable regime-break / fragility triggers for TailPlaybook edits."""
+
+    GAP_BEYOND_ATR = "GAP_BEYOND_ATR"
+    VIX_JUMP = "VIX_JUMP"
+    SPREAD_WIDENING = "SPREAD_WIDENING"
+    FEED_QUALITY_DEGRADED = "FEED_QUALITY_DEGRADED"
+    TAIL_BUDGET_BREACH = "TAIL_BUDGET_BREACH"
+    BIAS_BAND_BREACH = "BIAS_BAND_BREACH"
+
+
+@unique
+class PlaybookEditKind(StrEnum):
+    """Structured playbook-edit actions. Human signs; never auto-implemented."""
+
+    ADD_RESPONSE = "ADD_RESPONSE"
+    TIGHTEN_THRESHOLD = "TIGHTEN_THRESHOLD"
+    DISABLE_RESPONSE = "DISABLE_RESPONSE"
+    REVIEW_ONLY = "REVIEW_ONLY"
+
