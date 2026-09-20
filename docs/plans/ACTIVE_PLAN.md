@@ -43,8 +43,8 @@ summary, structured playbook-edit proposals; persist under `data/agent_runs/`;
 focused tests. Out of scope: auto-implement edits, new promotion ladder (E2),
 monthly meta-report (E3), OMS/broker/live BOUNDED.
 
-- Stages A–D complete on `main`.
-- ADESK-E1 DONE. **ADESK-E2 READY**. E3 BLOCKED until E2 DONE.
+- Stages A–D complete on `main` (tip includes D6 `2484fe2`).
+- ADESK-E1–E2 DONE. **ADESK-E3 READY**. Stage E completes when E3 lands.
 
 ## Acceptance
 

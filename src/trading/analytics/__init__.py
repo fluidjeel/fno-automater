@@ -9,6 +9,11 @@ from trading.analytics.bias import (
 )
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.fills import simulate_fill, simulate_legs
+from trading.analytics.hypothesis_promotion import (
+    cluster_to_hypothesis,
+    hypothesis_to_shadow_experiment,
+    promote_improvements,
+)
 from trading.analytics.improvements import (
     apply_stale_status,
     cluster_improvements,
