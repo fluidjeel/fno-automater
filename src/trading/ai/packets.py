@@ -7,18 +7,17 @@ Every tool fetch for a field the packet should have contained increments
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
-import json
 from typing import Any
 
 from trading.domain.contracts.base import (
     ExactDecimal,
     NonEmptyStr,
-    StrictInt,
     UtcDatetime,
     VersionedModel,
 )
@@ -167,4 +166,6 @@ def build_delta_packet(
 
 def packet_to_canonical_json(packet: DeltaPacket) -> str:
     """Stable JSON for golden fixtures (sorted keys, no whitespace drift)."""
-    return json.dumps(packet.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        packet.model_dump(mode="json"), sort_keys=True, separators=(",", ":")
+    )

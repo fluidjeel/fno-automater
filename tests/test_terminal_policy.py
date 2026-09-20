@@ -272,4 +272,4 @@ class TestAcceptGate:
             policy_id="TP-IMM",
         )
         with pytest.raises(ValidationError):
-            decision.accepted.kind = TerminalPolicyKind.FLATTEN_AT_DTE  # type: ignore[misc]
+            decision.accepted.kind = TerminalPolicyKind.FLATTEN_AT_DTE

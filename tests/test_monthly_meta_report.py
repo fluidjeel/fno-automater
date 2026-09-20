@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from trading.analytics.agent_scorecard import build_agent_scorecard
+from trading.analytics.agent_scorecard import (
+    AgentDeskScorecard,
+    build_agent_scorecard,
+)
 from trading.analytics.monthly_meta_report import (
     DemotionEvent,
     DetVsDeskRow,
@@ -23,7 +26,7 @@ from trading.domain.enums import AuthorityMode, DemotionReason, DeskRole
 NOW = datetime(2026, 9, 20, 12, 0, tzinfo=UTC)
 
 
-def _card(role: DeskRole):
+def _card(role: DeskRole) -> AgentDeskScorecard:
     return build_agent_scorecard((), role=role, as_of=NOW)
 
 

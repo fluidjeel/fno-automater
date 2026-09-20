@@ -18,8 +18,8 @@ from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
 
-from trading.domain.clock import Clock
 from trading.analytics.improvements import merge_duplicate, normalize_claim_key
+from trading.domain.clock import Clock
 from trading.domain.contracts import (
     AgentDecision,
     AuthorityGrant,
@@ -37,11 +37,10 @@ from trading.domain.contracts import (
 )
 from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.enums import (
-    ImprovementArea,
-    ImprovementStatus,
-
     DeskRole,
     Exchange,
+    ImprovementArea,
+    ImprovementStatus,
     ReasonCode,
     ReservationState,
     ReviewSlotId,

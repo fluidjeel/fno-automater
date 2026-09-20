@@ -692,7 +692,7 @@ def restart_world(world: SimWorld, *, at: datetime) -> SimWorld:
         result.unlink()
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + str(ROOT)
-    completed = subprocess.run(  # noqa: S603
+    completed = subprocess.run(
         [sys.executable, str(WORKER), str(job_path), str(result)],
         check=False,
         capture_output=True,

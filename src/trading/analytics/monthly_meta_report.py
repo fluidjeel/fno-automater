@@ -108,7 +108,8 @@ def build_monthly_meta_report(
     total_decisions = sum(c.decisions for c in cards)
     # Attention when any demotion to OBSERVE for safety, or desk delta clearly negative.
     attention = any(
-        d.to_mode is AuthorityMode.OBSERVE and d.reason is DemotionReason.SAFETY_INVARIANT
+        d.to_mode is AuthorityMode.OBSERVE
+        and d.reason is DemotionReason.SAFETY_INVARIANT
         for d in dems
     ) or any(r.delta_r < Decimal("0") and r.sample_size >= 20 for r in rows)
     narrative = (

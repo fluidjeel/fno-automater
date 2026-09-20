@@ -8,7 +8,7 @@ and zero safety violations to unlock the minimal-capital CANARY promotion gate.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 

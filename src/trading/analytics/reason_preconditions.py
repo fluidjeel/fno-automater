@@ -16,8 +16,8 @@ from trading.domain.contracts.hallucination import GroundingResult, Hallucinatio
 from trading.domain.enums import AgentAction, AgentReasonCode, DeskRole
 
 __all__ = [
-    "EvidenceBundle",
     "PRECONDITIONS",
+    "EvidenceBundle",
     "ground_agent_reasons",
 ]
 

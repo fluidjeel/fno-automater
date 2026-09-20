@@ -40,7 +40,7 @@ Closed-market history is a substitute snapshot, not live tape.
 """
 
 
-def run_weekly_agent(  # noqa: PLR0911
+def run_weekly_agent(
     *,
     llm: LlmPort,
     config: AgentConfig,

@@ -55,8 +55,6 @@ from trading.identification import (
     route_nifty_options,
     top_book_size,
 )
-from trading.trade.exits import ExitEvaluation
-from trading.trade.sentinel import StopSentinel
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
 from trading.runtime.candidates import (
@@ -81,6 +79,8 @@ from trading.runtime.paper_runner import (
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment
+from trading.trade.exits import ExitEvaluation
+from trading.trade.sentinel import StopSentinel
 
 __all__ = [
     "PaperSessionConfig",

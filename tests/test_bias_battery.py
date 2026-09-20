@@ -13,7 +13,6 @@ from trading.analytics.bias import (
 )
 from trading.domain.contracts.bias import BiasMetricId
 
-
 NOW = datetime(2026, 9, 20, 15, 0, tzinfo=UTC)
 
 

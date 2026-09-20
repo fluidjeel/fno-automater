@@ -22,6 +22,8 @@ from trading.domain.enums import (
     DeskRole,
     ImprovementArea,
     ImprovementStatus,
+)
+from trading.domain.enums import (
     TestabilityKind as ClaimTestability,
 )
 from trading.storage.trading_store import TradingStore

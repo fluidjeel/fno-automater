@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
-import hashlib
-import re
 
 from trading.domain.contracts.improvement import ImprovementCluster, ImprovementRecord
 from trading.domain.enums import ImprovementArea, ImprovementStatus, TestabilityKind
@@ -64,7 +64,7 @@ def merge_duplicate(
 def cluster_improvements(
     records: Sequence[ImprovementRecord],
 ) -> tuple[ImprovementCluster, ...]:
-    """Group by claim_key; rank by occurrences × estimated_cost_r (desc)."""
+    """Group by claim_key; rank by occurrences * estimated_cost_r (desc)."""
     buckets: dict[str, list[ImprovementRecord]] = {}
     for row in records:
         if row.status in {ImprovementStatus.REJECTED, ImprovementStatus.STALE}:

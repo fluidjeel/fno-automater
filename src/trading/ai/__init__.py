@@ -20,6 +20,7 @@ __all__ = [
     "ADVISE_TOOL_SPECS",
     "SYSTEM_PROMPT",
     "TOOL_SPECS",
+    "DeltaGapCounter",
     "LlmPort",
     "LlmTimeoutError",
     "LlmToolCall",
@@ -31,10 +32,12 @@ __all__ = [
     "SnapshotMarketPort",
     "StaticNewsPort",
     "ToolContext",
+    "build_delta_packet",
     "dispatch_tool",
     "parse_openai_chat_completion",
     "persist_agent_run",
+    "prefix_hash",
     "run_advise_agent",
     "run_weekly_agent",
 ]
-from trading.ai.packets import build_delta_packet, prefix_hash, DeltaGapCounter
+from trading.ai.packets import DeltaGapCounter, build_delta_packet, prefix_hash

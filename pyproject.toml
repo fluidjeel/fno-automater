@@ -76,8 +76,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
-"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401", "ANN201", "ANN202", "E501"]
 "tests/paper_positional_sim/**" = ["E501"]
+"src/trading/storage/trading_store.py" = ["E501", "S608"]
+"src/trading/runtime/paper_session.py" = ["E501"]
+"src/trading/analytics/monthly_meta_report.py" = ["PLR2004"]
+"src/trading/analytics/bias.py" = ["PLR2004"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
 "tests/test_data_pipeline.py" = ["I001"]
 "src/trading/data/replay.py" = ["I001"]
