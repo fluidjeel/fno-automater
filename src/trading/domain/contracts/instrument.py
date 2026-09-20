@@ -16,6 +16,7 @@ from pydantic import Field, model_validator
 from trading.domain.contracts.base import (
     ExactDecimal,
     NonEmptyStr,
+    StrictBool,
     StrictInt,
     VersionedModel,
 )
@@ -48,6 +49,11 @@ class InstrumentSpec(VersionedModel):
     trading_session: NonEmptyStr
     upper_price_band: ExactDecimal | None = Field(default=None, gt=0)
     lower_price_band: ExactDecimal | None = Field(default=None, gt=0)
+
+    # PART 5.2 terminal-policy eligibility (ADESK-C1). Fail-closed defaults:
+    # unknown underlyings are not cash-settled; assignment risk must be asserted.
+    cash_settled: StrictBool = False
+    assignment_risk_at_expiry: StrictBool = False
 
     source: NonEmptyStr
     verified_at: date

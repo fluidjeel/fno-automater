@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage C — terminal policy (plan APPROVED; C1 READY)
+CURRENT_MILESTONE: Agent Desk Stage C — terminal policy (C1 DONE; C2 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -10,7 +10,7 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - Weekly AI may propose strategy-family stances only; never sizes, stops, or submits.
 - No LLM on the live/intraday path.
 - Agent Desk **BOUNDED** (C1, 2026-09-20): config-promotion only.
-- Stage C plan APPROVED (2026-09-20); unlocks ADESK-C1 only.
+- Stage C: ADESK-C1 DONE (2026-09-20); TerminalPolicy + PART 5.2 gate; C2 READY.
 - Stage A (ADESK-A1..A9) closed on `main` (A9 packets `395b6aa` lineage).
 - Stage B plan APPROVED; **ADESK-B1 DONE**: `ai/runtime.py` shared tool loop;
   weekly/advise thin wrappers (`tests/test_l4_agent.py`, `tests/test_ai_runtime.py`).

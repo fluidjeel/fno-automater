@@ -52,9 +52,9 @@ logged/scored; the deterministic default applies when ineligible or disabled.
 ## Progress
 
 - Stage A / B complete on `main` (tip includes B10 `478227b`).
-- Stage C planning APPROVED; **only ADESK-C1 READY**. C2+ BLOCKED until prior DONE.
+- ADESK-C1 DONE. **ADESK-C2 READY**. C3+ BLOCKED until prior DONE.
 
-## ADESK-C1 scope (only READY code slice)
+## ADESK-C1 (DONE)
 
 **In scope**
 

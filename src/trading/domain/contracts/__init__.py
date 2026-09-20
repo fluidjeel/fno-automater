@@ -149,6 +149,13 @@ from trading.domain.contracts.stress import (
     StressScenario,
     StressScenarioId,
 )
+from trading.domain.contracts.terminal_policy import (
+    DEFAULT_FLATTEN_DTE,
+    TerminalPolicy,
+    TerminalPolicyDecision,
+    TerminalPolicyEligibilityInput,
+    TerminalPolicyRequest,
+)
 from trading.domain.contracts.trade_thesis import (
     InvalidationCondition,
     TradeThesis,
@@ -156,6 +163,7 @@ from trading.domain.contracts.trade_thesis import (
 
 __all__ = [
     "ALLOWED_ENTRY_ACTIONS",
+    "DEFAULT_FLATTEN_DTE",
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
@@ -260,6 +268,10 @@ __all__ = [
     "StructureAdvice",
     "StructureChoice",
     "StructureKind",
+    "TerminalPolicy",
+    "TerminalPolicyDecision",
+    "TerminalPolicyEligibilityInput",
+    "TerminalPolicyRequest",
     "TradeIntent",
     "TradeThesis",
     "TrendState",

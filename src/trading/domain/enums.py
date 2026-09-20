@@ -65,6 +65,8 @@ __all__ = [
     "Side",
     "SizingBindingConstraint",
     "SystemState",
+    "TerminalPolicyKind",
+    "TerminalPolicyRejectReason",
     "TestabilityKind",
     "ThesisVerdict",
     "TimeInForce",
@@ -932,3 +934,26 @@ class MacroEventSeverity(StrEnum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
+
+
+@unique
+class TerminalPolicyKind(StrEnum):
+    """Closed terminal-policy vocabulary (AGENT_DESK_SPEC PART 5.1)."""
+
+    FLATTEN_AT_DTE = "FLATTEN_AT_DTE"
+    RUN_TO_EXPIRY_DEFINED_RISK = "RUN_TO_EXPIRY_DEFINED_RISK"
+    FLATTEN_EARLY_IF_FRAGILE = "FLATTEN_EARLY_IF_FRAGILE"
+
+
+@unique
+class TerminalPolicyRejectReason(StrEnum):
+    """Closed reasons the PART 5.2 eligibility gate may refuse run-to-expiry."""
+
+    STRUCTURE_NOT_DEFINED_RISK = "STRUCTURE_NOT_DEFINED_RISK"
+    ASSIGNMENT_RISK_AT_EXPIRY = "ASSIGNMENT_RISK_AT_EXPIRY"
+    NOT_CASH_SETTLED = "NOT_CASH_SETTLED"
+    MAX_LOSS_MISMATCH = "MAX_LOSS_MISMATCH"
+    EXTRINSIC_ABOVE_FLOOR = "EXTRINSIC_ABOVE_FLOOR"
+    TERMINAL_EXPOSURE_CAP = "TERMINAL_EXPOSURE_CAP"
+    LIQUIDITY_BELOW_A = "LIQUIDITY_BELOW_A"
+    EVENT_RISK_NOT_NORMAL = "EVENT_RISK_NOT_NORMAL"

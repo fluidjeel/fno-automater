@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C1 (Stage C plan APPROVED; B1..B10 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C2 (ADESK-C1 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -48,8 +48,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C1 (St
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
-| ADESK-C1 | READY | TerminalPolicy contracts + eligibility gate | Stage C plan |
-| ADESK-C2 | BLOCKED | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
+| ADESK-C1 | DONE | TerminalPolicy contracts + eligibility gate | Stage C plan |
+| ADESK-C2 | READY | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
 | ADESK-C3 | BLOCKED | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
 | ADESK-C4 | BLOCKED | Terminal-policy cost accounting in scorecard | ADESK-C3 |
 
@@ -196,5 +196,6 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: ADESK-C1 DONE — TerminalPolicy contracts + PART 5.2 eligibility gate; matrix tests; unlocks C2.
 - 2026-09-20: Stage C `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-C1 only; C2+ BLOCKED until C1 DONE.
 - 2026-09-20: Stage B `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-B1 only; B2+ remain BLOCKED until B1 DONE.
