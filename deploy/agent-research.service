@@ -1,0 +1,18 @@
+[Unit]
+Description=FNO automated trading — Stage E Weekly Research Runner
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading evaluate research-weekly --out-dir data/agent_runs
+User=ubuntu
+Group=ubuntu
+StandardOutput=append:/home/ubuntu/fno-automated/data/agent_research.log
+StandardError=append:/home/ubuntu/fno-automated/data/agent_research.log
+
+[Install]
+WantedBy=multi-user.target

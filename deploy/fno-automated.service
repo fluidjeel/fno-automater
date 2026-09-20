@@ -1,0 +1,22 @@
+[Unit]
+Description=Autonomous F&O Trading Supervisor Daemon
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading ops daemon
+Restart=on-failure
+RestartSec=10s
+StandardOutput=append:/home/ubuntu/fno-automated/data/daemon.log
+StandardError=append:/home/ubuntu/fno-automated/data/daemon_error.log
+KillMode=process
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

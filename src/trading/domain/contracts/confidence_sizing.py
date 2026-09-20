@@ -30,11 +30,11 @@ PHASE1_M_CEILING = Decimal("1")
 
 # Deterministic bucket → multiplier. Every value is in [m_floor, 1.0] by construction.
 PHASE1_SIZE_MULTIPLIERS: Mapping[ConfidenceBucket, Decimal] = {
-    ConfidenceBucket.P10: Decimal("0.50"),
+    ConfidenceBucket.P10: PHASE1_M_FLOOR,
     ConfidenceBucket.P30: Decimal("0.625"),
     ConfidenceBucket.P50: Decimal("0.75"),
     ConfidenceBucket.P70: Decimal("0.875"),
-    ConfidenceBucket.P90: Decimal("1.00"),
+    ConfidenceBucket.P90: Decimal("1.0"),
 }
 
 

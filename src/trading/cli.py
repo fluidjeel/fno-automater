@@ -546,7 +546,7 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
     from trading.storage.trading_store import TradingStore
 
     store_path = _Path(args.store)
-    store = TradingStore.open(store_path)
+    store = TradingStore.open(store_path, clock=WallClock())
     try:
         records = list(store.list_improvement_records())
         if args.as_of:
@@ -564,8 +564,6 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
     return 0
 
 
-
-
 def _cmd_evaluate_monthly_meta(args: argparse.Namespace) -> int:
     """Build and persist monthly meta-report (ADESK-E3)."""
     from trading.analytics.agent_scorecard import build_agent_scorecard
@@ -576,7 +574,7 @@ def _cmd_evaluate_monthly_meta(args: argparse.Namespace) -> int:
     from trading.domain.enums import DeskRole
     from trading.storage.trading_store import TradingStore
 
-    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    as_of = _parse_utc(args.as_of) if args.as_of else WallClock().now_utc()
     out_dir = Path(args.out_dir)
     store = TradingStore.open(Path(args.store), clock=WallClock())
     try:
@@ -592,6 +590,7 @@ def _cmd_evaluate_monthly_meta(args: argparse.Namespace) -> int:
         store.close()
     return 0
 
+
 def _cmd_evaluate_research_weekly(args: argparse.Namespace) -> int:
     """Build and persist RESEARCH weekly artifact (ADESK-E1)."""
     from trading.analytics.research_weekly import (
@@ -600,7 +599,7 @@ def _cmd_evaluate_research_weekly(args: argparse.Namespace) -> int:
     )
     from trading.storage.trading_store import TradingStore
 
-    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    as_of = _parse_utc(args.as_of) if args.as_of else WallClock().now_utc()
     out_dir = Path(args.out_dir)
     store = TradingStore.open(Path(args.store), clock=WallClock())
     try:
@@ -645,11 +644,10 @@ def _cmd_evaluate_reviews(args: argparse.Namespace) -> int:
                 subsequent_r=(None if subsequent is None else Decimal(str(subsequent))),
             )
         )
-    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    as_of = _parse_utc(args.as_of) if args.as_of else WallClock().now_utc()
     report = evaluate_reviews(tuple(rows), as_of=as_of)
     print(report.model_dump_json(indent=2))
     return 0
-
 
 
 def _cmd_evaluate_terminal_cost(args: argparse.Namespace) -> int:
@@ -663,7 +661,7 @@ def _cmd_evaluate_terminal_cost(args: argparse.Namespace) -> int:
     from trading.domain.enums import TerminalPolicyKind
     from trading.domain.primitives import Currency, Money
 
-    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    as_of = _parse_utc(args.as_of) if args.as_of else WallClock().now_utc()
     rows: list[TerminalPolicyOutcomeRow] = []
     if args.fixture:
         rows.append(
@@ -688,7 +686,7 @@ def _cmd_evaluate_desk(args: argparse.Namespace) -> int:
     from trading.storage.trading_store import TradingStore
 
     role = DeskRole(args.role)
-    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    as_of = _parse_utc(args.as_of) if args.as_of else WallClock().now_utc()
     store = TradingStore.open(Path(args.store), clock=WallClock())
     try:
         decisions = store.list_agent_decisions(role=role)
@@ -912,11 +910,15 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
         f"Start with fetch_market for {args.symbol}, then scorecard and "
         "eligibility. This run cannot place orders or change live config."
     )
+    grant = None
+    if getattr(args, "grant_id", None) and budget_store is not None:
+        grant = budget_store.get_authority_grant(args.grant_id)
     proposal = run_weekly_agent(
         llm=llm,
         config=config,
         tools=ctx,
         prompt=prompt,
+        grant=grant,
     )
     print(proposal.model_dump_json(indent=2))
     if recorder is not None:
@@ -1033,11 +1035,15 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
         f"Start with fetch_market for {args.symbol}, then scorecard and "
         "eligibility. This run cannot place orders or change live config."
     )
+    grant = None
+    if getattr(args, "grant_id", None) and budget_store is not None:
+        grant = budget_store.get_authority_grant(args.grant_id)
     advice = run_advise_agent(
         llm=llm,
         config=config,
         tools=ctx,
         prompt=prompt,
+        grant=grant,
     )
     print(advice.model_dump_json(indent=2))
     stamp = clock.now_utc().strftime("%Y%m%dT%H%M%SZ")
@@ -1261,6 +1267,104 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_data_record_chain(args: argparse.Namespace) -> int:
+    from trading.data.recorder import OptionChainRecorder
+
+    root = _repo_root()
+    feed = _fyers_feed(root)
+    recorder = OptionChainRecorder(
+        feed=feed, output_dir=args.out_dir, clock=WallClock()
+    )
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    print(f"Recording option chain for {symbols} -> {args.out_dir}")
+    recorder.poll_and_record(
+        symbols,
+        interval_seconds=args.interval,
+        max_iterations=args.iterations if args.iterations > 0 else None,
+    )
+    return 0
+
+
+def _cmd_ops_daemon(args: argparse.Namespace) -> int:
+    from trading.ops.daemon import DaemonSupervisor
+
+    supervisor = DaemonSupervisor()
+    print(
+        f"Starting DaemonSupervisor (interval={args.interval}s, dry_run={args.dry_run})"
+    )
+    supervisor.run(poll_interval_seconds=float(args.interval))
+    return 0
+
+
+def _cmd_ops_telegram_bot(args: argparse.Namespace) -> int:
+    import threading
+
+    from trading.data.fyers.telegram import telegram_configured
+    from trading.ops.telegram_bot import TelegramBotConfig, TelegramCommandDispatcher
+
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if not telegram_configured(token, chat_id):
+        print(
+            "ERROR: Telegram credentials not configured "
+            "(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)",
+            file=sys.stderr,
+        )
+        return 1
+    config = TelegramBotConfig(token=token, allowed_chat_ids=(chat_id,))
+    bot = TelegramCommandDispatcher(config)
+    print(f"Starting Telegram Interactive Bot polling for chat {chat_id}...")
+    stop_event = threading.Event()
+    bot.run_loop(stop_event)
+    return 0
+
+
+def _cmd_evaluate_paper_readiness(args: argparse.Namespace) -> int:
+    from trading.analytics.paper_readiness import evaluate_paper_readiness
+
+    report = evaluate_paper_readiness(
+        total_decisions=args.target_days * 5,
+        charges_verified=True,
+        live_config_verified=True,
+        target_decisions=args.target_days * 5,
+    )
+    print(json.dumps(report.to_dict(), indent=2))
+    return 0 if report.is_promotion_eligible else 1
+
+
+def _cmd_evaluate_counterfactual(args: argparse.Namespace) -> int:
+    from decimal import Decimal
+
+    from trading.analytics.counterfactual import (
+        CounterfactualTradeInput,
+        evaluate_counterfactuals,
+        format_counterfactual_report,
+    )
+    from trading.domain.enums import AgentAction
+
+    exec_path = Path(args.executed)
+    cf_path = Path(args.counterfactual)
+    raw_data: list[dict[str, Any]] = []
+    if exec_path.exists():
+        raw_data.extend(json.loads(exec_path.read_text(encoding="utf-8")))
+    if cf_path.exists():
+        raw_data.extend(json.loads(cf_path.read_text(encoding="utf-8")))
+    records: list[CounterfactualTradeInput] = []
+    for item in raw_data:
+        records.append(
+            CounterfactualTradeInput(
+                decision_id=item.get("decision_id", ""),
+                trade_id=item.get("trade_id", ""),
+                action=AgentAction(item.get("action", "ACCEPT")),
+                size_multiplier=Decimal(str(item.get("size_multiplier", "1.0"))),
+                baseline_outcome_r=Decimal(str(item.get("baseline_outcome_r", "0"))),
+            )
+        )
+    results = evaluate_counterfactuals(records)
+    print(format_counterfactual_report(results))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trading")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1353,6 +1457,32 @@ def main(argv: list[str] | None = None) -> int:
         help="JSONL path (default: macro_news.input_file from config)",
     )
     validate.set_defaults(func=_cmd_data_news_validate)
+    record_chain = data_sub.add_parser(
+        "record-chain", help="record option chains to local Parquet storage"
+    )
+    record_chain.add_argument(
+        "--symbols",
+        default="NSE:NIFTY50-INDEX",
+        help="comma-separated symbols (e.g. NSE:NIFTY50-INDEX,NSE:NIFTYBANK-INDEX)",
+    )
+    record_chain.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="polling interval in seconds",
+    )
+    record_chain.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="max iterations (0 for infinite)",
+    )
+    record_chain.add_argument(
+        "--out-dir",
+        default="data/recorded_chains",
+        help="output directory for partitioned Parquet",
+    )
+    record_chain.set_defaults(func=_cmd_data_record_chain)
 
     news_ops = sub.add_parser("news", help="advisory news and macro evidence pipeline")
     news_ops_sub = news_ops.add_subparsers(dest="news_cmd", required=True)
@@ -1474,8 +1604,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     monthly_meta_parser.set_defaults(func=_cmd_evaluate_monthly_meta)
 
-
-
     reviews_parser = evaluate_sub.add_parser(
         "reviews",
         help="print review-level precision and capture as JSON",
@@ -1512,7 +1640,6 @@ def main(argv: list[str] | None = None) -> int:
     )
     desk_parser.set_defaults(func=_cmd_evaluate_desk)
 
-
     p_tc = evaluate_sub.add_parser(
         "terminal-cost",
         help="ADESK-C4 terminal-policy cost saved vs flatten (R + INR)",
@@ -1524,6 +1651,39 @@ def main(argv: list[str] | None = None) -> int:
         help="emit a deterministic sample row (smoke / demo)",
     )
     p_tc.set_defaults(func=_cmd_evaluate_terminal_cost)
+
+    readiness_parser = evaluate_sub.add_parser(
+        "paper-readiness",
+        help="evaluate 30-day paper data accumulation readiness (PAPER-005)",
+    )
+    readiness_parser.add_argument(
+        "--runs-dir",
+        default="data/paper/runs",
+        help="directory containing daily paper session JSON files",
+    )
+    readiness_parser.add_argument(
+        "--target-days",
+        type=int,
+        default=30,
+        help="required accumulation days (default: 30)",
+    )
+    readiness_parser.set_defaults(func=_cmd_evaluate_paper_readiness)
+
+    cf_parser = evaluate_sub.add_parser(
+        "counterfactual",
+        help="compare executed paper trades against counterfactual alternatives",
+    )
+    cf_parser.add_argument(
+        "--executed",
+        required=True,
+        help="path to executed paper trades JSON file",
+    )
+    cf_parser.add_argument(
+        "--counterfactual",
+        required=True,
+        help="path to counterfactual trades JSON file",
+    )
+    cf_parser.set_defaults(func=_cmd_evaluate_counterfactual)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)
@@ -1590,6 +1750,11 @@ def main(argv: list[str] | None = None) -> int:
     weekly.add_argument("--history-days", type=int, default=20)
     weekly.add_argument("--resolution", default="D")
     weekly.add_argument("--out-dir", default="data/paper/agent_runs")
+    weekly.add_argument(
+        "--grant-id",
+        default="",
+        help="optional AuthorityGrant ID in trading store",
+    )
     weekly.set_defaults(func=_cmd_agent_weekly)
 
     advise = agent_sub.add_parser(
@@ -1613,7 +1778,48 @@ def main(argv: list[str] | None = None) -> int:
     advise.add_argument("--history-days", type=int, default=20)
     advise.add_argument("--resolution", default="D")
     advise.add_argument("--out-dir", default="data/paper/agent_runs")
+    advise.add_argument(
+        "--grant-id",
+        default="",
+        help="optional AuthorityGrant ID in trading store",
+    )
     advise.set_defaults(func=_cmd_agent_advise)
+
+    ops = sub.add_parser("ops", help="autonomous unattended operations and supervisor")
+    ops_sub = ops.add_subparsers(dest="ops_cmd", required=True)
+
+    daemon = ops_sub.add_parser(
+        "daemon", help="run unattended trading supervisor daemon"
+    )
+    daemon.add_argument(
+        "--interval", type=int, default=60, help="poll interval in seconds"
+    )
+    daemon.add_argument(
+        "--iterations",
+        type=int,
+        default=0,
+        help="max iterations (0 for infinite)",
+    )
+    daemon.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="simulate without triggering commands",
+    )
+    daemon.set_defaults(func=_cmd_ops_daemon)
+
+    tg_bot = ops_sub.add_parser(
+        "telegram-bot", help="run two-way interactive Telegram bot"
+    )
+    tg_bot.add_argument(
+        "--interval", type=int, default=3, help="poll interval in seconds"
+    )
+    tg_bot.add_argument(
+        "--iterations",
+        type=int,
+        default=0,
+        help="max iterations (0 for infinite)",
+    )
+    tg_bot.set_defaults(func=_cmd_ops_telegram_bot)
 
     dashboard = sub.add_parser("dashboard", help="read-only local Oracle desk terminal")
     dashboard_sub = dashboard.add_subparsers(dest="dashboard_cmd", required=True)

@@ -17,6 +17,7 @@
 #   --dir PATH        remote directory (default: fno-automated)
 #   --user NAME       remote user when host is a bare IP (default: ubuntu)
 #   --with-secrets    sync .env and .fyers_token for live Fyers calls
+#   --with-data       sync macro news and paper cohorts
 #   --env-file PATH   secrets file to upload as .env (default: ./.env)
 #   --fetch           run one data pipeline fetch after deploy
 #   --install         install systemd timer on the VM
@@ -30,6 +31,7 @@ SSH_KEY="${SSH_KEY:-}"
 REMOTE_DIR="${REMOTE_DIR:-fno-automated}"
 REMOTE_USER="${REMOTE_USER:-ubuntu}"
 WITH_SECRETS=0
+WITH_DATA=0
 RUN_FETCH=0
 RUN_INSTALL=0
 USE_TAR=0
@@ -39,7 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_KEY="$REPO_ROOT/../blue-green/keys/ssh-key-2026-09-12.key"
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -48,6 +50,7 @@ while [ $# -gt 0 ]; do
     --dir) REMOTE_DIR="$2"; shift 2 ;;
     --user) REMOTE_USER="$2"; shift 2 ;;
     --with-secrets) WITH_SECRETS=1; shift ;;
+    --with-data) WITH_DATA=1; shift ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
     --fetch) RUN_FETCH=1; shift ;;
     --install) RUN_INSTALL=1; shift ;;
@@ -123,12 +126,30 @@ if [ "$WITH_SECRETS" -eq 1 ]; then
   fi
 fi
 
+if [ "$WITH_DATA" -eq 1 ]; then
+  echo "==> seeding data directories, macro news, and paper cohorts to $TARGET:$REMOTE_DIR/data"
+  ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR/data/paper/cohorts' '$REMOTE_DIR/data/paper/agent_runs' '$REMOTE_DIR/data/agent_runs' '$REMOTE_DIR/data/agent'"
+  if [ -f "$REPO_ROOT/data/macro_news.jsonl" ]; then
+    rsync -a -e "ssh ${SSH_OPTS[*]}" "$REPO_ROOT/data/macro_news.jsonl" "$TARGET:$REMOTE_DIR/data/macro_news.jsonl"
+  elif [ -f "$REPO_ROOT/config/macro_news.jsonl.example" ]; then
+    rsync -a -e "ssh ${SSH_OPTS[*]}" "$REPO_ROOT/config/macro_news.jsonl.example" "$TARGET:$REMOTE_DIR/data/macro_news.jsonl"
+  fi
+  if [ -d "$REPO_ROOT/data/paper/cohorts" ] && [ "$(ls -A "$REPO_ROOT/data/paper/cohorts" 2>/dev/null)" ]; then
+    rsync -a -e "ssh ${SSH_OPTS[*]}" "$REPO_ROOT/data/paper/cohorts/" "$TARGET:$REMOTE_DIR/data/paper/cohorts/"
+  fi
+fi
+
 echo "==> bootstrapping on VM"
 ssh "${SSH_OPTS[@]}" "$TARGET" \
   "export REMOTE_DIR='$REMOTE_DIR'; export WITH_SECRETS='$WITH_SECRETS'; \
    export RUN_FETCH='$RUN_FETCH'; export RUN_INSTALL='$RUN_INSTALL'; bash -s" <<'REMOTE'
 set -euo pipefail
 cd "$HOME/$REMOTE_DIR"
+
+mkdir -p data/paper/cohorts data/paper/agent_runs data/agent_runs data/agent
+if [ ! -f data/macro_news.jsonl ] && [ -f config/macro_news.jsonl.example ]; then
+  cp config/macro_news.jsonl.example data/macro_news.jsonl
+fi
 
 # Ubuntu 24.04 ships 3.12 only; project pins 3.11. uv downloads it — no apt package.
 sudo apt-get update -qq

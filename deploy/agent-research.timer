@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Stage E Weekly Research Runner on Sunday
+
+# Sunday 10:00 UTC ≈ 15:30 IST
+[Timer]
+OnCalendar=Sun *-*-* 10:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+[Unit]
+Description=FNO automated trading — Layer 4 Weekly Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading agent weekly --enable --out-dir data/paper/agent_runs
+User=ubuntu
+Group=ubuntu
+StandardOutput=append:/home/ubuntu/fno-automated/data/agent_weekly.log
+StandardError=append:/home/ubuntu/fno-automated/data/agent_weekly.log
+
+[Install]
+WantedBy=multi-user.target

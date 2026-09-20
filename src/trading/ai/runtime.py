@@ -101,7 +101,7 @@ def run_desk_tool_loop(  # noqa: PLR0911
     iterations = max(0, int(spec.max_iterations))
     try:
         for _ in range(iterations):
-            turn = llm.complete(list(messages), list(spec.tool_specs))
+            turn = llm.complete(list(messages), [dict(s) for s in spec.tool_specs])
             if turn.resolved_model_id:
                 tools.resolved_model_id = turn.resolved_model_id
             if not budget.charge(turn.input_tokens, turn.output_tokens):

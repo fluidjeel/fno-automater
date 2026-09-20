@@ -38,6 +38,8 @@ class LlmTurn:
     output_tokens: int
     reasoning: str = ""
     resolved_model_id: str = ""
+    prompt_cache_hit_tokens: int = 0
+    prompt_cache_miss_tokens: int = 0
 
 
 class LlmPort(Protocol):

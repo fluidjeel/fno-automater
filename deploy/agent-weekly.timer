@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Layer 4 Weekly Agent on Saturday (post-session)
+
+# Saturday 10:00 UTC ≈ 15:30 IST
+[Timer]
+OnCalendar=Sat *-*-* 10:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

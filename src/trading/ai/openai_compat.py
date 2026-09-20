@@ -66,13 +66,26 @@ def parse_openai_chat_completion(payload: dict[str, Any]) -> LlmTurn:
     raw_usage = payload.get("usage")
     usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
     resolved_model = str(payload.get("model") or "")
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    details = usage.get("prompt_tokens_details")
+    cached_from_details = (
+        int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
+    )
+    cache_hit = int(usage.get("prompt_cache_hit_tokens") or cached_from_details or 0)
+    raw_miss = usage.get("prompt_cache_miss_tokens")
+    if raw_miss is not None:
+        cache_miss = int(str(raw_miss))
+    else:
+        cache_miss = max(0, prompt_tokens - cache_hit)
     return LlmTurn(
         text=text,
         tool_calls=tuple(calls),
-        input_tokens=int(usage.get("prompt_tokens") or 0),
+        input_tokens=prompt_tokens,
         output_tokens=int(usage.get("completion_tokens") or 0),
         reasoning=reasoning,
         resolved_model_id=resolved_model,
+        prompt_cache_hit_tokens=cache_hit,
+        prompt_cache_miss_tokens=cache_miss,
     )
 
 

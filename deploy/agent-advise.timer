@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Structure Advise Desk pre-market Mon-Fri
+
+# Mon-Fri 03:15 UTC ≈ 08:45 IST (pre-market open 09:15 IST)
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

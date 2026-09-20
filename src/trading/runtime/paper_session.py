@@ -55,6 +55,8 @@ from trading.identification import (
     route_nifty_options,
     top_book_size,
 )
+from trading.trade.exits import ExitEvaluation
+from trading.trade.sentinel import StopSentinel
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
 from trading.runtime.candidates import (
@@ -204,12 +206,44 @@ class PaperSession:
         self._sleeper = sleeper
         self._results: list[PaperCycleResult] = []
         self._eod_sent = False
+        self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
+
+    @property
+    def sentinel(self) -> StopSentinel:
+        """Real-time event-driven stop sentinel."""
+        return self._sentinel
+
+    def _on_sentinel_exit(
+        self,
+        trade_id: str,
+        evaluation: ExitEvaluation,
+        trigger_price: Price,
+        ts: datetime,
+    ) -> None:
+        self._runner.trade_manager.apply_exit_evaluation(trade_id, evaluation)
+        self._runner.flush_lifecycle()
+        self._notifier.send(
+            f"[SENTINEL] Trade {trade_id} {evaluation.kind} exit fired at {trigger_price}"[:_NOTIFY_MAX]
+        )
+
+    def sync_sentinel(self) -> int:
+        """Register all open positions with the real-time stop sentinel."""
+        registered = 0
+        for position in self._runner.trade_manager.list_positions():
+            if position.state is TradeState.OPEN:
+                book = self._runner.open_book.get(position.trade_id)
+                if book is not None:
+                    intent_obj, _ = book
+                    if self._sentinel.register_position(position, intent_obj):
+                        registered += 1
+        return registered
 
     def run(self, *, once: bool = False) -> int:
         """Poll until EOD. ``once`` runs a single tick then returns."""
         recovery = self._runner.recover_lifecycle()
         for alert in recovery.alerts:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
+        self.sync_sentinel()
         while True:
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
@@ -221,6 +255,7 @@ class PaperSession:
             in_window = self._open <= local.time() <= self._close
             if in_window or self._has_open_positions():
                 self.tick()
+                self.sync_sentinel()
             self._persist_broker()
             if once:
                 return 0

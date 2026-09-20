@@ -372,12 +372,12 @@ def _selection(
         )
     n = Decimal(len(trades))
     shares = []
-    for key_fn in (
-        lambda t: f"wd-{t.entry_weekday}",
-        lambda t: f"hr-{t.entry_hour}",
-        lambda t: f"iv-{t.iv_bucket}",
+    for keys in (
+        [f"wd-{t.entry_weekday}" for t in trades],
+        [f"hr-{t.entry_hour}" for t in trades],
+        [f"iv-{t.iv_bucket}" for t in trades],
     ):
-        counts = Counter(key_fn(t) for t in trades)
+        counts = Counter(keys)
         shares.append(Decimal(max(counts.values())) / n)
     value = max(shares)
     return BiasMetricResult(

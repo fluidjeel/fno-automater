@@ -24,7 +24,6 @@ from trading.domain.enums import (
     TerminalPolicyRejectReason,
 )
 from trading.news.contracts import EventRiskStatus
-from trading.risk.gateway import _is_defined_risk, _StructureKind
 
 __all__ = [
     "DEFAULT_FLATTEN_DTE",
@@ -32,13 +31,6 @@ __all__ = [
     "evaluate_run_to_expiry_eligibility",
     "structure_is_prepaid_defined_risk",
 ]
-
-_STRUCTURE_TO_GATEWAY: dict[StructureKind, _StructureKind] = {
-    StructureKind.LONG_OPTION: _StructureKind.LONG_OPTION,
-    StructureKind.DEBIT_SPREAD: _StructureKind.DEBIT_SPREAD,
-    StructureKind.CREDIT_SPREAD: _StructureKind.CREDIT_SPREAD,
-    StructureKind.COMMODITY_FUTURE: _StructureKind.COMMODITY_FUTURE,
-}
 
 
 def structure_is_prepaid_defined_risk(
@@ -54,11 +46,7 @@ def structure_is_prepaid_defined_risk(
     """
     if assignment_risk_at_expiry:
         return False
-    if structure is StructureKind.LONG_OPTION:
-        return True
-    if structure is StructureKind.DEBIT_SPREAD:
-        return _is_defined_risk(_STRUCTURE_TO_GATEWAY[structure])
-    return False
+    return structure in (StructureKind.LONG_OPTION, StructureKind.DEBIT_SPREAD)
 
 
 def evaluate_run_to_expiry_eligibility(

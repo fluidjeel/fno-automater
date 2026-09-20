@@ -9,7 +9,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
+from trading.ai.decision_log import DecisionLog
+from trading.ai.entry import maybe_log_entry_shadow
+from trading.ai.packets import build_delta_packet
+from trading.ai.position import maybe_log_position_shadow
 from trading.broker.paper import PaperBroker
 from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
@@ -30,6 +35,7 @@ from trading.domain.contracts import (
     TradeIntent,
 )
 from trading.domain.contracts.common import Versions
+from trading.domain.contracts.entry import StrikeShortlist
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
@@ -37,6 +43,7 @@ from trading.domain.contracts.portfolio import PositionRecord
 from trading.domain.contracts.position import PositionState
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
+    DeskRole,
     DifferenceClass,
     Exchange,
     ExecutionMode,
@@ -135,6 +142,7 @@ class PaperStrategyRequest:
     execute: bool = True
     setup_features: SetupFeatures | None = None
     route_decision: RouteDecision | None = None
+    shortlist: StrikeShortlist | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +284,7 @@ class PaperRunner:
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._lifecycle_recovered = False
+        self._decision_log = DecisionLog(store)
         self._review_engine = ReviewEngine()
         self._last_recovery = PositionRecoveryResult(
             restored_trade_ids=(),
@@ -330,6 +339,10 @@ class PaperRunner:
     @property
     def trade_manager(self) -> TradeManager:
         return self._services.trade_manager
+
+    @property
+    def open_book(self) -> Mapping[str, tuple[TradeIntent, RiskDecision]]:
+        return self._open_book
 
     @property
     def last_recovery(self) -> PositionRecoveryResult:
@@ -634,6 +647,33 @@ class PaperRunner:
             )
             if evaluation.reason_code is ReasonCode.REVIEW_DUPLICATE_SLOT:
                 continue
+
+            spot_price = Decimal("0")
+            if (
+                feature.derivatives is not None
+                and feature.derivatives.underlying_price is not None
+            ):
+                spot_price = feature.derivatives.underlying_price.value
+            packet = build_delta_packet(
+                role=DeskRole.POSITION,
+                as_of=now,
+                snapshot_id=feature.snapshot_id,
+                trade_id=position.trade_id,
+                spot=spot_price,
+                unrealized_r=Decimal("0"),
+                question=f"Review slot {slot.slot_id.value} action",
+            )
+            maybe_log_position_shadow(
+                packet,
+                slot_id=slot.slot_id,
+                deterministic_action=evaluation.action,
+                decision_log=self._decision_log,
+                enabled=True,
+                run_id=f"RUN-REV-{slot.slot_id.value}",
+                environment=self._account.config.environment,
+                now=now,
+            )
+
             submitted = self._apply_review(
                 evaluation,
                 intent=intent,
@@ -1500,7 +1540,18 @@ class PaperRunner:
             execute=request.execute,
             setup_features=request.setup_features,
             route_decision=request.route_decision,
+            shortlist=request.shortlist,
         )
+
+        if request.shortlist is not None:
+            maybe_log_entry_shadow(
+                request.shortlist,
+                as_of=self._clock.now_utc(),
+                decision_log=self._decision_log,
+                enabled=True,
+                run_id=f"RUN-ENTRY-{request.strategy_id}",
+                environment=self._account.config.environment,
+            )
 
         portfolio = build_broker_snapshot(
             self._services.broker,

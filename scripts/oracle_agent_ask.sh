@@ -19,15 +19,18 @@ COHORT=""
 ALLOW_FIXTURE=0
 HISTORY_DAYS="${HISTORY_DAYS:-20}"
 SYMBOL="${SYMBOL:-NSE:NIFTY50-INDEX}"
+PULL=1
 
 usage() {
-  sed -n '2,13p' "$0"
+  sed -n '2,14p' "$0"
   exit "${1:-0}"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --sync) SYNC=1; shift ;;
+    --pull) PULL=1; shift ;;
+    --no-pull) PULL=0; shift ;;
     --host) HOST="$2"; shift 2 ;;
     --key) KEY="$2"; shift 2 ;;
     --cohort) COHORT="$2"; shift 2 ;;
@@ -71,6 +74,12 @@ OUT="data/paper/agent_runs"
 ARGS=(agent weekly --enable --symbol "$SYMBOL" --history-days "$HISTORY_DAYS" --out-dir "$OUT")
 if [[ -n "${COHORT}" ]]; then
   ARGS+=("$COHORT")
+elif [[ "${ALLOW_FIXTURE}" -eq 0 ]]; then
+  LATEST_COHORT=$(ls -t data/paper/cohorts/*.json 2>/dev/null | head -1 || true)
+  if [[ -n "${LATEST_COHORT}" ]]; then
+    echo "==> using latest paper cohort on VM: $LATEST_COHORT"
+    ARGS+=("$LATEST_COHORT")
+  fi
 fi
 if [[ "${ALLOW_FIXTURE}" -eq 1 ]]; then
   ARGS+=(--allow-fixture)
@@ -146,3 +155,10 @@ print(f"full proposal: {run / 'proposal.json'}")
 print(f"reasoning:     {run / 'reasoning.md'}")
 PY
 REMOTE
+
+if [[ "$PULL" -eq 1 ]]; then
+  echo "==> pulling agent run artifacts from $HOST:$REMOTE_DIR/$OUT to $REPO_ROOT/$OUT"
+  mkdir -p "$REPO_ROOT/$OUT"
+  rsync -avz -e "ssh -o StrictHostKeyChecking=accept-new -i $KEY" "$HOST:$REMOTE_DIR/$OUT/" "$REPO_ROOT/$OUT/"
+  echo "✅ run artifacts synchronized to local $REPO_ROOT/$OUT"
+fi
