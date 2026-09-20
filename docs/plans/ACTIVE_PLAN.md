@@ -48,24 +48,24 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- Stage D planning APPROVED; **only ADESK-D1 READY**. D2+ BLOCKED until prior DONE.
+- ADESK-D1 DONE; **ADESK-D2 READY**. D3+ BLOCKED until prior DONE.
 
-## ADESK-D1 scope (only READY code slice)
+## Progress detail
+
+- **ADESK-D1 DONE:** `ConfidenceBucket`, Phase-1 map, ENTRY wiring, `AgentDecision.size_multiplier` le=1; tests green.
+
+## ADESK-D2 scope (only READY code slice)
 
 **In scope**
 
-1. `ConfidenceBucket` enum (closed set) in `enums.py`.
-2. Deterministic Phase-1 map bucket → `size_multiplier` with **type-level**
-   `<= 1.0` (Pydantic Field / Annotated); reject >1 at validation.
-3. Wire into ENTRY (and any shared sizing advice) without enabling live BOUNDED.
-4. Tests: each bucket; reject multiplier >1; default/unknown fail-closed.
+1. Signed AuthorityGrant at ADVISORY for FRAGILITY + POSTTRADE.
+2. Wire `resolve_effective_mode`; demote to OBSERVE without grant.
+3. Advisory/Telegram-shaped builder path (string builder; do not send).
+4. Tests: ADVISORY with valid grant; OBSERVE without.
 
 **Out of scope**
 
-- Live-path BOUNDED for ENTRY/POSITION/PORTFOLIO veto/tighten.
-- Phase-2 upscale (D6).
-- OMS/broker/gateway decision changes.
-- LLM on intraday path.
+- Live-path BOUNDED; OMS/broker edits; sending Telegram.
 
 ## Acceptance (Stage D plan done when)
 

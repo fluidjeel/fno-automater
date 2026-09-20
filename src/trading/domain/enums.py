@@ -20,6 +20,7 @@ __all__ = [
     "AttributionCode",
     "AuthorityMode",
     "Comparator",
+    "ConfidenceBucket",
     "DataQuality",
     "DeskRole",
     "DifferenceClass",
@@ -500,7 +501,22 @@ class AuthorityMode(StrEnum):
 
 
 @unique
+class ConfidenceBucket(StrEnum):
+    """Closed agent confidence set (PART 7.3). Continuous floats are rejected.
+
+    Phase-1 sizing maps each bucket to a downscale-only size_multiplier <= 1.0.
+    """
+
+    P10 = "0.1"
+    P30 = "0.3"
+    P50 = "0.5"
+    P70 = "0.7"
+    P90 = "0.9"
+
+
+@unique
 class AgentAction(StrEnum):
+
     """Closed agent output vocabulary. C1: BOUNDED may grant config-promotion only."""
 
     # Config-promotion — the only BOUNDED-eligible set (C1 2026-09-20).

@@ -27,6 +27,14 @@ from trading.domain.contracts.common import (
     Lineage,
     Versions,
 )
+from trading.domain.contracts.confidence_sizing import (
+    PHASE1_M_CEILING,
+    PHASE1_M_FLOOR,
+    PHASE1_SIZE_MULTIPLIERS,
+    Phase1SizingAdvice,
+    bucket_from_confidence,
+    phase1_size_multiplier,
+)
 from trading.domain.contracts.entry import (
     ALLOWED_ENTRY_ACTIONS,
     EntryAdvice,
@@ -164,6 +172,9 @@ from trading.domain.contracts.trade_thesis import (
 __all__ = [
     "ALLOWED_ENTRY_ACTIONS",
     "DEFAULT_FLATTEN_DTE",
+    "PHASE1_M_CEILING",
+    "PHASE1_M_FLOOR",
+    "PHASE1_SIZE_MULTIPLIERS",
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
@@ -232,6 +243,7 @@ __all__ = [
     "PaperDataTier",
     "ParameterProposal",
     "PendingOrderSummary",
+    "Phase1SizingAdvice",
     "PlannedOrder",
     "PortfolioSnapshot",
     "PortfolioView",
@@ -280,4 +292,6 @@ __all__ = [
     "Versions",
     "VolatilityState",
     "assert_candidate_on_shortlist",
+    "bucket_from_confidence",
+    "phase1_size_multiplier",
 ]

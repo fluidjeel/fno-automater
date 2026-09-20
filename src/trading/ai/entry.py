@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from trading.ai.decision_log import DecisionLog
 from trading.domain.contracts.agent_decision import AgentDecision
+from trading.domain.contracts.confidence_sizing import Phase1SizingAdvice
 from trading.domain.contracts.entry import (
     EntryAdvice,
     StrikeShortlist,
@@ -26,6 +27,7 @@ from trading.domain.enums import (
     AgentAction,
     AuthorityMode,
     Comparator,
+    ConfidenceBucket,
     DeskRole,
     DirectionalClaim,
     DriverCode,
@@ -43,6 +45,7 @@ __all__ = [
     "build_shadow_entry_advice",
     "maybe_log_entry_shadow",
     "shadow_decision_from_advice",
+    "sizing_advice_for_bucket",
 ]
 
 ENTRY_PROMPT_VERSION = "entry-shadow-v1"
@@ -60,36 +63,50 @@ class EntryShadowResult:
     decision: AgentDecision | None
 
 
+def sizing_advice_for_bucket(
+    bucket: ConfidenceBucket,
+) -> Phase1SizingAdvice:
+    """Shared Phase-1 sizing advice for ENTRY (and other desks). Never live BOUNDED."""
+    return Phase1SizingAdvice.from_bucket(bucket)
+
+
 def build_shadow_entry_advice(
     shortlist: StrikeShortlist,
     *,
     as_of: datetime,
     trade_id: str = "SHADOW-TRADE",
+    confidence_bucket: ConfidenceBucket = ConfidenceBucket.P90,
 ) -> EntryAdvice | None:
     """Build deterministic SELECT_STRIKE_CANDIDATE for the top-scored candidate.
 
     Returns None when shortlist has fewer than two candidates (skip agent / PASS).
+    size_multiplier comes from the Phase-1 ConfidenceBucket map (always <= 1.0).
     """
     if not shortlist.eligible_for_agent:
         return None
     top = shortlist.top_by_score()
     if top is None:
         return None
+    sizing = sizing_advice_for_bucket(confidence_bucket)
     thesis = _stub_thesis(
         trade_id=trade_id,
         snapshot_id=shortlist.snapshot_id,
         written_at=as_of,
+        confidence=Decimal(confidence_bucket.value),
     )
     advice = EntryAdvice(
         as_of=as_of,
         snapshot_id=shortlist.snapshot_id,
         action=AgentAction.SELECT_STRIKE_CANDIDATE,
         candidate_id=top.candidate_id,
-        size_multiplier=Decimal("1"),
+        size_multiplier=sizing.size_multiplier,
         thesis=thesis,
         evidence_ids=("shortlist-deterministic",),
         failed_gate_ids=(),
-        narrative="SHADOW deterministic top-of-shortlist; no live influence.",
+        narrative=(
+            "SHADOW deterministic top-of-shortlist; Phase-1 downscale sizing; "
+            "no live BOUNDED influence."
+        ),
         agent_override=False,
     )
     assert_candidate_on_shortlist(advice, shortlist)
@@ -173,7 +190,11 @@ def maybe_log_entry_shadow(
 
 
 def _stub_thesis(
-    *, trade_id: str, snapshot_id: str, written_at: datetime
+    *,
+    trade_id: str,
+    snapshot_id: str,
+    written_at: datetime,
+    confidence: Decimal = Decimal("0.5"),
 ) -> TradeThesis:
     """Minimal falsifiable thesis for SHADOW logging without an LLM."""
     inv_a = InvalidationCondition(
@@ -207,7 +228,7 @@ def _stub_thesis(
         contradicting_reason_codes=("EVENT_CLEAR",),
         invalidation=(inv_a, inv_b),
         strengthening=(),
-        confidence=Decimal("0.5"),
+        confidence=confidence,
         confidence_kind=ConfidenceKind.RAW_SCORE,
         expected_mfe_r=None,
         expected_mae_r=None,

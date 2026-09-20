@@ -43,7 +43,9 @@ class AgentDecision(VersionedModel):
     snapshot_id: NonEmptyStr
     action: AgentAction
     confidence: ExactDecimal | None = Field(default=None, ge=Decimal(0), le=Decimal(1))
-    size_multiplier: ExactDecimal | None = Field(default=None, ge=Decimal(0))
+    size_multiplier: ExactDecimal | None = Field(
+        default=None, ge=Decimal(0), le=Decimal(1)
+    )
     deterministic_choice: NonEmptyStr | None = None
     agent_override: StrictBool
     reason_codes: tuple[NonEmptyStr, ...]
