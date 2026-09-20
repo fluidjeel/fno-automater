@@ -13,6 +13,7 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.common import ContractRef
+from trading.domain.contracts.terminal_policy import TerminalPolicy
 from trading.domain.enums import ExecutionMode, ExitScope, Side, TradeState
 from trading.domain.primitives import Money, Price
 
@@ -36,6 +37,8 @@ class ExitPolicy(VersionedModel):
     breakeven_active: StrictBool = False
     time_exit: UtcDatetime | None = None
     exit_before_expiry_days: StrictInt | None = Field(default=None, ge=0)
+    # ADESK-C2: frozen at entry; None = legacy flatten-only behaviour.
+    terminal_policy: TerminalPolicy | None = None
     initialized_at: UtcDatetime
 
     @model_validator(mode="after")

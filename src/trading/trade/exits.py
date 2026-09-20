@@ -15,6 +15,7 @@ from trading.domain.contracts.position import (
     PositionState,
 )
 from trading.domain.contracts.snapshot import FeatureSnapshot
+from trading.domain.contracts.terminal_policy import TerminalPolicy
 from trading.domain.enums import ExitScope, ReasonCode, Side, TradeState
 from trading.domain.primitives import Currency, Money, Price, Rounding
 from trading.risk.sizing.credit_spread import is_credit_spread
@@ -23,6 +24,7 @@ __all__ = [
     "ExitEngine",
     "ExitEvaluation",
     "ExitKind",
+    "attach_terminal_policy",
     "build_exit_policy",
     "monitor_leg",
     "strategy_unrealized_pnl",
@@ -184,6 +186,7 @@ def build_exit_policy(
     quantity_contracts: int = 1,
     entry_strategy_pnl: Money | None = None,
     monitor_side: Side = Side.BUY,
+    terminal_policy: TerminalPolicy | None = None,
 ) -> ExitPolicy:
     """Initialize runtime exit policy from an intent template at entry."""
     tick = entry_price.tick
@@ -239,9 +242,31 @@ def build_exit_policy(
         pnl_target=pnl_target,
         time_exit=template.time_exit,
         exit_before_expiry_days=template.exit_before_expiry_days,
+        terminal_policy=terminal_policy,
         initialized_at=initialized_at,
     )
 
+
+
+def attach_terminal_policy(
+    policy: ExitPolicy, terminal_policy: TerminalPolicy
+) -> ExitPolicy:
+    """Freeze an accepted TerminalPolicy onto ExitPolicy at entry (ADESK-C2).
+
+    Does not alter stops. Replacing an existing terminal_policy is refused so
+    run-to-expiry cannot be re-granted after a later revert (C3 one-way door
+    starts here at the type boundary).
+    """
+    if policy.trade_id != terminal_policy.trade_id:
+        raise ValueError(
+            f"terminal_policy trade_id {terminal_policy.trade_id} != "
+            f"exit policy {policy.trade_id}"
+        )
+    if policy.terminal_policy is not None:
+        raise ValueError(
+            "ExitPolicy already carries a frozen terminal_policy; refuse replace"
+        )
+    return policy.model_copy(update={"terminal_policy": terminal_policy})
 
 def monitor_leg(intent: TradeIntent) -> IntentLeg:
     """Return the leg whose price drives LEG_PRICE exit monitoring."""
