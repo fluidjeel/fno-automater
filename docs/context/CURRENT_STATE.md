@@ -1,71 +1,53 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A2 DONE; ADESK-A3 READY)
+CURRENT_MILESTONE: Agent Desk Stage B — SHADOW desks (ADESK-B1 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
 
 - Deterministic code owns live signals, risk, orders and protection.
-- Broker state is external truth; Layer 2 owns risk and execution.
-- Layer 3 emits `TradeIntent` only; Layer 4 is asynchronous/proposal-only.
-- Weekly AI may propose strategy-family stances only. It never sizes, stops or
-  submits. No LLM call on the live path.
-- Forward paper is the evidence path. Real-money use needs a signed promotion.
-- Agent Desk **BOUNDED** (C1, 2026-09-20): config-promotion only. Agents never
-  get intraday live-path authority. Intraday stays L3+L2 with no LLM. BOUNDED
-  may only promote/demote already-coded config (strategy-family enable/shadow/halt)
-  through the existing L4 proposal path after a signed grant.
+- Weekly AI may propose strategy-family stances only; never sizes, stops, or submits.
+- No LLM on the live/intraday path.
+- Agent Desk **BOUNDED** (C1, 2026-09-20): config-promotion only.
+- Stage A (ADESK-A1..A9) closed on `main` (A9 packets `395b6aa` lineage).
+- Stage B plan APPROVED (`docs/plans/ACTIVE_PLAN.md` digest v11): next code is
+  **ADESK-B1** (`ai/runtime.py`; migrate `run_weekly_agent` + `run_advise_agent`).
 
-## Implemented
+## Implemented (Agent Desk)
 
-- Deterministic identification stack (`market_state`, contract binders,
-  structure router) wired into `trading paper session` via
-  `config/identification.yaml`.
-
-- `config/paper.yaml` (`Environment.PAPER`, `ACC-PAPER-1`). `base.yaml` is still
-  BACKTEST.
-- Unattended `trading paper session`: Telegram Fyers login, live L1, master-backed
-  option/future candidates, news `EventRiskState`, five strategies, paper OMS,
-  exits, Telegram post-trade/EOD, `data/paper/cohorts/` (PAPER-003).
-- PAPER positional fills persist frozen exit policy and restore it on restart
-  against paper broker state before new entries (PAPER-006). Protective STOP
-  stubs remain local software coverage, not broker-resident orders.
-- Twice-daily NSE positional review at 10:30 and 14:30 IST (PAPER-007).
-- P0 safety hardening (PAPER-009) and two-tier paper-data contract (PAPER-010/011).
-- Read-only local dashboard: `trading dashboard serve|snapshot` (ADESK-A0.1).
-- Layer 4 agent measurement hardening (ADESK-A0.3..A0.5): monthly budget ledger,
-  resolved model id + temperature/seed persistence, separate setup vs agent Brier.
-- `evaluation.yaml` `charges_per_lot.verified_at: 2026-09-19` (published schedule
-  estimate; contract-note cross-check still required for LIVE).
-- ADESK-A1: `AuthorityGrant` + `authority_grants` + demotion to OBSERVE. BOUNDED
-  is config-promotion only; live-path actions rejected at write.
-- ADESK-A2: `AgentDecision` + `agent_decisions` + `DecisionLog`. Append-only
-  audit; query by role and model/prompt/policy versions; duplicate id fails closed.
+- Stage 0 measurement: dashboard, monthly budget ledger, temp=0/seed/resolved
+  model, separate setup vs agent Brier, paper charges `verified_at`.
+- A1–A2: `AuthorityGrant` / demotion; `AgentDecision` / `DecisionLog`
+  (`tests/test_authority_grant.py`, `tests/test_agent_decision.py`).
+- A3–A5: thesis invalidation; `ExposureReport` + risk limits; `StressReport` +
+  `assume_no_fills` / entry freeze (`tests/test_*` under those modules).
+- A6–A9: bias battery (11 metrics); `ImprovementRecord` +
+  `trading evaluate improvements`; reason preconditions → ABSTAIN +
+  `hallucination_events`; versioned delta packets + `delta_gap_rate`
+  (`tests/test_bias_battery.py`, `tests/test_improvement_records.py`,
+  `tests/test_reason_preconditions.py`, `tests/test_packets.py`).
+- L4 weekly + advise loops still live in `ai/loop.py` / `ai/advise.py`
+  (`tests/test_l4_agent.py`); default-off.
 
 ## Verification
 
-- `uv run ruff check .` and `uv run mypy` are clean on the committed tree.
-- `tests/test_dashboard.py`, `tests/test_agent_stage0.py`, `tests/test_l4_agent.py`,
-  `tests/test_authority_grant.py` (C1 BOUNDED live-path reject + OBSERVE demotion),
-  `tests/test_agent_decision.py` (DecisionLog round-trip + role/version queries),
-  and the PAPER-010 focused suite pass.
-- `trading dashboard snapshot` runs without `ModuleNotFoundError`.
+- Stage A rows ADESK-A1..A9 marked DONE in `docs/plans/TASK_LEDGER.md`.
+- Focused suites above plus `tests/test_l4_agent.py` are the regression gate
+  for B1 (must stay green through the runtime migration).
 
 ## Blocking gaps
 
-- 60s software-only poll cannot see intra-interval stop prints (case 8).
-  SAFETY: NOT ACCEPTABLE for live unattended stops.
-- LIVE `config/base.yaml` market-rule values remain unverified.
-- PAPER-005 (real-capital promotion) is out of scope until live paper evidence.
-- CAS still needs a live 15:00–15:30 IST window on real depth for promotion
-  evidence.
+- 60s software-only poll cannot see intra-interval stop prints — not live-safe.
+- LIVE market-rule values in base config remain unverified.
+- CAS depth still needs a live 15:00–15:30 IST window for promotion evidence.
+- ADESK-B1 not yet implemented (planning pass only as of this update).
 
 ## Next action
 
-Agent Desk Stage 0 complete; **ADESK-A2 done** (DecisionLog). Next code is
-**ADESK-A3** (TradeThesis + invalidation). Monday: Fyers auth, CAS depth benchmark,
-supervised paper session. Do not treat software stops or the 60s poll as live-safe.
+Implement **ADESK-B1** only: shared `ai/runtime.py`, thin weekly/advise wrappers,
+no OMS/broker/gateway decision edits, no new desks (B2+). Monday ops: Fyers auth,
+CAS depth benchmark, supervised paper — outside this slice.
 
 ## Update rules
 

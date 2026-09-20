@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: Stage B planning (Stage A A1–A9 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B1 (Stage B plan APPROVED 2026-09-20; weekly+advise → ai/runtime.py).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -29,12 +29,12 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: Stage B plan
 | ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | DONE | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
-## Agent Desk Stage B — desks in SHADOW (BLOCKED until Stage A complete)
+## Agent Desk Stage B — desks in SHADOW (plan APPROVED; implement B1 next)
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
-| ADESK-B1 | READY | Role-based runtime; migrate weekly/advise | Stage A complete |
-| ADESK-B2 | BLOCKED | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | Stage A complete |
+| ADESK-B1 | READY | `ai/runtime.py`; migrate `loop.run_weekly_agent` + `advise.run_advise_agent` | Stage A complete; Stage B plan |
+| ADESK-B2 | BLOCKED | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | ADESK-B1 |
 | ADESK-B3 | BLOCKED | POSITION desk + delta packet SHADOW | Stage A complete |
 | ADESK-B4 | BLOCKED | Review-level labelling in judgment | Stage A complete |
 | ADESK-B5 | BLOCKED | Cold-review scheduler + warm_cold_divergence | Stage A complete |
@@ -193,3 +193,7 @@ ADESK-A2 DONE: AgentDecision + agent_decisions + DecisionLog (round-trip, role
 and version-triple queries, duplicate decision_id fails closed).
 Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```
+
+## Notes
+
+- 2026-09-20: Stage B `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-B1 only; B2+ remain BLOCKED until B1 DONE.
