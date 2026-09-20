@@ -69,7 +69,9 @@ def main(argv: list[str] | None = None) -> int:
     symbols = resolve_probe_symbols(feed, fallback=fallback)
     rest_errors: list[str] = []
     if symbols.nifty_option == fallback.nifty_option:
-        rest_errors.append("REST option-chain lookup unavailable; using fallback NIFTY option")
+        rest_errors.append(
+            "REST option-chain lookup unavailable; using fallback NIFTY option"
+        )
     try:
         entitlement = check_tbt_entitlement(settings)
     except ValueError as exc:
@@ -92,7 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(f"  {label}: {value}")
 
-    print(f"TBT entitlement: {entitlement.get('entitled')} ({entitlement.get('http_status')})")
+    print(
+        f"TBT entitlement: {entitlement.get('entitled')} ({entitlement.get('http_status')})"
+    )
 
     all_symbols = symbols.all_symbols()
     try:
@@ -190,7 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {report_path}")
 
     summaries = [
-        analyze_samples(data_symbol_updates, feed="data_ws", data_type="SymbolUpdate", symbol=symbol)
+        analyze_samples(
+            data_symbol_updates, feed="data_ws", data_type="SymbolUpdate", symbol=symbol
+        )
         for symbol in all_symbols
     ]
     print("\nQuick summary:")

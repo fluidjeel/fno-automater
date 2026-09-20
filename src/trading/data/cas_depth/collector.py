@@ -94,7 +94,9 @@ class CasDepthCollector:
     ) -> CollectorRunResult:
         """Run bounded collection for ``duration_seconds``."""
         if self._config.cas_live_orders:
-            raise ValueError("cas_live_orders must remain false for paper depth collection")
+            raise ValueError(
+                "cas_live_orders must remain false for paper depth collection"
+            )
         resolved = resolve_subscription_symbols(
             self._config,
             self._feed,
@@ -217,7 +219,10 @@ class CasDepthCollector:
         now: datetime,
     ) -> None:
         last = self._last_publish.get(update.symbol, 0.0)
-        if time.monotonic() - last < self._config.collector.snapshot_publish_interval_seconds:
+        if (
+            time.monotonic() - last
+            < self._config.collector.snapshot_publish_interval_seconds
+        ):
             return
         snapshot = self._adapter.publish(
             update,

@@ -59,7 +59,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"mcx_symbols: {', '.join(result.mcx_symbols)}")
     print(f"stopped: {result.stopped_reason}")
     print(f"updates/s: {metrics.updates_per_second():.2f}")
-    print(f"processed: {metrics.messages_processed} dropped: {metrics.messages_dropped}")
+    print(
+        f"processed: {metrics.messages_processed} dropped: {metrics.messages_dropped}"
+    )
     print(f"max_queue_depth: {metrics.max_queue_depth}")
     latency = metrics.latency_summary()
     print(f"latency avg/p99 ms: {latency['avg_ms']} / {latency['p99_ms']}")

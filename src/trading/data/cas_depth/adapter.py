@@ -89,7 +89,9 @@ class CasDepthPaperAdapter:
         payload = json.loads(self._health_path.read_text(encoding="utf-8"))
         return bool(payload.get("abstain", True))
 
-    def _write_health(self, snapshot: CasDepthFeatureSnapshot, *, now: datetime) -> None:
+    def _write_health(
+        self, snapshot: CasDepthFeatureSnapshot, *, now: datetime
+    ) -> None:
         self._health_path.write_text(
             json.dumps(
                 {

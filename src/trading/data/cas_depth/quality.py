@@ -75,7 +75,9 @@ class DepthQualityTracker:
         return tuple(issues)
 
 
-def validate_depth_update(update: NormalizedDepthUpdate) -> tuple[DepthQualityIssue, ...]:
+def validate_depth_update(
+    update: NormalizedDepthUpdate,
+) -> tuple[DepthQualityIssue, ...]:
     """Static validation without state."""
     issues: list[DepthQualityIssue] = []
     if _missing_required_fields(update):

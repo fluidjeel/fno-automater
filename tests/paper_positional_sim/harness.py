@@ -510,9 +510,7 @@ class SimWorld:
         snaps = self.snapshots_for(obs, obs.at)
         self.coordinator.seed_snapshots(snaps)
         quote_map = {
-            symbol: snap.market
-            for symbol, snap in snaps.items()
-            if symbol != "NIFTY"
+            symbol: snap.market for symbol, snap in snaps.items() if symbol != "NIFTY"
         }
         quote_result = self.coordinator.publish_quotes(
             quote_map,
@@ -523,9 +521,7 @@ class SimWorld:
         self._persist()
         row = self._trace_row(obs, reviews_before, orders_before)
         if quote_result is not None and quote_result.detection_latency_ms is not None:
-            row.extras["stop_detection_latency_ms"] = (
-                quote_result.detection_latency_ms
-            )
+            row.extras["stop_detection_latency_ms"] = quote_result.detection_latency_ms
         return row
 
     def _review_ids(self) -> frozenset[str]:

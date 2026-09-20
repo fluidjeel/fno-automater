@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import time
-from collections import deque
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time

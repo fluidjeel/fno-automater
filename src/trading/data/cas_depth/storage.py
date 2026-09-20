@@ -60,7 +60,9 @@ class CasDepthStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(snapshot.model_dump(mode="json")) + "\n")
-        latest = self._snapshot_dir / "latest" / f"{snapshot.symbol.replace(':', '_')}.json"
+        latest = (
+            self._snapshot_dir / "latest" / f"{snapshot.symbol.replace(':', '_')}.json"
+        )
         latest.parent.mkdir(parents=True, exist_ok=True)
         latest.write_text(
             json.dumps(snapshot.model_dump(mode="json"), indent=2),

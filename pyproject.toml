@@ -88,9 +88,15 @@ ignore = [
 "src/trading/data/pipeline.py" = ["I001", "PLR0912", "PLR0915"]
 "src/trading/data/fyers/auth.py" = ["PLC0415", "PLR0911"]
 "src/trading/data/fyers/ws.py" = ["PLC0415", "PLR0912", "PLR0915"]
-"src/trading/data/cas_depth/collector.py" = ["PLC0415", "S110", "E501"]
+"src/trading/data/cas_depth/collector.py" = ["PLC0415", "S110", "S112", "E501"]
 "src/trading/data/cas_depth/*.py" = ["PLR2004", "E501", "SIM103"]
 "scripts/cas_depth_*.py" = ["E501"]
+"src/trading/data/fyers/capability_probe.py" = [
+    "E501", "S110", "S112", "SIM105", "SIM108", "PLC0415",
+    "PLR0912", "PLR0915", "PLR2004", "RUF007",
+]
+"scripts/fyers_tbt_capability_probe.py" = ["E501", "PLR0915"]
+"tests/test_fyers_tbt_capability_probe.py" = ["E501"]
 "src/trading/cli.py" = ["PLR0912", "PLR0915", "PLC0415"]
 "src/trading/runtime/paper_runner.py" = ["PLR0911", "PLR0912", "PLR0915"]
 "src/trading/risk/snapshot_bundle.py" = ["PLR0911"]

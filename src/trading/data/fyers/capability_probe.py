@@ -19,8 +19,8 @@ from trading.data.settings import FyersSettings
 
 __all__ = [
     "CapturedMessage",
-    "ProbeSymbolSet",
     "ProbeSummary",
+    "ProbeSymbolSet",
     "analyze_samples",
     "check_tbt_entitlement",
     "collect_data_ws",
@@ -249,7 +249,14 @@ def documented_feed_catalog() -> dict[str, Any]:
         "rest_depth": {
             "endpoint": "/data/depth",
             "depth_levels": 5,
-            "fields": ("bids[].price/volume/ord", "ask[].price/volume/ord", "totalbuyqty", "totalsellqty", "ltp", "oi"),
+            "fields": (
+                "bids[].price/volume/ord",
+                "ask[].price/volume/ord",
+                "totalbuyqty",
+                "totalsellqty",
+                "ltp",
+                "oi",
+            ),
             "historical": False,
         },
     }
@@ -685,7 +692,9 @@ def generate_markdown_report(
     lines.extend(["## Data-quality findings", ""])
     for summary in summaries:
         if summary.message_count == 0:
-            lines.append(f"- `{summary.symbol}` / {summary.feed}:{summary.data_type}: no messages")
+            lines.append(
+                f"- `{summary.symbol}` / {summary.feed}:{summary.data_type}: no messages"
+            )
         if summary.sequence_gaps:
             lines.append(
                 f"- `{summary.symbol}`: {summary.sequence_gaps} sequence gap(s) observed"
@@ -848,7 +857,9 @@ def _sequence_stats(samples: Sequence[CapturedMessage]) -> tuple[int, int]:
     for prev, curr in zip(sequences, sequences[1:], strict=False):
         if curr > prev + 1:
             gaps += curr - prev - 1
-    fingerprints = [json.dumps(sample.payload, sort_keys=True, default=str) for sample in samples]
+    fingerprints = [
+        json.dumps(sample.payload, sort_keys=True, default=str) for sample in samples
+    ]
     duplicate_count = len(fingerprints) - len(set(fingerprints))
     return gaps, duplicate_count
 
@@ -870,7 +881,9 @@ def _latency_ms(samples: Sequence[CapturedMessage]) -> list[float]:
             source = datetime.fromtimestamp(exchange_ts, tz=UTC)
         else:
             continue
-        latencies.append(max((sample.receive_time - source).total_seconds() * 1000.0, 0.0))
+        latencies.append(
+            max((sample.receive_time - source).total_seconds() * 1000.0, 0.0)
+        )
     return latencies
 
 
@@ -973,10 +986,14 @@ def _cas_verdict(
         for summary in summaries
         if summary.data_type in {"DepthUpdate", "Depth"} and summary.message_count > 0
     ]
-    max_levels = max(
-        (summary.bid_levels or 0, summary.ask_levels or 0)
-        for summary in depth_summaries
-    ) if depth_summaries else (0, 0)
+    max_levels = (
+        max(
+            (summary.bid_levels or 0, summary.ask_levels or 0)
+            for summary in depth_summaries
+        )
+        if depth_summaries
+        else (0, 0)
+    )
     has_two_updates = any(summary.message_count >= 2 for summary in depth_summaries)
     has_flow = any(summary.has_last_traded_qty for summary in summaries)
     if not entitlement.get("entitled"):
@@ -1005,7 +1022,9 @@ def _provider_gaps(
 ) -> str:
     gaps: list[str] = []
     if not entitlement.get("entitled"):
-        gaps.append("50-level TBT depth and sequence-aware book replay (premium entitlement).")
+        gaps.append(
+            "50-level TBT depth and sequence-aware book replay (premium entitlement)."
+        )
     mcx = [symbols.mcx_gold, symbols.mcx_crude]
     mcx_msgs = sum(
         1
@@ -1013,7 +1032,9 @@ def _provider_gaps(
         if summary.symbol in mcx and summary.message_count > 0
     )
     if mcx_msgs == 0:
-        gaps.append("Verified MCX continuous-symbol depth via a vendor with MCX TBT or colocated feed.")
+        gaps.append(
+            "Verified MCX continuous-symbol depth via a vendor with MCX TBT or colocated feed."
+        )
     if not any(summary.has_aggressor_side for summary in summaries):
         gaps.append(
             "Exchange-grade trade tape with explicit aggressor side for CAS order-flow features."

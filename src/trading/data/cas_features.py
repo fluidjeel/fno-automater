@@ -23,8 +23,8 @@ __all__ = [
     "FEATURE_TRADE_FLOW_IMBALANCE",
     "cas_snapshot_version",
     "compute_cas_features",
-    "select_prior_depth",
     "merge_cas_features_into_snapshot",
+    "select_prior_depth",
     "with_cas_feature_set",
 ]
 
@@ -223,6 +223,7 @@ def _level_size(levels: Any) -> Decimal | None:
         return None
     return _qty(first.get("volume"))
 
+
 def merge_cas_features_into_snapshot(
     snapshot: FeatureSnapshot,
     events: Sequence[CanonicalMarketEvent],
@@ -236,4 +237,3 @@ def merge_cas_features_into_snapshot(
     return snapshot.model_copy(
         update={"features": merged, "feature_set_version": version}
     )
-

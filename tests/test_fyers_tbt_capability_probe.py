@@ -95,7 +95,12 @@ def test_generate_markdown_report_includes_matrix() -> None:
     )
     report = generate_markdown_report(
         symbols=symbols,
-        entitlement={"http_status": 403, "entitled": False, "socket_url": None, "message": "forbidden"},
+        entitlement={
+            "http_status": 403,
+            "entitled": False,
+            "socket_url": None,
+            "message": "forbidden",
+        },
         data_symbol_updates=(sample,),
         data_depth_updates=(),
         tbt_updates=(),
