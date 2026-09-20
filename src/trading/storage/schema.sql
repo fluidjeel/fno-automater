@@ -94,3 +94,42 @@ CREATE TABLE IF NOT EXISTS authority_grants (
 CREATE INDEX IF NOT EXISTS idx_authority_grants_role_valid
     ON authority_grants (role, valid_until);
 
+-- Append-only Agent Desk decision log. Analytics substrate; never a live instruction.
+CREATE TABLE IF NOT EXISTS agent_decisions (
+    decision_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    trade_id TEXT,
+    snapshot_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    confidence TEXT,
+    size_multiplier TEXT,
+    deterministic_choice TEXT,
+    agent_override INTEGER NOT NULL,
+    reason_codes TEXT NOT NULL,
+    ungrounded_codes TEXT NOT NULL,
+    evidence_ids TEXT NOT NULL,
+    gate_outcome TEXT NOT NULL,
+    gate_reject_codes TEXT,
+    model_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    packet_version TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_role_created
+    ON agent_decisions (role, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_versions_created
+    ON agent_decisions (model_id, prompt_version, policy_version, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_created
+    ON agent_decisions (created_at);
+

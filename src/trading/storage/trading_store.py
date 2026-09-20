@@ -20,6 +20,7 @@ from typing import Any
 
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
+    AgentDecision,
     AuthorityGrant,
     CapitalReservation,
     EntryFreezeRecord,
@@ -44,6 +45,7 @@ from trading.domain.primitives import Currency, Money
 
 __all__ = [
     "AppendSpec",
+    "DuplicateAgentDecisionError",
     "DuplicateIdempotencyKeyError",
     "ReservationConflictError",
     "StoredTradingEvent",
@@ -79,6 +81,14 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
 
 class TradingStoreError(Exception):
     """Base error for durable store failures."""
+
+
+class DuplicateAgentDecisionError(TradingStoreError):
+    """Append-only: decision_id is unique; a retry must not rewrite history."""
+
+    def __init__(self, decision_id: str) -> None:
+        self.decision_id = decision_id
+        super().__init__(f"DUPLICATE_AGENT_DECISION: {decision_id}")
 
 
 class DuplicateIdempotencyKeyError(TradingStoreError):
@@ -666,6 +676,107 @@ class TradingStore:
             AuthorityGrant.model_validate(json.loads(row["payload"])) for row in rows
         )
 
+    def insert_agent_decision(self, decision: AgentDecision) -> None:
+        """Persist a validated decision. Duplicate decision_id fails closed."""
+        verified = AgentDecision.model_validate(decision.model_dump(mode="json"))
+        dumped = verified.model_dump(mode="json")
+        reject_codes = dumped["gate_reject_codes"]
+        with self._transaction():
+            try:
+                self._conn.execute(
+                    "INSERT INTO agent_decisions ("
+                    "decision_id, run_id, role, mode, environment, trade_id, "
+                    "snapshot_id, action, confidence, size_multiplier, "
+                    "deterministic_choice, agent_override, reason_codes, "
+                    "ungrounded_codes, evidence_ids, gate_outcome, "
+                    "gate_reject_codes, model_id, prompt_version, policy_version, "
+                    "packet_version, input_tokens, output_tokens, latency_ms, "
+                    "created_at, payload"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        verified.decision_id,
+                        verified.run_id,
+                        verified.role.value,
+                        verified.mode.value,
+                        verified.environment.value,
+                        verified.trade_id,
+                        verified.snapshot_id,
+                        verified.action.value,
+                        (
+                            None
+                            if verified.confidence is None
+                            else str(verified.confidence)
+                        ),
+                        (
+                            None
+                            if verified.size_multiplier is None
+                            else str(verified.size_multiplier)
+                        ),
+                        verified.deterministic_choice,
+                        int(verified.agent_override),
+                        json.dumps(dumped["reason_codes"], separators=(",", ":")),
+                        json.dumps(dumped["ungrounded_codes"], separators=(",", ":")),
+                        json.dumps(dumped["evidence_ids"], separators=(",", ":")),
+                        verified.gate_outcome.value,
+                        (
+                            None
+                            if reject_codes is None
+                            else json.dumps(reject_codes, separators=(",", ":"))
+                        ),
+                        verified.model_id,
+                        verified.prompt_version,
+                        verified.policy_version,
+                        verified.packet_version,
+                        verified.input_tokens,
+                        verified.output_tokens,
+                        verified.latency_ms,
+                        _utc_iso(verified.created_at),
+                        verified.model_dump_json(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateAgentDecisionError(verified.decision_id) from exc
+
+    def get_agent_decision(self, decision_id: str) -> AgentDecision | None:
+        """Load one decision by id, or None when absent."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM agent_decisions WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return AgentDecision.model_validate(json.loads(row["payload"]))
+
+    def list_agent_decisions(
+        self,
+        *,
+        role: DeskRole | None = None,
+        model_id: str | None = None,
+        prompt_version: str | None = None,
+        policy_version: str | None = None,
+    ) -> tuple[AgentDecision, ...]:
+        """Return decisions in time order, filtered by role and/or version triple."""
+        versions: tuple[str, str, str] | None = None
+        if (
+            model_id is not None
+            or prompt_version is not None
+            or policy_version is not None
+        ):
+            if model_id is None or prompt_version is None or policy_version is None:
+                raise ValueError(
+                    "model_id, prompt_version and policy_version must be supplied "
+                    "together as a version triple"
+                )
+            versions = (model_id, prompt_version, policy_version)
+        sql, params = _agent_decision_list_query(role=role, versions=versions)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return tuple(
+            AgentDecision.model_validate(json.loads(row["payload"])) for row in rows
+        )
+
     def get_entry_freeze(self) -> EntryFreezeRecord | None:
         """Load the persisted entry-freeze latch, if any."""
         with self._lock:
@@ -817,6 +928,39 @@ class TradingStore:
             ).fetchone()
             owner = existing["owner_ref"] if existing is not None else None
             raise DuplicateIdempotencyKeyError(idempotency_key, owner) from None
+
+
+def _agent_decision_list_query(
+    *,
+    role: DeskRole | None,
+    versions: tuple[str, str, str] | None,
+) -> tuple[str, tuple[str, ...]]:
+    """Static SQL for the four role/version filter combinations."""
+    if versions is None:
+        if role is None:
+            return (
+                "SELECT payload FROM agent_decisions "
+                "ORDER BY created_at ASC, decision_id ASC",
+                (),
+            )
+        return (
+            "SELECT payload FROM agent_decisions WHERE role = ? "
+            "ORDER BY created_at ASC, decision_id ASC",
+            (role.value,),
+        )
+    if role is None:
+        return (
+            "SELECT payload FROM agent_decisions "
+            "WHERE model_id = ? AND prompt_version = ? AND policy_version = ? "
+            "ORDER BY created_at ASC, decision_id ASC",
+            versions,
+        )
+    return (
+        "SELECT payload FROM agent_decisions "
+        "WHERE role = ? AND model_id = ? AND prompt_version = ? "
+        "AND policy_version = ? ORDER BY created_at ASC, decision_id ASC",
+        (role.value, versions[0], versions[1], versions[2]),
+    )
 
 
 def _utc_iso(value: datetime) -> str:
