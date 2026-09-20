@@ -48,23 +48,23 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- ADESK-D1..D4 DONE; **ADESK-D5 READY**. D6 BLOCKED until D5 DONE.
+- ADESK-D1..D5 DONE; **ADESK-D6 READY**.
 
 ## Progress detail
 
-- **ADESK-D1..D4 DONE.**
+- **ADESK-D1..D5 DONE.**
 
-## ADESK-D5 scope (only READY code slice)
+## ADESK-D6 scope (only READY code slice)
 
 **In scope**
 
-1. ENTRY: SHADOW/ADVISORY for VETO_ENTRY/REDUCE_SIZE.
-2. BOUNDED only for config-promotion.
-3. Tests mirroring D4/D3 pattern.
+1. Deterministic Phase-2 calibration gate + ceiling.
+2. Upscale only via deterministic envelope; agent path cannot emit m>1.
+3. Tests: calibrated upscale OK; agent BOUNDED upscale rejected.
 
 **Out of scope**
 
-- Live BOUNDED veto/reduce-as-order; OMS/broker edits.
+- Agent BOUNDED upscale; OMS/broker edits.
 
 ## Acceptance (Stage D plan done when)
 
