@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage B — SHADOW desks (ADESK-B1 READY)
+CURRENT_MILESTONE: Agent Desk Stage B — SHADOW desks (ADESK-B1 DONE; B2 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -11,8 +11,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - No LLM on the live/intraday path.
 - Agent Desk **BOUNDED** (C1, 2026-09-20): config-promotion only.
 - Stage A (ADESK-A1..A9) closed on `main` (A9 packets `395b6aa` lineage).
-- Stage B plan APPROVED (`docs/plans/ACTIVE_PLAN.md` digest v11): next code is
-  **ADESK-B1** (`ai/runtime.py`; migrate `run_weekly_agent` + `run_advise_agent`).
+- Stage B plan APPROVED; **ADESK-B1 DONE**: `ai/runtime.py` shared tool loop;
+  weekly/advise thin wrappers (`tests/test_l4_agent.py`, `tests/test_ai_runtime.py`).
 
 ## Implemented (Agent Desk)
 
@@ -41,13 +41,12 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - 60s software-only poll cannot see intra-interval stop prints — not live-safe.
 - LIVE market-rule values in base config remain unverified.
 - CAS depth still needs a live 15:00–15:30 IST window for promotion evidence.
-- ADESK-B1 not yet implemented (planning pass only as of this update).
+- ADESK-B2 (ENTRY SHADOW desk) not yet implemented.
 
 ## Next action
 
-Implement **ADESK-B1** only: shared `ai/runtime.py`, thin weekly/advise wrappers,
-no OMS/broker/gateway decision edits, no new desks (B2+). Monday ops: Fyers auth,
-CAS depth benchmark, supervised paper — outside this slice.
+Implement **ADESK-B2** only: ENTRY desk + StrikeShortlist + EntryAdvice in SHADOW;
+zero live influence. Monday ops remain outside this slice.
 
 ## Update rules
 

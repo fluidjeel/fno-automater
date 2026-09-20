@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any
 
-from trading.ai.budget import TokenBudget
-from trading.ai.ports import LlmPort, LlmTimeoutError, LlmTurn
-from trading.ai.tools import TOOL_SPECS, ToolContext, dispatch_tool
+from trading.ai.ports import LlmPort
+from trading.ai.runtime import DeskRuntimeSpec, ToolLoopStop, run_desk_tool_loop
+from trading.ai.tools import TOOL_SPECS, ToolContext
 from trading.config.agent import AgentConfig
 from trading.domain.contracts import AIProposal, ModelVersions
-from trading.domain.enums import ProposalType, ReasonCode, Recommendation
+from trading.domain.contracts.authority import AuthorityGrant
+from trading.domain.enums import DeskRole, ProposalType, ReasonCode, Recommendation
 
 __all__ = ["SYSTEM_PROMPT", "run_weekly_agent"]
 
@@ -40,90 +40,72 @@ Closed-market history is a substitute snapshot, not live tape.
 """
 
 
-def run_weekly_agent(
+def run_weekly_agent(  # noqa: PLR0911
     *,
     llm: LlmPort,
     config: AgentConfig,
     tools: ToolContext,
     prompt: str,
+    grant: AuthorityGrant | None = None,
+    runtime_prompt_version: str = "family-v1",
+    runtime_policy_version: str = "",
 ) -> AIProposal:
     """Gather, act, verify, repeat until proposal, ABSTAIN, budget or cap."""
-    if not config.enabled:
+    policy = runtime_policy_version or tools.evaluation.checksum[:12]
+    stop = run_desk_tool_loop(
+        llm=llm,
+        config=config,
+        tools=tools,
+        prompt=prompt,
+        spec=DeskRuntimeSpec(
+            role=DeskRole.RESEARCH,
+            system_prompt=SYSTEM_PROMPT,
+            tool_specs=TOOL_SPECS,
+            max_iterations=config.max_iterations,
+            terminal_tool_names=frozenset({"emit_proposal"}),
+        ),
+        is_terminal=lambda ctx, _name: bool(ctx.emitted),
+        grant=grant,
+        runtime_prompt_version=runtime_prompt_version,
+        runtime_policy_version=policy,
+    )
+    if stop is ToolLoopStop.DISABLED:
         return _abstain(
             tools,
             reason=ReasonCode.AI_UNAVAILABLE,
             detail="weekly agent is disabled until paper evidence exists",
         )
-    budget = TokenBudget(
-        config,
-        role=tools.agent_role,
-        store=tools.budget_store,
-        clock=tools.clock,
-    )
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
-    try:
-        for _ in range(config.max_iterations):
-            turn = llm.complete(messages, TOOL_SPECS)
-            if turn.resolved_model_id:
-                tools.resolved_model_id = turn.resolved_model_id
-            if not budget.charge(turn.input_tokens, turn.output_tokens):
-                return _abstain(
-                    tools,
-                    reason=ReasonCode.AI_BUDGET_EXHAUSTED,
-                    detail="token or INR budget exhausted",
-                )
-            if not turn.tool_calls:
-                break
-            messages.append(_assistant_message(turn))
-            for call in turn.tool_calls:
-                result = dispatch_tool(call.name, call.arguments, tools)
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.call_id,
-                        "name": call.name,
-                        "content": result,
-                    }
-                )
-                if call.name == "emit_proposal" and tools.emitted:
-                    return tools.emitted[-1]
-        if tools.emitted:
-            return tools.emitted[-1]
+    if stop is ToolLoopStop.OBSERVE:
         return _abstain(
             tools,
-            reason=ReasonCode.AI_ABSTAINED,
-            detail="loop ended without a grounded proposal",
+            reason=ReasonCode.AI_UNAVAILABLE,
+            detail="authority demoted to OBSERVE; weekly agent did not run",
         )
-    except LlmTimeoutError:
+    if stop is ToolLoopStop.BUDGET:
+        return _abstain(
+            tools,
+            reason=ReasonCode.AI_BUDGET_EXHAUSTED,
+            detail="token or INR budget exhausted",
+        )
+    if stop is ToolLoopStop.TIMEOUT:
         return _abstain(
             tools,
             reason=ReasonCode.AI_UNAVAILABLE,
             detail="model call timed out",
         )
-    except (ValueError, TypeError, KeyError):
+    if stop is ToolLoopStop.SCHEMA:
         return _abstain(
             tools,
             reason=ReasonCode.AI_SCHEMA_INVALID,
             detail="malformed model or tool output",
         )
-
-
-def _assistant_message(turn: LlmTurn) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": turn.text,
-        "tool_calls": [
-            {
-                "id": call.call_id,
-                "name": call.name,
-                "arguments": call.arguments,
-            }
-            for call in turn.tool_calls
-        ],
-    }
+    if tools.emitted:
+        return tools.emitted[-1]
+    return _abstain(
+        tools,
+        reason=ReasonCode.AI_ABSTAINED,
+        detail="loop ended without a grounded proposal",
+    )
 
 
 def _abstain(tools: ToolContext, *, reason: ReasonCode, detail: str) -> AIProposal:

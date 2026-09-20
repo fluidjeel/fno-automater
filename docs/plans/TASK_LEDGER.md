@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B1 (Stage B plan APPROVED 2026-09-20; weekly+advise → ai/runtime.py).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B2 (ADESK-B1 DONE; shared ai/runtime.py).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -33,8 +33,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B1 (St
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
-| ADESK-B1 | READY | `ai/runtime.py`; migrate `loop.run_weekly_agent` + `advise.run_advise_agent` | Stage A complete; Stage B plan |
-| ADESK-B2 | BLOCKED | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | ADESK-B1 |
+| ADESK-B1 | DONE | `ai/runtime.py`; migrate `run_weekly_agent` + `run_advise_agent` | Existing `tests/test_l4_agent.py` green via shared runtime | Stage B plan |
+| ADESK-B2 | READY | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | ADESK-B1 |
 | ADESK-B3 | BLOCKED | POSITION desk + delta packet SHADOW | Stage A complete |
 | ADESK-B4 | BLOCKED | Review-level labelling in judgment | Stage A complete |
 | ADESK-B5 | BLOCKED | Cold-review scheduler + warm_cold_divergence | Stage A complete |
