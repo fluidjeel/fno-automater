@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage E — research loop (E1–E2 DONE; E3 READY)
+CURRENT_MILESTONE: Agent Desk Stage E — research loop (**COMPLETE**)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -12,12 +12,13 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 ## Implemented (Agent Desk)
 
 - E1: RESEARCH weekly runner + playbook proposals + `data/agent_runs/` artifact.
-- E2: ResearchHypothesis / ExperimentProposal; promote_improvements → existing
-  SHADOW ExperimentDefinition (capital_limit=0); ineligible clusters stay notes.
+- E2: ResearchHypothesis / ExperimentProposal into existing SHADOW ladder (capital_limit=0).
+- E3: Monthly meta-report (desk scorecards + demotions + det-vs-desk); JSON+markdown CLI.
 
 ## Verification
 
-- `tests/test_research_weekly.py` + `tests/test_hypothesis_promotion.py` green.
+- `tests/test_research_weekly.py`, `tests/test_hypothesis_promotion.py`,
+  `tests/test_monthly_meta_report.py` green.
 
 ## Blocking gaps
 
@@ -27,7 +28,7 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Next action
 
-ADESK-E3: Monthly meta-report (desk scorecards + demotions + det-vs-desk).
+Stage E complete. Ops Monday outside desk; no further READY Agent Desk slices.
 
 ## Update rules
 

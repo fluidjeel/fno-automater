@@ -26,6 +26,10 @@ from trading.analytics.invalidation import (
     evaluate_thesis,
 )
 from trading.analytics.judgment import JudgmentError, evaluate_judgment, label_signal
+from trading.analytics.monthly_meta_report import (
+    build_monthly_meta_report,
+    persist_monthly_meta_report,
+)
 from trading.analytics.reason_preconditions import (
     EvidenceBundle,
     ground_agent_reasons,
@@ -53,11 +57,13 @@ __all__ = [
     "WarmColdPair",
     "apply_stale_status",
     "build_bias_report",
+    "build_monthly_meta_report",
     "build_research_weekly",
     "build_scorecard",
     "build_stress_entry_freeze",
     "build_stress_report",
     "cluster_improvements",
+    "cluster_to_hypothesis",
     "evaluate_condition",
     "evaluate_eligibility",
     "evaluate_judgment",
@@ -65,10 +71,13 @@ __all__ = [
     "evaluate_thesis",
     "ground_agent_reasons",
     "hypothesis_eligible",
+    "hypothesis_to_shadow_experiment",
     "label_signal",
     "merge_duplicate",
     "normalize_claim_key",
+    "persist_monthly_meta_report",
     "persist_research_weekly",
+    "promote_improvements",
     "simulate_fill",
     "simulate_legs",
 ]

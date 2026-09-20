@@ -565,6 +565,33 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
 
 
 
+
+def _cmd_evaluate_monthly_meta(args: argparse.Namespace) -> int:
+    """Build and persist monthly meta-report (ADESK-E3)."""
+    from trading.analytics.agent_scorecard import build_agent_scorecard
+    from trading.analytics.monthly_meta_report import (
+        build_monthly_meta_report,
+        persist_monthly_meta_report,
+    )
+    from trading.domain.enums import DeskRole
+    from trading.storage.trading_store import TradingStore
+
+    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    out_dir = Path(args.out_dir)
+    store = TradingStore.open(Path(args.store), clock=WallClock())
+    try:
+        cards = []
+        for role in DeskRole:
+            decisions = store.list_agent_decisions(role=role)
+            cards.append(build_agent_scorecard(decisions, role=role, as_of=as_of))
+        report = build_monthly_meta_report(as_of=as_of, scorecards=tuple(cards))
+        path = persist_monthly_meta_report(report, out_dir=out_dir)
+        print(report.model_dump_json(indent=2))
+        print(f"# wrote {path}", file=sys.stderr)
+    finally:
+        store.close()
+    return 0
+
 def _cmd_evaluate_research_weekly(args: argparse.Namespace) -> int:
     """Build and persist RESEARCH weekly artifact (ADESK-E1)."""
     from trading.analytics.research_weekly import (
@@ -1425,6 +1452,28 @@ def main(argv: list[str] | None = None) -> int:
         help="optional cohort label for bias/report identity",
     )
     research_weekly_parser.set_defaults(func=_cmd_evaluate_research_weekly)
+
+    monthly_meta_parser = evaluate_sub.add_parser(
+        "monthly-meta",
+        help="ADESK-E3 monthly meta-report: scorecards, demotions, det-vs-desk",
+    )
+    monthly_meta_parser.add_argument(
+        "--store",
+        default="data/trading.sqlite",
+        help="path to TradingStore sqlite file",
+    )
+    monthly_meta_parser.add_argument(
+        "--out-dir",
+        default="data/agent_runs",
+        help="directory for monthly meta JSON/markdown",
+    )
+    monthly_meta_parser.add_argument(
+        "--as-of",
+        default="",
+        help="UTC evaluation instant (default: now)",
+    )
+    monthly_meta_parser.set_defaults(func=_cmd_evaluate_monthly_meta)
+
 
 
     reviews_parser = evaluate_sub.add_parser(

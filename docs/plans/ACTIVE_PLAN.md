@@ -44,7 +44,7 @@ focused tests. Out of scope: auto-implement edits, new promotion ladder (E2),
 monthly meta-report (E3), OMS/broker/live BOUNDED.
 
 - Stages A–D complete on `main` (tip includes D6 `2484fe2`).
-- ADESK-E1–E2 DONE. **ADESK-E3 READY**. Stage E completes when E3 lands.
+- **Stage E complete (E1–E3 DONE).** Research loop advisory-only under C1.
 
 ## Acceptance
 

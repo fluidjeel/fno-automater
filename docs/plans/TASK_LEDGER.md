@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 13
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-E3 (E1–E2 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: (Stage E complete; no READY desk slices).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -70,7 +70,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-E3 (E1
 | --- | --- | --- | --- |
 | ADESK-E1 | DONE | RESEARCH weekly runner + artifact + CLI | Stage E plan |
 | ADESK-E2 | DONE | Hypothesis → SHADOW experiment via existing ladder | ADESK-E1 |
-| ADESK-E3 | READY | Monthly meta-report | ADESK-E2 |
+| ADESK-E3 | DONE | Monthly meta-report (scorecards, demotions, det-vs-desk) | ADESK-E2 |
 
 ## Phase 2–3: Layer 2 control plane
 
@@ -196,6 +196,7 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: ADESK-E3 DONE — monthly meta-report (`analytics/monthly_meta_report.py`); JSON+markdown under `data/agent_runs/`; CLI `evaluate monthly-meta`; Stage E complete.
 - 2026-09-20: ADESK-E2 DONE — ResearchHypothesis + ExperimentProposal; `hypothesis_promotion.promote_improvements` feeds existing SHADOW ExperimentDefinition (capital_limit=0); ineligible stays note; unlocks E3.
 - 2026-09-20: Token-efficiency pass: ACTIVE_PLAN digest v13; CURRENT_STATE reconciled; `.cursorrules` stub; judgment prompt archived.
 - 2026-09-20: ADESK-E1 DONE — RESEARCH weekly runner (`analytics/research_weekly.py`, `contracts/research.py`); CLI `evaluate research-weekly`; artifact under `data/agent_runs/`; unlocks E2.

@@ -23,6 +23,7 @@ __all__ = [
     "Comparator",
     "ConfidenceBucket",
     "DataQuality",
+    "DemotionReason",
     "DeskRole",
     "DifferenceClass",
     "DirectionalClaim",
@@ -1000,4 +1001,18 @@ class PlaybookEditKind(StrEnum):
     TIGHTEN_THRESHOLD = "TIGHTEN_THRESHOLD"
     DISABLE_RESPONSE = "DISABLE_RESPONSE"
     REVIEW_ONLY = "REVIEW_ONLY"
+
+
+@unique
+class DemotionReason(StrEnum):
+    """Closed reasons a desk may be demoted (PART 14.2)."""
+
+    HALLUCINATION_RATE = "HALLUCINATION_RATE"
+    SCHEMA_FAILURE_RATE = "SCHEMA_FAILURE_RATE"
+    BRIER_DEGRADATION = "BRIER_DEGRADATION"
+    SAFETY_INVARIANT = "SAFETY_INVARIANT"
+    GRANT_EXPIRED = "GRANT_EXPIRED"
+    VERSION_TRIPLE_MISMATCH = "VERSION_TRIPLE_MISMATCH"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    MANUAL = "MANUAL"
 

@@ -117,3 +117,5 @@ class ExperimentProposal(VersionedModel):
         if self.status is not ImprovementStatus.PROMOTED_TO_HYPOTHESIS:
             raise ValueError("ExperimentProposal status must be PROMOTED_TO_HYPOTHESIS")
         return self
+
+
