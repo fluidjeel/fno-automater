@@ -1,10 +1,12 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage D — authority ladder (**COMPLETE** D1–D6)
+CURRENT_MILESTONE: Agent Desk Stage E — research loop (plan APPROVED; E1 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
+
+- Stage E plan APPROVED (2026-09-20); unlocks ADESK-E1 only; research/advisory only under C1.
 
 - Stage D complete under binding C1: BOUNDED = config-promotion only.
 - Live-path desk actions stay SHADOW/ADVISORY; no LLM on live order path.

@@ -5,56 +5,71 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage D — authority ladder (D1–D6).**
+Milestone: **Agent Desk Stage E — research loop (E1–E3).**
 
 ## Goal
 
-Climb authority one rung at a time under the binding **C1** decision:
-`AuthorityMode.BOUNDED` = **config-promotion only**. No LLM on the live order
-path. Live-path desk actions stay SHADOW/ADVISORY; BOUNDED is only for closed
-config-promotion proposals.
+Close the learning loop: weekly RESEARCH clusters improvements + bias battery,
+promotes eligible notes to hypotheses that enter the **existing** SHADOW
+promotion ladder (no new gate), and a monthly meta-report an operator can read
+in ~10 minutes. Advisory / research only — C1 unchanged (BOUNDED = config-
+promotion only; no live-path LLM).
 
 ## Binding decisions (do not re-litigate)
 
 - **C1 (2026-09-20):** `AuthorityMode.BOUNDED` = config-promotion only. Intraday
-  stays L3+L2 with **no LLM**. Spec Stage D table rows that grant live-path
-  BOUNDED (raw D3–D5 in AGENT_DESK_SPEC) are **re-scoped by the ledger**.
-- PART 0 hard rules: one slice per PR; no OMS/broker edits; no gateway decision
-  logic except new reject reasons; contracts strict/frozen; enums in `enums.py`;
-  no free-text except `narrative` (nothing parses it); refuse PART 17.
-- Prefer type-enforced ceilings (`size_multiplier <= 1` via Field) over runtime
-  checks when the acceptance text says "by type, not by check".
+  L3+L2, **no LLM**. Stage E does not grant live-path BOUNDED.
+- RESEARCH is weekly / ADVISORY (PART 3). Hypotheses never auto-implement.
+- Reuse `analytics/improvements.py` (`cluster_improvements`, `hypothesis_eligible`)
+  and `analytics/bias.py` — do not reinvent.
+- PART 0 hard rules: one slice per PR; no OMS/broker/gateway decision edits
+  (except new reject reason enums); contracts strict/frozen; enums in `enums.py`;
+  no free-text except `narrative`; refuse PART 17.
 
 ## Code map
 
-| Spec / ledger | Actual |
+| Spec | Actual |
 | --- | --- |
-| AuthorityGrant / demotion | `domain/contracts/authority.py`, `ai/authority.py` |
-| AgentAction closed sets | `domain/enums.py` (`BOUNDED_ACTIONS`, `ADVISORY_ACTIONS`) |
-| ENTRY / POSITION / PORTFOLIO / FRAGILITY / POSTTRADE | `ai/entry.py`, `position.py`, `portfolio_desk.py`, `fragility.py`, `posttrade.py` |
-| size_multiplier | already `le=1` on some advice contracts — D1 formalizes ConfidenceBucket + Phase-1 |
+| ImprovementRecord / clusters | `domain/contracts/improvement.py`, `analytics/improvements.py` |
+| Bias battery | `analytics/bias.py` (A6) |
+| Desk scorecard | `analytics/agent_scorecard.py` (B10) |
+| Promotion / SHADOW experiments | `domain/contracts/evaluation.py` ExecutionMode.SHADOW |
+| Agent runs dir | `data/agent_runs/` (create under repo or configurable path) |
+| RESEARCH role | `DeskRole.RESEARCH` already in enums; `packets.py` hint exists |
 
-## Build order (ledger — C1-safe; do not reorder)
+## Build order
 
 | ID | Slice | Acceptance |
 | --- | --- | --- |
-| ADESK-D1 | ConfidenceBucket enum + Phase-1 downscale-only sizing | `size_multiplier <= 1.0` enforced by type; bucket→multiplier table; tests |
-| ADESK-D2 | Promote FRAGILITY + POSTTRADE to ADVISORY | Signed AuthorityGrant; Telegram/advisory payload path; tests |
-| ADESK-D3 | PORTFOLIO BOUNDED for **config-promotion proposals only** (C1) | Veto/approve-as-order paths absent; only PROPOSE_* config actions BOUNDED |
-| ADESK-D4 | Re-scope POSITION: SHADOW/ADVISORY only for tighten/partial (**not** BOUNDED) | Mode/grant tests; live BOUNDED for TIGHTEN/PARTIAL rejected |
-| ADESK-D5 | Re-scope ENTRY: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | Same pattern as D4/D3 |
-| ADESK-D6 | Phase-2 upscale unlock (**deterministic envelope only**; never agent BOUNDED) | Upscale only via deterministic calibration gates; agent path cannot emit >1 |
+| ADESK-E1 | RESEARCH weekly runner: cluster improvements, run bias battery, propose playbook edits | Writes weekly artifact under `data/agent_runs/` with ranked clusters; tests |
+| ADESK-E2 | Hypothesis → experiment contract into existing promotion ladder | Eligible cluster → hypothesis → SHADOW experiment via **existing** gate; tests |
+| ADESK-E3 | Monthly meta-report | Desk scorecards + demotions + det-vs-desk comparison; CLI/doc artifact; tests |
 
 ## Progress
 
-- Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- **ADESK-D1..D6 DONE. Stage D complete.**
+- Stages A–D complete on `main` (tip includes D6 `2484fe2`).
+- Stage E planning APPROVED; **only ADESK-E1 READY**. E2+ BLOCKED until prior DONE.
 
-## Progress detail
+## ADESK-E1 scope (only READY code slice)
 
-- **ADESK-D1..D6 DONE.** Stage D authority ladder complete under C1.
+**In scope**
 
-## Acceptance (Stage D plan done when)
+1. `ai/research.py` (or `analytics/research_weekly.py`): pure/deterministic weekly
+   builder — input ImprovementRecords (+ optional bias inputs) → ranked clusters,
+   bias summary, closed playbook-edit proposals (enums / structured, not free
+   prose except narrative).
+2. Persist weekly artifact JSON under `data/agent_runs/` (or path from config).
+3. CLI hook if natural (`trading evaluate research-weekly` or similar).
+4. Tests with fixtures; no LLM required for the builder (LLM optional later).
 
-- ADESK-D1..D6 each DONE with green focused tests + ledger/CURRENT_STATE. **MET.**
-- Zero live-path BOUNDED actions; C1 honored. **MET.**
+**Out of scope**
+
+- Auto-implementing playbook edits.
+- New promotion ladder (E2).
+- Monthly meta-report (E3).
+- OMS/broker/live BOUNDED.
+
+## Acceptance (Stage E plan done when)
+
+- E1–E3 DONE with green focused tests + ledger/CURRENT_STATE.
+- Zero live-path LLM; hypotheses only via existing SHADOW gate.
