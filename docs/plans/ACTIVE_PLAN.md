@@ -70,13 +70,15 @@ When implementing ADESK-A1:
 - ADESK-A1: `AuthorityGrant`, `authority_grants`, demotion to OBSERVE. BOUNDED
   accepts only FamilyStance config-promotion actions; live-path and LIVE+BOUNDED
   are rejected at validate/write.
+- ADESK-A2: `AgentDecision`, append-only `agent_decisions`, `DecisionLog` writer.
+  Queryable by role and `(model_id, prompt_version, policy_version)`.
 - L4 weekly `STRATEGY_FAMILY` proposals (`AIProposal`) — the only BOUNDED
   surface under C1.
 - Paper session with software stops (still not live-safe).
 
 ## Remaining work this plan
 
-ADESK-A1 is DONE. Implement ADESK-A2 through ADESK-A9 as separate PRs in order.
+ADESK-A2 is DONE. Implement ADESK-A3 through ADESK-A9 as separate PRs in order.
 After A9, close this plan and open a Stage B planning pass (SHADOW desks). Do
 not start Stage B code in this plan.
 

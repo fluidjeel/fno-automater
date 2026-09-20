@@ -6,6 +6,7 @@ from trading.domain.contracts.advice import (
     StructureAdvice,
     StructureChoice,
 )
+from trading.domain.contracts.agent_decision import AgentDecision
 from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.authority import AuthorityGrant
 from trading.domain.contracts.base import (
@@ -118,6 +119,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
+    "AgentDecision",
     "ApprovedLeg",
     "AttentionRequest",
     "AuthorityGrant",

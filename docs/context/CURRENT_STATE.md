@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A1 DONE; ADESK-A2 READY)
+CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A2 DONE; ADESK-A3 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -40,12 +40,15 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
   estimate; contract-note cross-check still required for LIVE).
 - ADESK-A1: `AuthorityGrant` + `authority_grants` + demotion to OBSERVE. BOUNDED
   is config-promotion only; live-path actions rejected at write.
+- ADESK-A2: `AgentDecision` + `agent_decisions` + `DecisionLog`. Append-only
+  audit; query by role and model/prompt/policy versions; duplicate id fails closed.
 
 ## Verification
 
 - `uv run ruff check .` and `uv run mypy` are clean on the committed tree.
 - `tests/test_dashboard.py`, `tests/test_agent_stage0.py`, `tests/test_l4_agent.py`,
   `tests/test_authority_grant.py` (C1 BOUNDED live-path reject + OBSERVE demotion),
+  `tests/test_agent_decision.py` (DecisionLog round-trip + role/version queries),
   and the PAPER-010 focused suite pass.
 - `trading dashboard snapshot` runs without `ModuleNotFoundError`.
 
@@ -60,8 +63,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Next action
 
-Agent Desk Stage 0 complete; **ADESK-A1 done** (AuthorityGrant + C1 demotion).
-Next code is **ADESK-A2** (DecisionLog). Monday: Fyers auth, CAS depth benchmark,
+Agent Desk Stage 0 complete; **ADESK-A2 done** (DecisionLog). Next code is
+**ADESK-A3** (TradeThesis + invalidation). Monday: Fyers auth, CAS depth benchmark,
 supervised paper session. Do not treat software stops or the 60s poll as live-safe.
 
 ## Update rules
