@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A1 (Stage A plan approved; C1 = config-promotion only).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A2 (ADESK-A1 DONE; C1 BOUNDED live-path reject proven).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -19,8 +19,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A1 (St
 
 | ID | Status | Outcome | Scope / verification | Dependency |
 | --- | --- | --- | --- | --- |
-| ADESK-A1 | READY | Authority enums + `AuthorityGrant` + demotion | `DeskRole`/`AuthorityMode`/`AgentAction`; `authority_grants`; no/expired/triple-mismatch → OBSERVE; BOUNDED rejects live-path actions (C1) | All ADESK-A0.*; C1 |
-| ADESK-A2 | BLOCKED | `agent_decisions` + `DecisionLog` | Round-trip; query by role + model/prompt/policy versions | ADESK-A1 |
+| ADESK-A1 | DONE | Authority enums + `AuthorityGrant` + demotion | `tests/test_authority_grant.py`: no/expired/triple-mismatch → OBSERVE (never an error); BOUNDED + TIGHTEN_STOP/VETO_ENTRY rejected at validate/write; PAPER BOUNDED config-promotion accepted; store round-trip | All ADESK-A0.*; C1 |
+| ADESK-A2 | READY | `agent_decisions` + `DecisionLog` | Round-trip; query by role + model/prompt/policy versions | ADESK-A1 |
 | ADESK-A3 | BLOCKED | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
 | ADESK-A4 | BLOCKED | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml`; gateway reject matrix | ADESK-A1 |
 | ADESK-A5 | BLOCKED | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on budget breach | ADESK-A1 |
@@ -187,5 +187,7 @@ PAPER-010 two-tier paper-data contract: P0 gates paper entry; P1 ranking is
 observed-only (no invented IV/skew/term/depth).
 Agent Desk Stage 0 complete (ADESK-A0.1..A0.6): dashboard landed, budget ledger,
 model lineage, agent Brier, charges/docs aligned.
-Next: implement ADESK-A1 (AuthorityGrant + C1 demotion); Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
+ADESK-A1 DONE: AuthorityGrant + C1 demotion (BOUNDED = config-promotion only;
+live-path actions rejected at write; missing/expired/mismatched grant → OBSERVE).
+Next: ADESK-A2 DecisionLog; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```

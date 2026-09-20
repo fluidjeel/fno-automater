@@ -67,15 +67,18 @@ When implementing ADESK-A1:
 
 - Dashboard, monthly `agent_budget_ledger`, temp=0/seed/resolved model + artifacts,
   separate setup vs agent Brier, paper `charges_per_lot.verified_at`.
-- L4 weekly `STRATEGY_FAMILY` proposals (`AIProposal`) — the only future BOUNDED
+- ADESK-A1: `AuthorityGrant`, `authority_grants`, demotion to OBSERVE. BOUNDED
+  accepts only FamilyStance config-promotion actions; live-path and LIVE+BOUNDED
+  are rejected at validate/write.
+- L4 weekly `STRATEGY_FAMILY` proposals (`AIProposal`) — the only BOUNDED
   surface under C1.
 - Paper session with software stops (still not live-safe).
 
 ## Remaining work this plan
 
-Implement ADESK-A1 through ADESK-A9 as separate PRs in order. After A9, close this
-plan and open a Stage B planning pass (SHADOW desks). Do not start Stage B code
-in this plan.
+ADESK-A1 is DONE. Implement ADESK-A2 through ADESK-A9 as separate PRs in order.
+After A9, close this plan and open a Stage B planning pass (SHADOW desks). Do
+not start Stage B code in this plan.
 
 ## Blocking gaps (outside Stage A code)
 
