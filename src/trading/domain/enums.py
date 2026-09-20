@@ -17,6 +17,7 @@ __all__ = [
     "AgentReasonCode",
     "AssetClass",
     "AttentionBlocker",
+    "AttributionCode",
     "AuthorityMode",
     "Comparator",
     "DataQuality",
@@ -27,6 +28,7 @@ __all__ = [
     "EligibilityStatus",
     "EntryGateId",
     "Environment",
+    "EventClass",
     "Exchange",
     "ExecutionMode",
     "ExitScope",
@@ -42,6 +44,7 @@ __all__ = [
     "InvalidationSeverity",
     "InvalidationStatus",
     "LiquidityGrade",
+    "MacroEventSeverity",
     "OptionType",
     "OrderPlanState",
     "OrderState",
@@ -58,10 +61,12 @@ __all__ = [
     "ReviewSlotId",
     "RiskAction",
     "Severity",
+    "SharedFateCode",
     "Side",
     "SizingBindingConstraint",
     "SystemState",
     "TestabilityKind",
+    "ThesisVerdict",
     "TimeInForce",
     "TradeState",
     "Trigger",
@@ -862,3 +867,68 @@ class EntryGateId(StrEnum):
     VETO_CODES_REQUIRED = "VETO_CODES_REQUIRED"
     ACTION_NOT_ALLOWED = "ACTION_NOT_ALLOWED"
 
+
+@unique
+class SharedFateCode(StrEnum):
+    """Closed PORTFOLIO shared-fate taxonomy (PART 6.2)."""
+
+    SAME_SCHEDULED_EVENT = "SAME_SCHEDULED_EVENT"
+    SAME_POLICY_DIRECTION = "SAME_POLICY_DIRECTION"
+    SAME_VOLATILITY_DIRECTION = "SAME_VOLATILITY_DIRECTION"
+    SAME_LIQUIDITY_REGIME = "SAME_LIQUIDITY_REGIME"
+    SAME_EXPIRY_PIN = "SAME_EXPIRY_PIN"
+    SAME_GLOBAL_FACTOR = "SAME_GLOBAL_FACTOR"
+    SAME_THESIS_DRIVER = "SAME_THESIS_DRIVER"
+    NO_SHARED_FATE = "NO_SHARED_FATE"
+
+
+@unique
+class ThesisVerdict(StrEnum):
+    """Four-cell POSTTRADE thesis outcome (PART 9.1)."""
+
+    CORRECT_AND_PAID = "CORRECT_AND_PAID"
+    CORRECT_UNPAID = "CORRECT_UNPAID"
+    WRONG_AND_LOST = "WRONG_AND_LOST"
+    WRONG_BUT_PAID = "WRONG_BUT_PAID"
+    UNTESTED = "UNTESTED"
+
+
+@unique
+class AttributionCode(StrEnum):
+    """Primary POSTTRADE attribution (PART 9.1)."""
+
+    DIRECTION = "DIRECTION"
+    VOLATILITY = "VOLATILITY"
+    THETA = "THETA"
+    EXECUTION_SLIPPAGE = "EXECUTION_SLIPPAGE"
+    CHARGES = "CHARGES"
+    SIZING = "SIZING"
+    TIMING = "TIMING"
+    EXIT_RULE = "EXIT_RULE"
+    LUCK = "LUCK"
+
+
+@unique
+class EventClass(StrEnum):
+    """Closed MACRO event taxonomy (PART 10.2)."""
+
+    RBI_POLICY = "RBI_POLICY"
+    FED = "FED"
+    CPI = "CPI"
+    GDP = "GDP"
+    BUDGET = "BUDGET"
+    EARNINGS = "EARNINGS"
+    GEOPOLITICAL = "GEOPOLITICAL"
+    REGULATORY_SEBI = "REGULATORY_SEBI"
+    EXPIRY_MECHANICS = "EXPIRY_MECHANICS"
+    GLOBAL_RISK_OFF = "GLOBAL_RISK_OFF"
+    OTHER = "OTHER"
+
+
+@unique
+class MacroEventSeverity(StrEnum):
+    """Scheduled-event uncertainty for MacroCalendar gates."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"

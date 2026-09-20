@@ -471,6 +471,12 @@ def _evaluation_inputs(
     return package, loaded, as_of
 
 
+
+def _parse_utc(value: str) -> datetime:
+    """Parse an ISO-8601 timestamp and require UTC."""
+    return ensure_utc(datetime.fromisoformat(value))
+
+
 def _cmd_evaluate_scorecard(args: argparse.Namespace) -> int:
     try:
         package, loaded, as_of = _evaluation_inputs(args)
@@ -534,10 +540,10 @@ def _cmd_evaluate_judgment(args: argparse.Namespace) -> int:
     return 0
 
 
-
 def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
     """Print ranked improvement clusters as JSON (ADESK-A7)."""
     from pathlib import Path as _Path
+
     from trading.storage.trading_store import TradingStore
 
     store_path = _Path(args.store)
@@ -556,6 +562,39 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
         print(json.dumps(payload, indent=2, sort_keys=True))
     finally:
         store.close()
+    return 0
+
+
+def _cmd_evaluate_reviews(args: argparse.Namespace) -> int:
+    """Print review-level precision/capture JSON (ADESK-B4)."""
+    from trading.analytics.judgment import evaluate_reviews, label_review
+    from trading.domain.contracts.review_judgment import ReviewJudgmentRow
+    from trading.domain.enums import ReviewAction
+
+    raw = json.loads(Path(args.reviews).read_text(encoding="utf-8"))
+    rows: list[ReviewJudgmentRow] = []
+    for item in raw:
+        subsequent = item.get("subsequent_r")
+        action = ReviewAction(item["action"])
+        should = item.get("should_hold")
+        if should is None and subsequent is not None:
+            should = label_review(
+                action=action,
+                subsequent_r=Decimal(str(subsequent)),
+            )
+        rows.append(
+            ReviewJudgmentRow(
+                review_id=item["review_id"],
+                trade_id=item["trade_id"],
+                action=action,
+                should_hold=should,
+                held=bool(item["held"]),
+                subsequent_r=(None if subsequent is None else Decimal(str(subsequent))),
+            )
+        )
+    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    report = evaluate_reviews(tuple(rows), as_of=as_of)
+    print(report.model_dump_json(indent=2))
     return 0
 
 
@@ -1285,6 +1324,21 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC instant for STALE marking (optional)",
     )
     improvements_parser.set_defaults(func=_cmd_evaluate_improvements)
+
+    reviews_parser = evaluate_sub.add_parser(
+        "reviews",
+        help="print review-level precision and capture as JSON",
+    )
+    reviews_parser.add_argument(
+        "reviews",
+        help="path to JSON list of review rows",
+    )
+    reviews_parser.add_argument(
+        "--as-of",
+        default="",
+        help="UTC evaluation instant (default: now)",
+    )
+    reviews_parser.set_defaults(func=_cmd_evaluate_reviews)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)

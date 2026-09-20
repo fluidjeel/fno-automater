@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
 
@@ -15,9 +15,20 @@ from trading.domain.contracts.evaluation import (
     JudgmentSignalResult,
 )
 from trading.domain.contracts.identification import ConfidenceKind
+from trading.domain.contracts.review_judgment import (
+    ReviewJudgmentReport,
+    ReviewJudgmentRow,
+)
+from trading.domain.enums import ReviewAction
 from trading.domain.primitives import Money
 
-__all__ = ["JudgmentError", "evaluate_judgment", "label_signal"]
+__all__ = [
+    "JudgmentError",
+    "evaluate_judgment",
+    "evaluate_reviews",
+    "label_review",
+    "label_signal",
+]
 
 
 class JudgmentError(ValueError):
@@ -204,3 +215,46 @@ def _brier_reliability(
     if total <= 0:
         return None
     return (reliability / Decimal(total)).quantize(Decimal("0.0001"))
+
+
+def label_review(
+    *,
+    action: ReviewAction,
+    subsequent_r: Decimal | None,
+    hold_better_threshold_r: Decimal = Decimal("0"),
+) -> bool | None:
+    """Ex-post: True if HOLD was better than exiting at this slot (net of path).
+
+    subsequent_r is the R realised from slot to later exit/mark. Positive means
+    the position improved after the slot — HOLD was better. None = unlabeled.
+    """
+    if subsequent_r is None:
+        return None
+    # should_hold when subsequent path was favourable enough
+    return subsequent_r > hold_better_threshold_r
+
+
+def evaluate_reviews(
+    rows: Sequence[ReviewJudgmentRow],
+    *,
+    as_of: datetime,
+) -> ReviewJudgmentReport:
+    """Compute review-level precision and capture over labelled rows."""
+    labeled = [r for r in rows if r.should_hold is not None]
+    # precision: among held reviews, fraction where should_hold
+    held = [r for r in labeled if r.held]
+    should_hold = [r for r in labeled if r.should_hold]
+    hold_correct = [r for r in held if r.should_hold]
+    exit_rows = [r for r in labeled if not r.held]
+    exit_correct = [r for r in exit_rows if r.should_hold is False]
+    precision = _ratio(len(hold_correct), len(held))
+    capture = _ratio(len(hold_correct), len(should_hold))
+    return ReviewJudgmentReport(
+        as_of=as_of,
+        labeled_count=len(labeled),
+        hold_correct_count=len(hold_correct),
+        exit_correct_count=len(exit_correct),
+        precision=precision,
+        capture=capture,
+        rows=tuple(rows),
+    )

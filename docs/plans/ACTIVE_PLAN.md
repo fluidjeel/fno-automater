@@ -5,7 +5,7 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B3 DONE; next: B4).**
+Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B4 DONE; next: B5).**
 
 ## Goal
 
@@ -58,7 +58,8 @@ There is **no** `ai/finance.py`. Do not invent one; migrate `advise.py`.
 - ADESK-B1 DONE (`ai/runtime.py`).
 - ADESK-B2 DONE: ENTRY `StrikeShortlist`/`EntryAdvice` SHADOW hook (`ai/entry.py`, `domain/contracts/entry.py`, `tests/test_entry_desk.py`).
 - ADESK-B3 DONE: POSITION SHADOW over DeltaPacket (`ai/position.py`).
-- Next READY: **ADESK-B4** review-level labelling in judgment.
+- ADESK-B4 DONE: review precision/capture + `trading evaluate reviews`.
+- Next READY: **ADESK-B5** cold-review scheduler.
 
 ## ADESK-B1 scope (landed)
 
