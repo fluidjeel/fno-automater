@@ -247,7 +247,6 @@ def build_exit_policy(
     )
 
 
-
 def attach_terminal_policy(
     policy: ExitPolicy, terminal_policy: TerminalPolicy
 ) -> ExitPolicy:
@@ -267,6 +266,7 @@ def attach_terminal_policy(
             "ExitPolicy already carries a frozen terminal_policy; refuse replace"
         )
     return policy.model_copy(update={"terminal_policy": terminal_policy})
+
 
 def monitor_leg(intent: TradeIntent) -> IntentLeg:
     """Return the leg whose price drives LEG_PRICE exit monitoring."""

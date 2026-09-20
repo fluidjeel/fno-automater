@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C3 (ADESK-C2 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C4 (ADESK-C3 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -50,8 +50,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C3 (AD
 | --- | --- | --- | --- |
 | ADESK-C1 | DONE | TerminalPolicy contracts + eligibility gate | Stage C plan |
 | ADESK-C2 | DONE | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
-| ADESK-C3 | READY | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
-| ADESK-C4 | BLOCKED | Terminal-policy cost accounting in scorecard | ADESK-C3 |
+| ADESK-C3 | DONE | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
+| ADESK-C4 | READY | Terminal-policy cost accounting in scorecard | ADESK-C3 |
 
 ## Agent Desk Stage D — authority ladder (BLOCKED until Stage B/C; C1 = config-promotion only)
 

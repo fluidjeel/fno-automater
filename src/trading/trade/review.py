@@ -11,6 +11,10 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 
+from trading.ai.terminal_enforcement import (
+    TerminalEnforcementOutcome,
+    enforce_terminal_run_conditions,
+)
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.lifecycle import PositionReviewRecord
 from trading.domain.contracts.position import ExitPolicy, PositionState
@@ -18,6 +22,7 @@ from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
     ExitScope,
     HoldingStyle,
+    InvalidationMetric,
     ReasonCode,
     ReviewAction,
     ReviewSlotId,
@@ -62,6 +67,9 @@ class ReviewEngine:
         holding_style: HoldingStyle,
         prior_reviews: tuple[PositionReviewRecord, ...] = (),
         leg_snapshots: Mapping[str, FeatureSnapshot] | None = None,
+        run_condition_observations: (
+            Mapping[InvalidationMetric, Decimal | str] | None
+        ) = None,
     ) -> ReviewEvaluation:
         """Return one review action under the frozen entry-time policy."""
         if holding_style is not HoldingStyle.POSITIONAL:
@@ -98,6 +106,26 @@ class ReviewEngine:
                 detail="stale or invalid quotes skip this review; position stays open",
             )
 
+        if run_condition_observations is not None:
+            dte_pre = _days_to_expiry(feature)
+            enforced = enforce_terminal_run_conditions(
+                position.exit_policy,
+                observations=run_condition_observations,
+                days_to_expiry=dte_pre,
+            )
+            if enforced.requires_exit:
+                return ReviewEvaluation(
+                    action=ReviewAction.FULL_EXIT,
+                    reason_code=ReasonCode.OK,
+                    detail=enforced.detail,
+                    updated_policy=enforced.updated_policy,
+                    exit_quantity_contracts=_open_quantity(position),
+                )
+            if enforced.outcome is TerminalEnforcementOutcome.REVERTED_TO_FLATTEN:
+                # Apply revert then continue remaining review against flatten policy.
+                position = position.model_copy(
+                    update={"exit_policy": enforced.updated_policy}
+                )
         exit_eval = self._exits.evaluate(
             position,
             feature,

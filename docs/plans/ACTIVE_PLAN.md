@@ -52,7 +52,7 @@ logged/scored; the deterministic default applies when ineligible or disabled.
 ## Progress
 
 - Stage A / B complete on `main` (tip includes B10 `478227b`).
-- ADESK-C1..C2 DONE. **ADESK-C3 READY**. C4 BLOCKED until C3 DONE.
+- ADESK-C1..C3 DONE. **ADESK-C4 READY**.
 
 ## ADESK-C1 (DONE)
 
