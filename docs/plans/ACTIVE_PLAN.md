@@ -5,13 +5,13 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage B — desks in SHADOW (start: ADESK-B1).**
+Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B2 DONE; next: B3).**
 
 ## Goal
 
 Introduce a single role-based agent runtime and migrate the existing L4
 **weekly** and **advise** loops onto it, without changing live-path behaviour.
-Later Stage B rows (B2–B10) add SHADOW desks; they stay BLOCKED until B1 lands.
+B1–B2 landed. Continue B3–B10 one slice per commit; SHADOW/ADVISORY only.
 
 Stage A (ADESK-A1..A9) is **closed** on `main` (tip includes A9 packets).
 
@@ -53,7 +53,13 @@ There is **no** `ai/finance.py`. Do not invent one; migrate `advise.py`.
 | ADESK-B9 | FRAGILITY desk ADVISORY | Stress narration only |
 | ADESK-B10 | agent_scorecard + CLI | PART 14 metrics |
 
-## ADESK-B1 scope (this is the only READY code slice)
+## Progress
+
+- ADESK-B1 DONE (`ai/runtime.py`).
+- ADESK-B2 DONE: ENTRY `StrikeShortlist`/`EntryAdvice` SHADOW hook (`ai/entry.py`, `domain/contracts/entry.py`, `tests/test_entry_desk.py`).
+- Next READY: **ADESK-B3** POSITION desk SHADOW + delta packet.
+
+## ADESK-B1 scope (landed)
 
 **In scope**
 

@@ -1,8 +1,8 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 10
+ACTIVE_PLAN_VERSION: 11
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B2 (ADESK-B1 DONE; shared ai/runtime.py).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B3 (ADESK-B2 DONE; ENTRY StrikeShortlist SHADOW).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -29,13 +29,13 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B2 (AD
 | ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | DONE | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
-## Agent Desk Stage B — desks in SHADOW (plan APPROVED; implement B1 next)
+## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B2 DONE; B3 READY)
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
 | ADESK-B1 | DONE | `ai/runtime.py`; migrate `run_weekly_agent` + `run_advise_agent` | Existing `tests/test_l4_agent.py` green via shared runtime | Stage B plan |
-| ADESK-B2 | READY | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | ADESK-B1 |
-| ADESK-B3 | BLOCKED | POSITION desk + delta packet SHADOW | Stage A complete |
+| ADESK-B2 | DONE | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | `tests/test_entry_desk.py`; shadow log; disabled = no log; off-list reject |
+| ADESK-B3 | READY | POSITION desk + delta packet SHADOW | ADESK-B2 |
 | ADESK-B4 | BLOCKED | Review-level labelling in judgment | Stage A complete |
 | ADESK-B5 | BLOCKED | Cold-review scheduler + warm_cold_divergence | Stage A complete |
 | ADESK-B6 | BLOCKED | PORTFOLIO desk SHADOW | Stage A complete |

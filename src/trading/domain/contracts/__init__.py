@@ -15,12 +15,26 @@ from trading.domain.contracts.base import (
     StrictModel,
     VersionedModel,
 )
+from trading.domain.contracts.bias import (
+    BiasMetricId,
+    BiasMetricResult,
+    BiasReport,
+)
 from trading.domain.contracts.common import (
     ContractRef,
     DataQualityReport,
     ExposureSnapshot,
     Lineage,
     Versions,
+)
+from trading.domain.contracts.entry import (
+    ALLOWED_ENTRY_ACTIONS,
+    EntryAdvice,
+    EntryAdviceError,
+    LegSpec,
+    StrikeCandidate,
+    StrikeShortlist,
+    assert_candidate_on_shortlist,
 )
 from trading.domain.contracts.entry_freeze import EntryFreezeRecord
 from trading.domain.contracts.evaluation import (
@@ -34,31 +48,15 @@ from trading.domain.contracts.evaluation import (
     PromotionEligibilityResult,
     ReasonCount,
 )
-from trading.domain.contracts.hallucination import (
-    GroundingResult,
-    HallucinationEvent,
-)
-from trading.domain.contracts.improvement import (
-    ImprovementCluster,
-    ImprovementRecord,
-)
-from trading.domain.contracts.bias import (
-    BiasMetricId,
-    BiasMetricResult,
-    BiasReport,
-)
-from trading.domain.contracts.stress import (
-    FragilityFlag,
-    ScenarioResult,
-    StressReport,
-    StressScenario,
-    StressScenarioId,
-)
 from trading.domain.contracts.exposure import (
     CorrelationPair,
     EventOverlap,
     ExposureReport,
     NotionalBucket,
+)
+from trading.domain.contracts.hallucination import (
+    GroundingResult,
+    HallucinationEvent,
 )
 from trading.domain.contracts.identification import (
     CandidateBinding,
@@ -70,6 +68,10 @@ from trading.domain.contracts.identification import (
     StructureKind,
     TrendState,
     VolatilityState,
+)
+from trading.domain.contracts.improvement import (
+    ImprovementCluster,
+    ImprovementRecord,
 )
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import (
@@ -140,12 +142,20 @@ from trading.domain.contracts.snapshot import (
     MarketQuote,
     SnapshotTimes,
 )
+from trading.domain.contracts.stress import (
+    FragilityFlag,
+    ScenarioResult,
+    StressReport,
+    StressScenario,
+    StressScenarioId,
+)
 from trading.domain.contracts.trade_thesis import (
     InvalidationCondition,
     TradeThesis,
 )
 
 __all__ = [
+    "ALLOWED_ENTRY_ACTIONS",
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
@@ -153,6 +163,9 @@ __all__ = [
     "ApprovedLeg",
     "AttentionRequest",
     "AuthorityGrant",
+    "BiasMetricId",
+    "BiasMetricResult",
+    "BiasReport",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
@@ -164,6 +177,8 @@ __all__ = [
     "CorrelationPair",
     "DataQualityReport",
     "DerivativesContext",
+    "EntryAdvice",
+    "EntryAdviceError",
     "EntryFreezeRecord",
     "EntryPolicy",
     "EventOverlap",
@@ -172,23 +187,16 @@ __all__ = [
     "ExitTemplate",
     "ExperimentDefinition",
     "ExposureReport",
-    "StressReport",
-    "BiasReport",
-    "ImprovementRecord",
-    "HallucinationEvent",
-    "GroundingResult",
-    "ImprovementCluster",
-    "BiasMetricId",
-    "BiasMetricResult",
-    "StressScenario",
-    "StressScenarioId",
-    "FragilityFlag",
-    "ScenarioResult",
     "ExposureSnapshot",
     "FamilyAction",
     "FeatureSnapshot",
     "FillSimulation",
+    "FragilityFlag",
     "Greeks",
+    "GroundingResult",
+    "HallucinationEvent",
+    "ImprovementCluster",
+    "ImprovementRecord",
     "InstrumentSpec",
     "IntentConstraints",
     "IntentLeg",
@@ -196,6 +204,7 @@ __all__ = [
     "JudgmentReport",
     "JudgmentSignalResult",
     "LegQuoteRef",
+    "LegSpec",
     "Lineage",
     "MacroStatus",
     "MarketQuote",
@@ -234,6 +243,7 @@ __all__ = [
     "ReconciliationResult",
     "RiskDecision",
     "RouteDecision",
+    "ScenarioResult",
     "SessionProtectionState",
     "SetupFeatures",
     "SizingDecision",
@@ -241,7 +251,12 @@ __all__ = [
     "SizingLimits",
     "SizingRequest",
     "SnapshotTimes",
+    "StressReport",
+    "StressScenario",
+    "StressScenarioId",
     "StrictModel",
+    "StrikeCandidate",
+    "StrikeShortlist",
     "StructureAdvice",
     "StructureChoice",
     "StructureKind",
@@ -252,4 +267,5 @@ __all__ = [
     "VersionedModel",
     "Versions",
     "VolatilityState",
+    "assert_candidate_on_shortlist",
 ]

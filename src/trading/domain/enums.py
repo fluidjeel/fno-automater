@@ -14,6 +14,7 @@ __all__ = [
     "CONFIG_PROMOTION_ACTIONS",
     "LIVE_PATH_ACTIONS",
     "AgentAction",
+    "AgentReasonCode",
     "AssetClass",
     "AttentionBlocker",
     "AuthorityMode",
@@ -24,6 +25,7 @@ __all__ = [
     "DirectionalClaim",
     "DriverCode",
     "EligibilityStatus",
+    "EntryGateId",
     "Environment",
     "Exchange",
     "ExecutionMode",
@@ -31,16 +33,15 @@ __all__ = [
     "FamilyStance",
     "FillOutcome",
     "GateOutcome",
-    "ImprovementArea",
-    "TestabilityKind",
-    "ImprovementStatus",
-    "AgentReasonCode",
     "HoldingStyle",
+    "ImprovementArea",
+    "ImprovementStatus",
     "InstrumentKind",
     "IntentState",
     "InvalidationMetric",
     "InvalidationSeverity",
     "InvalidationStatus",
+    "LiquidityGrade",
     "OptionType",
     "OrderPlanState",
     "OrderState",
@@ -60,9 +61,11 @@ __all__ = [
     "Side",
     "SizingBindingConstraint",
     "SystemState",
+    "TestabilityKind",
     "TimeInForce",
     "TradeState",
     "Trigger",
+    "VetoCode",
 ]
 
 
@@ -823,4 +826,39 @@ class AgentReasonCode(StrEnum):
     LIQUIDITY_ADEQUATE = "LIQUIDITY_ADEQUATE"
     EVENT_CLEAR = "EVENT_CLEAR"
     STRUCTURE_DEFINED_RISK = "STRUCTURE_DEFINED_RISK"
+
+
+@unique
+class LiquidityGrade(StrEnum):
+    """Deterministic liquidity floor for strike shortlist candidates."""
+
+    A = "A"
+    B = "B"
+    C = "C"
+
+
+@unique
+class VetoCode(StrEnum):
+    """Closed ENTRY veto vocabulary. Required when action is VETO_ENTRY."""
+
+    THESIS_WEAK = "THESIS_WEAK"
+    LIQUIDITY_MARGINAL = "LIQUIDITY_MARGINAL"
+    EVENT_RISK = "EVENT_RISK"
+    CORRELATION_OVERLAP = "CORRELATION_OVERLAP"
+    SIZE_TOO_LARGE = "SIZE_TOO_LARGE"
+    SPREAD_WIDE = "SPREAD_WIDE"
+    DEPTH_GAP = "DEPTH_GAP"
+    OTHER_GROUNDED = "OTHER_GROUNDED"
+
+
+@unique
+class EntryGateId(StrEnum):
+    """Closed gate ids ENTRY advice may cite in failed_gate_ids."""
+
+    SHORTLIST_TOO_SMALL = "SHORTLIST_TOO_SMALL"
+    CANDIDATE_NOT_ON_SHORTLIST = "CANDIDATE_NOT_ON_SHORTLIST"
+    SIZE_MULTIPLIER_INVALID = "SIZE_MULTIPLIER_INVALID"
+    THESIS_REQUIRED = "THESIS_REQUIRED"
+    VETO_CODES_REQUIRED = "VETO_CODES_REQUIRED"
+    ACTION_NOT_ALLOWED = "ACTION_NOT_ALLOWED"
 

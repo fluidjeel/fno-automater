@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage B — SHADOW desks (ADESK-B1 DONE; B2 READY)
+CURRENT_MILESTONE: Agent Desk Stage B — SHADOW desks (ADESK-B2 DONE; B3 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -13,6 +13,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - Stage A (ADESK-A1..A9) closed on `main` (A9 packets `395b6aa` lineage).
 - Stage B plan APPROVED; **ADESK-B1 DONE**: `ai/runtime.py` shared tool loop;
   weekly/advise thin wrappers (`tests/test_l4_agent.py`, `tests/test_ai_runtime.py`).
+- **ADESK-B2 DONE**: ENTRY `StrikeShortlist`/`EntryAdvice` + `maybe_log_entry_shadow`
+  (`tests/test_entry_desk.py`); SHADOW log only; disabled leaves path unchanged.
 
 ## Implemented (Agent Desk)
 
@@ -33,8 +35,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 ## Verification
 
 - Stage A rows ADESK-A1..A9 marked DONE in `docs/plans/TASK_LEDGER.md`.
-- Focused suites above plus `tests/test_l4_agent.py` are the regression gate
-  for B1 (must stay green through the runtime migration).
+- Focused suites above plus `tests/test_l4_agent.py` / `tests/test_entry_desk.py`
+  are the regression gate for B1–B2.
 
 ## Blocking gaps
 
