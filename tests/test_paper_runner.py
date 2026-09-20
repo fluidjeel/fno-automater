@@ -308,6 +308,10 @@ class TestPaperCycle:
             instruments={option.contract.symbol: _option_spec()},
             execution_mode=ExecutionMode.PAPER,
             execute=True,
+            event_risk_state=f.event_risk_state(
+                as_of=cas_now - timedelta(minutes=1),
+                expires_at=cas_now + timedelta(hours=1),
+            ),
             macro=MacroAssessment(
                 regime="RISK_ON",
                 directional_bias=MacroBias.BULLISH,
