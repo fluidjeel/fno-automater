@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 11
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B8 (ADESK-B7 DONE; MACRO calendar + injection).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B9 (ADESK-B8 DONE; POSTTRADE attribution).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -29,7 +29,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B8 (AD
 | ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | DONE | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
-## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B7 DONE; B8 READY)
+## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B8 DONE; B9 READY)
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
@@ -40,8 +40,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B8 (AD
 | ADESK-B5 | DONE | Cold-review scheduler + warm_cold_divergence | `tests/test_cold_review.py`; every 5th dual-path |
 | ADESK-B6 | DONE | PORTFOLIO desk SHADOW | `tests/test_portfolio_desk.py`; SAME_THESIS_DRIVER recall |
 | ADESK-B7 | DONE | MACRO desk + MacroCalendar + injection suite | `tests/test_macro_desk.py`; scheduled gate + injection |
-| ADESK-B8 | READY | POSTTRADE desk + TradeAttribution | ADESK-B7 |
-| ADESK-B9 | BLOCKED | FRAGILITY desk ADVISORY | Stage A complete |
+| ADESK-B8 | DONE | POSTTRADE desk + TradeAttribution | `tests/test_posttrade_desk.py`; dual-entry hash + four-cell |
+| ADESK-B9 | READY | FRAGILITY desk ADVISORY | ADESK-B8 |
 | ADESK-B10 | BLOCKED | agent_scorecard.py + CLI | Stage A complete |
 
 ## Agent Desk Stage C — terminal policy (BLOCKED until Stage A complete)
