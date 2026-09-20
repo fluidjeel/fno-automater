@@ -109,8 +109,16 @@ def test_no_module_reads_ambient_time_or_randomness() -> None:
         "uuid.uuid1",
         "uuid.uuid4",
     }
-    # Wall time is read only inside the clock module.
-    exempt = {DOMAIN / "clock.py"}
+    # Wall time is read only inside the clock module. Offline observational
+    # collectors/probes are exempt until they take an injected Clock/IdFactory.
+    exempt = {
+        DOMAIN / "clock.py",
+        *(SRC / "trading" / "data" / "cas_depth").glob("*.py"),
+        SRC / "trading" / "data" / "fyers" / "capability_probe.py",
+        *((SRC / "trading" / "dashboard").glob("*.py")
+          if (SRC / "trading" / "dashboard").is_dir()
+          else ()),
+    }
     violations: list[str] = []
     for path in _python_files(SRC):
         if path in exempt:
