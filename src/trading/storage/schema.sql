@@ -133,3 +133,22 @@ CREATE INDEX IF NOT EXISTS idx_agent_decisions_versions_created
 CREATE INDEX IF NOT EXISTS idx_agent_decisions_created
     ON agent_decisions (created_at);
 
+
+
+CREATE TABLE IF NOT EXISTS improvement_records (
+    record_id TEXT PRIMARY KEY,
+    area TEXT NOT NULL,
+    claim_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    occurrences INTEGER NOT NULL,
+    estimated_cost_r TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    author TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_improvement_records_area_claim
+    ON improvement_records (area, claim_key);
+
+CREATE INDEX IF NOT EXISTS idx_improvement_records_status
+    ON improvement_records (status, opened_at);

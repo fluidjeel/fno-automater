@@ -31,6 +31,9 @@ __all__ = [
     "FamilyStance",
     "FillOutcome",
     "GateOutcome",
+    "ImprovementArea",
+    "TestabilityKind",
+    "ImprovementStatus",
     "HoldingStyle",
     "InstrumentKind",
     "IntentState",
@@ -762,4 +765,47 @@ class InvalidationStatus(StrEnum):
     HOLDING = "HOLDING"
     TRIGGERED = "TRIGGERED"
     MISSING_OBSERVATION = "MISSING_OBSERVATION"
+
+
+@unique
+class ImprovementArea(StrEnum):
+    """Closed taxonomy for ImprovementRecord.area (PART 9.2)."""
+
+    ENTRY_TIMING = "ENTRY_TIMING"
+    STRIKE_SELECTION = "STRIKE_SELECTION"
+    SIZING = "SIZING"
+    EXIT_RULE = "EXIT_RULE"
+    CORRELATION = "CORRELATION"
+    DATA_GAP = "DATA_GAP"
+    NEWS_COVERAGE = "NEWS_COVERAGE"
+    EXECUTION = "EXECUTION"
+    COST = "COST"
+    RISK_LIMIT = "RISK_LIMIT"
+    THESIS_QUALITY = "THESIS_QUALITY"
+    TOOLING = "TOOLING"
+    PROCESS = "PROCESS"
+
+
+@unique
+class TestabilityKind(StrEnum):
+    """How an improvement claim can be verified."""
+
+    BACKTEST = "BACKTEST"
+    SHADOW_RULE = "SHADOW_RULE"
+    CONFIG_CHANGE = "CONFIG_CHANGE"
+    CODE_CHANGE = "CODE_CHANGE"
+    DATA_ACQUISITION = "DATA_ACQUISITION"
+    NOT_TESTABLE = "NOT_TESTABLE"
+
+
+@unique
+class ImprovementStatus(StrEnum):
+    """Lifecycle of an ImprovementRecord."""
+
+    OPEN = "OPEN"
+    CLUSTERED = "CLUSTERED"
+    PROMOTED_TO_HYPOTHESIS = "PROMOTED_TO_HYPOTHESIS"
+    IMPLEMENTED = "IMPLEMENTED"
+    REJECTED = "REJECTED"
+    STALE = "STALE"
 

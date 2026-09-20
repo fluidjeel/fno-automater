@@ -3,6 +3,13 @@
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.fills import simulate_fill, simulate_legs
 from trading.analytics.judgment import JudgmentError, evaluate_judgment, label_signal
+from trading.analytics.improvements import (
+    apply_stale_status,
+    cluster_improvements,
+    hypothesis_eligible,
+    merge_duplicate,
+    normalize_claim_key,
+)
 from trading.analytics.bias import (
     BiasBatteryBands,
     DecisionBiasInput,
@@ -37,6 +44,11 @@ __all__ = [
     "TradeOutcomeInput",
     "WarmColdPair",
     "build_bias_report",
+    "apply_stale_status",
+    "cluster_improvements",
+    "hypothesis_eligible",
+    "merge_duplicate",
+    "normalize_claim_key",
     "evaluate_tail_budget",
     "evaluate_judgment",
     "label_signal",

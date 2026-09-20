@@ -19,11 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from trading.domain.clock import Clock
+from trading.analytics.improvements import merge_duplicate, normalize_claim_key
 from trading.domain.contracts import (
     AgentDecision,
     AuthorityGrant,
     CapitalReservation,
     EntryFreezeRecord,
+    ImprovementRecord,
     OrderEvent,
     PositionLifecycleRecord,
     ProtectionStateRecord,
@@ -34,6 +36,9 @@ from trading.domain.contracts import (
 )
 from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.enums import (
+    ImprovementArea,
+    ImprovementStatus,
+
     DeskRole,
     Exchange,
     ReasonCode,
@@ -775,6 +780,81 @@ class TradingStore:
             rows = self._conn.execute(sql, params).fetchall()
         return tuple(
             AgentDecision.model_validate(json.loads(row["payload"])) for row in rows
+        )
+
+
+    def upsert_improvement_record(self, record: ImprovementRecord) -> ImprovementRecord:
+        """Insert or dedupe-merge by (area, claim_key). Returns stored row."""
+        key = record.claim_key or normalize_claim_key(record.area, record.claim)
+        verified = ImprovementRecord.model_validate(
+            {**record.model_dump(mode="json"), "claim_key": key}
+        )
+        with self._transaction():
+            row = self._conn.execute(
+                "SELECT payload FROM improvement_records "
+                "WHERE area = ? AND claim_key = ?",
+                (verified.area.value, verified.claim_key),
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO improvement_records ("
+                    "record_id, area, claim_key, status, occurrences, "
+                    "estimated_cost_r, opened_at, author, payload"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        verified.record_id,
+                        verified.area.value,
+                        verified.claim_key,
+                        verified.status.value,
+                        verified.occurrences,
+                        str(verified.estimated_cost_r),
+                        _utc_iso(verified.opened_at),
+                        verified.author.value,
+                        verified.model_dump_json(),
+                    ),
+                )
+                return verified
+            existing = ImprovementRecord.model_validate(json.loads(row["payload"]))
+            merged = merge_duplicate(existing, verified)
+            self._conn.execute(
+                "UPDATE improvement_records SET "
+                "status = ?, occurrences = ?, estimated_cost_r = ?, payload = ? "
+                "WHERE area = ? AND claim_key = ?",
+                (
+                    merged.status.value,
+                    merged.occurrences,
+                    str(merged.estimated_cost_r),
+                    merged.model_dump_json(),
+                    merged.area.value,
+                    merged.claim_key,
+                ),
+            )
+            return merged
+
+    def list_improvement_records(
+        self,
+        *,
+        area: ImprovementArea | None = None,
+        status: ImprovementStatus | None = None,
+    ) -> tuple[ImprovementRecord, ...]:
+        """Return improvement records newest-first, optionally filtered."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if area is not None:
+            clauses.append("area = ?")
+            params.append(area.value)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status.value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = (
+            "SELECT payload FROM improvement_records "
+            f"{where} ORDER BY opened_at DESC, record_id ASC"
+        )
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return tuple(
+            ImprovementRecord.model_validate(json.loads(row["payload"])) for row in rows
         )
 
     def get_entry_freeze(self) -> EntryFreezeRecord | None:

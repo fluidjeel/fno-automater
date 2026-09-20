@@ -26,6 +26,7 @@ from trading.ai.ports import LlmTimeoutError, LlmTurn
 from trading.ai.recording import RecordingLlm, persist_agent_run
 from trading.ai.tools import ToolContext
 from trading.analytics.eligibility import evaluate_eligibility
+from trading.analytics.improvements import apply_stale_status, cluster_improvements
 from trading.analytics.judgment import JudgmentError, evaluate_judgment
 from trading.analytics.scorecard import EvaluationError, build_scorecard
 from trading.config import (
@@ -530,6 +531,31 @@ def _cmd_evaluate_judgment(args: argparse.Namespace) -> int:
         print(f"evaluate: {exc}", file=sys.stderr)
         return 1
     print(report.model_dump_json(indent=2))
+    return 0
+
+
+
+def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
+    """Print ranked improvement clusters as JSON (ADESK-A7)."""
+    from pathlib import Path as _Path
+    from trading.storage.trading_store import TradingStore
+
+    store_path = _Path(args.store)
+    store = TradingStore.open(store_path)
+    try:
+        records = list(store.list_improvement_records())
+        if args.as_of:
+            as_of = _parse_utc(args.as_of)
+            records = list(apply_stale_status(records, as_of=as_of))
+        clusters = cluster_improvements(records)
+        payload = {
+            "cluster_count": len(clusters),
+            "record_count": len(records),
+            "clusters": [c.model_dump(mode="json") for c in clusters],
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    finally:
+        store.close()
     return 0
 
 
@@ -1242,7 +1268,23 @@ def main(argv: list[str] | None = None) -> int:
             default="",
             help="UTC evaluation instant (default: cohort observation_end)",
         )
-        operation.set_defaults(func=handler)
+
+    # ADESK-A7: improvements uses a store path, not a cohort package.
+    improvements_parser = evaluate_sub.add_parser(
+        "improvements",
+        help="print ranked ImprovementRecord clusters as JSON",
+    )
+    improvements_parser.add_argument(
+        "--store",
+        default="data/trading.sqlite",
+        help="path to TradingStore sqlite file",
+    )
+    improvements_parser.add_argument(
+        "--as-of",
+        default="",
+        help="UTC instant for STALE marking (optional)",
+    )
+    improvements_parser.set_defaults(func=_cmd_evaluate_improvements)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)

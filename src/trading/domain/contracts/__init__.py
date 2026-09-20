@@ -34,6 +34,10 @@ from trading.domain.contracts.evaluation import (
     PromotionEligibilityResult,
     ReasonCount,
 )
+from trading.domain.contracts.improvement import (
+    ImprovementCluster,
+    ImprovementRecord,
+)
 from trading.domain.contracts.bias import (
     BiasMetricId,
     BiasMetricResult,
@@ -166,6 +170,8 @@ __all__ = [
     "ExposureReport",
     "StressReport",
     "BiasReport",
+    "ImprovementRecord",
+    "ImprovementCluster",
     "BiasMetricId",
     "BiasMetricResult",
     "StressScenario",
