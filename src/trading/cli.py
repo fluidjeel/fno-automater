@@ -471,7 +471,6 @@ def _evaluation_inputs(
     return package, loaded, as_of
 
 
-
 def _parse_utc(value: str) -> datetime:
     """Parse an ISO-8601 timestamp and require UTC."""
     return ensure_utc(datetime.fromisoformat(value))
@@ -595,6 +594,24 @@ def _cmd_evaluate_reviews(args: argparse.Namespace) -> int:
     as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
     report = evaluate_reviews(tuple(rows), as_of=as_of)
     print(report.model_dump_json(indent=2))
+    return 0
+
+
+def _cmd_evaluate_desk(args: argparse.Namespace) -> int:
+    """Print PART 14 agent desk scorecard as JSON (ADESK-B10)."""
+    from trading.analytics.agent_scorecard import build_agent_scorecard
+    from trading.domain.enums import DeskRole
+    from trading.storage.trading_store import TradingStore
+
+    role = DeskRole(args.role)
+    as_of = _parse_utc(args.as_of) if args.as_of else datetime.now(tz=UTC)
+    store = TradingStore.open(Path(args.store), clock=WallClock())
+    try:
+        decisions = store.list_agent_decisions(role=role)
+        card = build_agent_scorecard(decisions, role=role, as_of=as_of)
+        print(card.model_dump_json(indent=2))
+    finally:
+        store.close()
     return 0
 
 
@@ -1307,6 +1324,7 @@ def main(argv: list[str] | None = None) -> int:
             default="",
             help="UTC evaluation instant (default: cohort observation_end)",
         )
+        operation.set_defaults(func=handler)
 
     # ADESK-A7: improvements uses a store path, not a cohort package.
     improvements_parser = evaluate_sub.add_parser(
@@ -1339,6 +1357,27 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC evaluation instant (default: now)",
     )
     reviews_parser.set_defaults(func=_cmd_evaluate_reviews)
+
+    desk_parser = evaluate_sub.add_parser(
+        "desk",
+        help="print Agent Desk PART 14 scorecard for one role as JSON",
+    )
+    desk_parser.add_argument(
+        "--role",
+        required=True,
+        help="DeskRole value (ENTRY, POSITION, ...)",
+    )
+    desk_parser.add_argument(
+        "--store",
+        default="data/trading.sqlite",
+        help="path to TradingStore sqlite file",
+    )
+    desk_parser.add_argument(
+        "--as-of",
+        default="",
+        help="UTC evaluation instant (default: now)",
+    )
+    desk_parser.set_defaults(func=_cmd_evaluate_desk)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)

@@ -1,8 +1,8 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 11
+ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B10 (ADESK-B9 DONE; FRAGILITY narration).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage B ADESK-B1..B10 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -29,7 +29,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B10 (A
 | ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | DONE | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
-## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B9 DONE; B10 READY)
+## Agent Desk Stage B — desks in SHADOW (COMPLETE: B1..B10 DONE)
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
@@ -42,7 +42,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B10 (A
 | ADESK-B7 | DONE | MACRO desk + MacroCalendar + injection suite | `tests/test_macro_desk.py`; scheduled gate + injection |
 | ADESK-B8 | DONE | POSTTRADE desk + TradeAttribution | `tests/test_posttrade_desk.py`; dual-entry hash + four-cell |
 | ADESK-B9 | DONE | FRAGILITY desk ADVISORY | `tests/test_fragility_desk.py`; Telegram line builder |
-| ADESK-B10 | READY | agent_scorecard.py + CLI | ADESK-B9 |
+| ADESK-B10 | DONE | agent_scorecard.py + CLI | `trading evaluate desk --role`; `tests/test_agent_scorecard.py` |
 
 ## Agent Desk Stage C — terminal policy (BLOCKED until Stage A complete)
 

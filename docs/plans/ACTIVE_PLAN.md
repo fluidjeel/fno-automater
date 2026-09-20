@@ -5,13 +5,13 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B9 DONE; next: B10).**
+Milestone: **Agent Desk Stage B — desks in SHADOW (COMPLETE: B1..B10 DONE).**
 
 ## Goal
 
 Introduce a single role-based agent runtime and migrate the existing L4
 **weekly** and **advise** loops onto it, without changing live-path behaviour.
-B1–B2 landed. Continue B3–B10 one slice per commit; SHADOW/ADVISORY only.
+Stage B B1–B10 landed on main. SHADOW/ADVISORY only; no intraday LLM.
 
 Stage A (ADESK-A1..A9) is **closed** on `main` (tip includes A9 packets).
 
@@ -64,7 +64,8 @@ There is **no** `ai/finance.py`. Do not invent one; migrate `advise.py`.
 - ADESK-B7 DONE: MacroCalendar + adversarial headline suite.
 - ADESK-B8 DONE: TradeAttribution + dual-entry journal hash.
 - ADESK-B9 DONE: FRAGILITY StressReport narration (ADVISORY).
-- Next READY: **ADESK-B10** agent scorecard.
+- ADESK-B10 DONE: agent_scorecard + `trading evaluate desk --role`.
+- Stage B complete; Stage C remains BLOCKED until planned.
 
 ## ADESK-B1 scope (landed)
 
