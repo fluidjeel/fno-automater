@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D3 (ADESK-D2 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D4 (ADESK-D3 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -59,8 +59,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D3 (AD
 | --- | --- | --- | --- |
 | ADESK-D1 | DONE | Confidence-bucket enum + Phase-1 downscale-only sizing | Stage D plan |
 | ADESK-D2 | DONE | Promote FRAGILITY and POSTTRADE to ADVISORY | ADESK-D1 |
-| ADESK-D3 | READY | Promote PORTFOLIO to BOUNDED for config-promotion proposals only (C1) | ADESK-D2 |
-| ADESK-D4 | BLOCKED | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | Stage B complete; C1 forbids live-path BOUNDED |
+| ADESK-D3 | DONE | Promote PORTFOLIO to BOUNDED for config-promotion proposals only (C1) | ADESK-D2 |
+| ADESK-D4 | READY | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | ADESK-D3 |
 | ADESK-D5 | BLOCKED | Re-scope ENTRY desk: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | Stage B complete; C1 |
 | ADESK-D6 | BLOCKED | Phase-2 upscale unlock (deterministic envelope only; never agent BOUNDED) | Stage D prerequisites; C1 |
 
@@ -196,6 +196,7 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: ADESK-D3 DONE — PORTFOLIO BOUNDED config-promotion only (`BOUNDED_ACTIONS`, `maybe_log_portfolio_config_promotion`, `tests/test_portfolio_bounded.py`).
 - 2026-09-20: ADESK-D2 DONE — FRAGILITY/POSTTRADE grant-backed ADVISORY (`tests/test_advisory_promotion.py`); demote OBSERVE without grant.
 - 2026-09-20: ADESK-D1 DONE — ConfidenceBucket + Phase-1 downscale map (`confidence_sizing.py`, `tests/test_confidence_sizing.py`); agent `size_multiplier` le=1; unlocks D2.
 - 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.

@@ -11,6 +11,7 @@ from enum import StrEnum, unique
 
 __all__ = [
     "ADVISORY_ACTIONS",
+    "BOUNDED_ACTIONS",
     "CONFIG_PROMOTION_ACTIONS",
     "LIVE_PATH_ACTIONS",
     "AgentAction",
@@ -580,6 +581,8 @@ CONFIG_PROMOTION_ACTIONS: frozenset[AgentAction] = frozenset(
         AgentAction.PROPOSE_FAMILY_HALT,
     }
 )
+# C1 / ACTIVE_PLAN: BOUNDED may attach only to this closed set.
+BOUNDED_ACTIONS: frozenset[AgentAction] = CONFIG_PROMOTION_ACTIONS
 LIVE_PATH_ACTIONS: frozenset[AgentAction] = frozenset(
     {
         AgentAction.VETO_ENTRY,

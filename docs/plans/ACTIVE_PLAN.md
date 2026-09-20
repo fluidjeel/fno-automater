@@ -48,24 +48,23 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- ADESK-D1..D2 DONE; **ADESK-D3 READY**. D4+ BLOCKED until prior DONE.
+- ADESK-D1..D3 DONE; **ADESK-D4 READY**. D5+ BLOCKED until prior DONE.
 
 ## Progress detail
 
-- **ADESK-D1 DONE:** ConfidenceBucket + Phase-1 sizing.
-- **ADESK-D2 DONE:** FRAGILITY/POSTTRADE ADVISORY via signed grant.
+- **ADESK-D1..D3 DONE.**
 
-## ADESK-D3 scope (only READY code slice)
+## ADESK-D4 scope (only READY code slice)
 
 **In scope**
 
-1. PORTFOLIO BOUNDED solely for PROPOSE_* config-promotion actions.
-2. Prove veto/approve-as-order cannot be BOUNDED.
-3. Tests for grant/mode partition.
+1. POSITION: SHADOW/ADVISORY only for TIGHTEN_STOP/PARTIAL_EXIT.
+2. Refuse BOUNDED grants for those live-path actions.
+3. Mode/grant tests.
 
 **Out of scope**
 
-- Live-path BOUNDED for VETO_ENTRY as order; OMS/broker edits.
+- Live BOUNDED tighten/partial; OMS/broker edits.
 
 ## Acceptance (Stage D plan done when)
 
