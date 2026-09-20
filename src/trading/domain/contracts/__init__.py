@@ -108,6 +108,14 @@ from trading.domain.contracts.paper_data import (
     PaperDataRequirements,
     PaperDataTier,
 )
+from trading.domain.contracts.phase2_sizing import (
+    PHASE2_HARD_CAP,
+    PHASE2_M_CEILING_DEFAULT,
+    CalibrationGate,
+    Phase2UpscaleEnvelope,
+    agent_size_multiplier_rejected_above_one,
+    apply_deterministic_upscale,
+)
 from trading.domain.contracts.portfolio import (
     PendingOrderSummary,
     PortfolioSnapshot,
@@ -175,6 +183,8 @@ __all__ = [
     "PHASE1_M_CEILING",
     "PHASE1_M_FLOOR",
     "PHASE1_SIZE_MULTIPLIERS",
+    "PHASE2_HARD_CAP",
+    "PHASE2_M_CEILING_DEFAULT",
     "SCHEMA_VERSION",
     "AIProposal",
     "AdviceStance",
@@ -185,6 +195,7 @@ __all__ = [
     "BiasMetricId",
     "BiasMetricResult",
     "BiasReport",
+    "CalibrationGate",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",
@@ -244,6 +255,7 @@ __all__ = [
     "ParameterProposal",
     "PendingOrderSummary",
     "Phase1SizingAdvice",
+    "Phase2UpscaleEnvelope",
     "PlannedOrder",
     "PortfolioSnapshot",
     "PortfolioView",
@@ -291,6 +303,8 @@ __all__ = [
     "VersionedModel",
     "Versions",
     "VolatilityState",
+    "agent_size_multiplier_rejected_above_one",
+    "apply_deterministic_upscale",
     "assert_candidate_on_shortlist",
     "bucket_from_confidence",
     "phase1_size_multiplier",

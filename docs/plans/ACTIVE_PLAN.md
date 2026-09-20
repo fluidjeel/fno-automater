@@ -48,25 +48,13 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- ADESK-D1..D5 DONE; **ADESK-D6 READY**.
+- **ADESK-D1..D6 DONE. Stage D complete.**
 
 ## Progress detail
 
-- **ADESK-D1..D5 DONE.**
-
-## ADESK-D6 scope (only READY code slice)
-
-**In scope**
-
-1. Deterministic Phase-2 calibration gate + ceiling.
-2. Upscale only via deterministic envelope; agent path cannot emit m>1.
-3. Tests: calibrated upscale OK; agent BOUNDED upscale rejected.
-
-**Out of scope**
-
-- Agent BOUNDED upscale; OMS/broker edits.
+- **ADESK-D1..D6 DONE.** Stage D authority ladder complete under C1.
 
 ## Acceptance (Stage D plan done when)
 
-- ADESK-D1..D6 each DONE with green focused tests + ledger/CURRENT_STATE.
-- Zero live-path BOUNDED actions; C1 honored.
+- ADESK-D1..D6 each DONE with green focused tests + ledger/CURRENT_STATE. **MET.**
+- Zero live-path BOUNDED actions; C1 honored. **MET.**
