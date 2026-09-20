@@ -23,6 +23,7 @@ __all__ = [
     "FEATURE_TRADE_FLOW_IMBALANCE",
     "cas_snapshot_version",
     "compute_cas_features",
+    "select_prior_depth",
     "with_cas_feature_set",
 ]
 
@@ -63,6 +64,23 @@ def compute_cas_features(events: Sequence[CanonicalMarketEvent]) -> dict[str, De
     if instability is not None:
         features[FEATURE_QUOTE_INSTABILITY] = instability
     return features
+
+
+def select_prior_depth(
+    stored: Sequence[CanonicalMarketEvent],
+    *,
+    current: CanonicalMarketEvent,
+) -> CanonicalMarketEvent | None:
+    """Latest earlier DEPTH_SNAPSHOT. Absence stays absent; nothing is invented."""
+    priors = [
+        event
+        for event in stored
+        if event.event_type == "DEPTH_SNAPSHOT"
+        and event.event_time < current.event_time
+    ]
+    if not priors:
+        return None
+    return max(priors, key=lambda event: event.event_time)
 
 
 def cas_snapshot_version(features: dict[str, Decimal]) -> str | None:

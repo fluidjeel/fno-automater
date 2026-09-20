@@ -13,6 +13,7 @@ from trading.data.cas_features import (
     CAS_FEATURE_KEYS,
     CAS_FEATURE_SET_VERSION,
     compute_cas_features,
+    select_prior_depth,
     with_cas_feature_set,
 )
 from trading.data.config import UnderlyingConfig
@@ -111,6 +112,23 @@ def test_two_depths_complete_the_feature_set() -> None:
 
 def test_missing_depth_yields_no_defaults() -> None:
     assert compute_cas_features(()) == {}
+    first = _depth(
+        "d1", buy=100, sell=100, bid="24500", ask="24501", bid_vol=100, ask_vol=100
+    )
+    second = _depth(
+        "d2",
+        buy=180,
+        sell=80,
+        bid="24500.5",
+        ask="24501.5",
+        bid_vol=180,
+        ask_vol=80,
+        offset_seconds=5,
+    )
+    assert select_prior_depth((), current=second) is None
+    assert select_prior_depth((second,), current=second) is None
+    prior = select_prior_depth((first, second), current=second)
+    assert prior is first
 
 
 def test_snapshot_builder_stamps_cas_version_when_keys_complete() -> None:

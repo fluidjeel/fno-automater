@@ -46,6 +46,9 @@ allow_table:
     - {start: "09:00", end: "09:15"}
     - {start: "15:30", end: "15:40"}
   continuous_window_ist: {start: "09:15", end: "15:30"}
+  # NSE F&O close window. Half-open [start, end). Matches cas-microstructure-v1.
+  cas_windows_ist:
+    - {start: "15:00", end: "15:30"}
   rules:
     # Directional continuous / auction: long option + debit spread
     - trend: [UP, DOWN]
@@ -61,10 +64,10 @@ allow_table:
       event: [NORMAL, CAUTION]
       session: [CONTINUOUS, AUCTION]
       allowed_families: [defined_risk_multileg, debit_spread]
-    # Auction: CAS microstructure alongside directional families
+    # CAS: YAML matches auction + continuous; hard filter keeps close window + auction
     - trend: ["*"]
       volatility: ["*"]
       iv_bucket: [LOW, MID, HIGH]
       event: [NORMAL, CAUTION]
-      session: [AUCTION]
+      session: [AUCTION, CONTINUOUS]
       allowed_families: [cas_microstructure, positional_long_option, debit_spread]

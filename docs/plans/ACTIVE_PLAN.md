@@ -40,7 +40,8 @@ fractions, not a daily winner lottery.
 
 1. PAPER-005 — human promotion record after eligibility, drills and verified
    charges. The agent may summarise; it cannot sign.
-2. Live close-window CAS evidence once Monday depth is `VALID`.
+2. Live close-window CAS cohort now that PAPER stance is on and Monday depth
+   can complete `cas-microstructure-v1`.
 3. Production `LlmPort` is DeepSeek OpenAI-compat (`OpenAICompatLlm`); keep `config/agent.yaml` enabled:false until paper evidence justifies spend. Trial: `trading agent weekly --trial`.
 
 ## Blocking gaps

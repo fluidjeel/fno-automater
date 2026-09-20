@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -34,6 +34,13 @@ from trading.runtime import PaperIsolationError, PaperRunner, PaperStrategyReque
 from trading.runtime.isolation import assert_paper_isolation
 from trading.storage.trading_store import TradingStore
 from trading.strategies import MacroAssessment, MacroBias
+from trading.strategies.cas_microstructure import (
+    FEATURE_AUCTION_IMBALANCE,
+    FEATURE_MICROPRICE_EDGE_BPS,
+    FEATURE_QUOTE_INSTABILITY,
+    FEATURE_SET_VERSION,
+    FEATURE_TRADE_FLOW_IMBALANCE,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
@@ -252,3 +259,65 @@ class TestPaperCycle:
         outcome = result.outcomes[0]
         assert outcome.order_events == ()
         assert outcome.intents == ()
+
+    def test_cas_with_complete_features_can_paper_submit(self, tmp_path: Path) -> None:
+        """PAPER CAS may fill when keys are complete; missing keys stay blocked."""
+        cas_now = datetime(2026, 9, 14, 9, 45, tzinfo=UTC)
+        clock = FrozenClock(cas_now)
+        store = TradingStore.open(tmp_path / "cas-paper.sqlite", clock=clock)
+        ids = SequentialIdFactory(clock.instant)
+        fill_model = load_evaluation_config(
+            ROOT / "config" / "evaluation.yaml"
+        ).config.fill_model
+        broker = PaperBroker.from_fixtures(
+            BROKER_FIXTURES, clock=clock, id_factory=ids, fill_model=fill_model
+        )
+        runner = PaperRunner(
+            account_config=_paper_config(),  # type: ignore[arg-type]
+            risk_policy=load_risk_policy(ROOT / "config" / "risk.yaml"),
+            store=store,
+            broker=broker,
+            clock=clock,
+            id_factory=ids,
+            fill_model=fill_model,
+        )
+        times = f.snapshot_times(
+            event_time=cas_now - timedelta(seconds=2),
+            source_time=cas_now - timedelta(seconds=1),
+            receive_time=cas_now - timedelta(milliseconds=500),
+            calculation_time=cas_now - timedelta(milliseconds=200),
+        )
+        option = _request().candidates[0].model_copy(update={"times": times})
+        underlying = f.snapshot(
+            snapshot_id="SNAP-CAS",
+            contract=f.index_contract(),
+            times=times,
+            market=f.quote(last=f.price("24100"), close=f.price("24000")),
+            feature_set_version=FEATURE_SET_VERSION,
+            features={
+                FEATURE_AUCTION_IMBALANCE: Decimal("0.40"),
+                FEATURE_TRADE_FLOW_IMBALANCE: Decimal("0.30"),
+                FEATURE_MICROPRICE_EDGE_BPS: Decimal("5.00"),
+                FEATURE_QUOTE_INSTABILITY: Decimal("0.10"),
+            },
+        )
+        request = _request(
+            strategy_id="cas_microstructure",
+            underlying=underlying,
+            candidates=(option,),
+            instruments={option.contract.symbol: _option_spec()},
+            execution_mode=ExecutionMode.PAPER,
+            execute=True,
+            macro=MacroAssessment(
+                regime="RISK_ON",
+                directional_bias=MacroBias.BULLISH,
+                confidence=Decimal("0.8"),
+                fresh_until=cas_now + timedelta(hours=1),
+                model_version="test",
+            ),
+        )
+        outcome = runner.run_cycle((request,)).outcomes[0]
+        assert outcome.execution_mode is ExecutionMode.PAPER
+        assert outcome.intents
+        assert outcome.order_events
+        store.close()

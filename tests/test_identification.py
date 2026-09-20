@@ -504,6 +504,14 @@ def test_allow_table_matrix_for_regime_buckets() -> None:
         assert allowed.isdisjoint(expect_missing), (trend, iv, event, when, allowed)
 
 
+def test_allow_table_allows_cas_in_configured_close_window() -> None:
+    """CAS F&O close window is CONTINUOUS, not the NSE cash auction bucket."""
+    close = datetime(2026, 9, 14, 9, 30, tzinfo=UTC)  # 15:00 IST
+    assert session_bucket_for(close, POLICY) is SessionBucket.CONTINUOUS
+    allowed = allowed_families_for(_market(calculated_at=close), POLICY)
+    assert "cas_microstructure" in allowed
+
+
 def test_router_intersects_allow_table_blocking_preferred_family() -> None:
     """Allow-table can block the preferred family even when binders are eligible."""
     market = _market(event_state="BLOCK_NEW")

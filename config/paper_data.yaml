@@ -58,7 +58,7 @@ fields:
   - field: DEPTH
     tier: P1
     max_age_ms: 60000
-    # CAS already requires licensed depth; do not auto-ENABLE the family.
+    # Fail-closed for CAS when this series is absent. PAPER stance is separate.
     block_families: [cas_microstructure]
 
 # Formula windows for observed-only P1 builders. Absence is logged; values are
