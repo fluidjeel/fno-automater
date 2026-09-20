@@ -3,6 +3,10 @@
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.fills import simulate_fill, simulate_legs
 from trading.analytics.judgment import JudgmentError, evaluate_judgment, label_signal
+from trading.analytics.reason_preconditions import (
+    EvidenceBundle,
+    ground_agent_reasons,
+)
 from trading.analytics.improvements import (
     apply_stale_status,
     cluster_improvements,
@@ -49,6 +53,8 @@ __all__ = [
     "hypothesis_eligible",
     "merge_duplicate",
     "normalize_claim_key",
+    "EvidenceBundle",
+    "ground_agent_reasons",
     "evaluate_tail_budget",
     "evaluate_judgment",
     "label_signal",

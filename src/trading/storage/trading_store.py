@@ -25,6 +25,7 @@ from trading.domain.contracts import (
     AuthorityGrant,
     CapitalReservation,
     EntryFreezeRecord,
+    HallucinationEvent,
     ImprovementRecord,
     OrderEvent,
     PositionLifecycleRecord,
@@ -782,6 +783,55 @@ class TradingStore:
             AgentDecision.model_validate(json.loads(row["payload"])) for row in rows
         )
 
+
+
+    def insert_hallucination_event(self, event: HallucinationEvent) -> None:
+        """Persist a grounding failure. Duplicate event_id fails closed."""
+        verified = HallucinationEvent.model_validate(event.model_dump(mode="json"))
+        with self._transaction():
+            try:
+                self._conn.execute(
+                    "INSERT INTO hallucination_events ("
+                    "event_id, decision_id, role, model_id, prompt_version, "
+                    "created_at, payload"
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        verified.event_id,
+                        verified.decision_id,
+                        verified.role.value,
+                        verified.model_id,
+                        verified.prompt_version,
+                        _utc_iso(verified.created_at),
+                        verified.model_dump_json(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise TradingStoreError(
+                    f"duplicate hallucination event_id {verified.event_id}"
+                ) from exc
+
+    def list_hallucination_events(
+        self, *, decision_id: str | None = None
+    ) -> tuple[HallucinationEvent, ...]:
+        """Return hallucination events newest-first."""
+        if decision_id is None:
+            sql = (
+                "SELECT payload FROM hallucination_events "
+                "ORDER BY created_at DESC, event_id ASC"
+            )
+            params: tuple[object, ...] = ()
+        else:
+            sql = (
+                "SELECT payload FROM hallucination_events "
+                "WHERE decision_id = ? "
+                "ORDER BY created_at DESC, event_id ASC"
+            )
+            params = (decision_id,)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return tuple(
+            HallucinationEvent.model_validate(json.loads(row["payload"])) for row in rows
+        )
 
     def upsert_improvement_record(self, record: ImprovementRecord) -> ImprovementRecord:
         """Insert or dedupe-merge by (area, claim_key). Returns stored row."""

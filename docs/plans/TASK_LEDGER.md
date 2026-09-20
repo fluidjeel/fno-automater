@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A8 (ADESK-A7 DONE; ImprovementRecord + clustering + CLI).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A9 (ADESK-A8 DONE; reason preconditions + hallucination events).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -26,8 +26,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A8 (AD
 | ADESK-A5 | DONE | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on `tail_budget_fraction` breach | ADESK-A1 |
 | ADESK-A6 | DONE | `analytics/bias.py` battery | All 11 PART 9.3 metrics on fixture cohort | ADESK-A2 |
 | ADESK-A7 | DONE | `ImprovementRecord` + clustering | Table + dedupe; `trading evaluate improvements` | ADESK-A1 |
-| ADESK-A8 | READY | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
-| ADESK-A9 | BLOCKED | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
+| ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
+| ADESK-A9 | READY | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
 ## Agent Desk Stage B — desks in SHADOW (BLOCKED until Stage A complete)
 
@@ -191,5 +191,5 @@ ADESK-A1 DONE: AuthorityGrant + C1 demotion (BOUNDED = config-promotion only;
 live-path actions rejected at write; missing/expired/mismatched grant → OBSERVE).
 ADESK-A2 DONE: AgentDecision + agent_decisions + DecisionLog (round-trip, role
 and version-triple queries, duplicate decision_id fails closed).
-Next: ADESK-A8 reason preconditions; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
+Next: ADESK-A9 versioned packets; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```

@@ -34,6 +34,7 @@ __all__ = [
     "ImprovementArea",
     "TestabilityKind",
     "ImprovementStatus",
+    "AgentReasonCode",
     "HoldingStyle",
     "InstrumentKind",
     "IntentState",
@@ -808,4 +809,18 @@ class ImprovementStatus(StrEnum):
     IMPLEMENTED = "IMPLEMENTED"
     REJECTED = "REJECTED"
     STALE = "STALE"
+
+
+@unique
+class AgentReasonCode(StrEnum):
+    """Closed vocabulary of reason codes an agent may cite (PART 11.1)."""
+
+    VOLATILITY_EXPANSION = "VOLATILITY_EXPANSION"
+    VOLATILITY_COMPRESSION = "VOLATILITY_COMPRESSION"
+    REGIME_ALIGNMENT = "REGIME_ALIGNMENT"
+    TREND_CONFIRMATION = "TREND_CONFIRMATION"
+    MEAN_REVERSION_SETUP = "MEAN_REVERSION_SETUP"
+    LIQUIDITY_ADEQUATE = "LIQUIDITY_ADEQUATE"
+    EVENT_CLEAR = "EVENT_CLEAR"
+    STRUCTURE_DEFINED_RISK = "STRUCTURE_DEFINED_RISK"
 

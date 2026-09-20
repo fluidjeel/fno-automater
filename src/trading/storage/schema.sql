@@ -152,3 +152,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_improvement_records_area_claim
 
 CREATE INDEX IF NOT EXISTS idx_improvement_records_status
     ON improvement_records (status, opened_at);
+
+
+CREATE TABLE IF NOT EXISTS hallucination_events (
+    event_id TEXT PRIMARY KEY,
+    decision_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    payload TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hallucination_events_decision
+    ON hallucination_events (decision_id, created_at);

@@ -34,6 +34,10 @@ from trading.domain.contracts.evaluation import (
     PromotionEligibilityResult,
     ReasonCount,
 )
+from trading.domain.contracts.hallucination import (
+    GroundingResult,
+    HallucinationEvent,
+)
 from trading.domain.contracts.improvement import (
     ImprovementCluster,
     ImprovementRecord,
@@ -171,6 +175,8 @@ __all__ = [
     "StressReport",
     "BiasReport",
     "ImprovementRecord",
+    "HallucinationEvent",
+    "GroundingResult",
     "ImprovementCluster",
     "BiasMetricId",
     "BiasMetricResult",
