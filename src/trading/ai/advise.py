@@ -52,7 +52,12 @@ def run_advise_agent(  # noqa: PLR0911 - explicit PASS reasons for each abort
             reason=ReasonCode.AI_UNAVAILABLE,
             detail="advise agent is disabled until paper evidence exists",
         )
-    budget = TokenBudget(config)
+    budget = TokenBudget(
+        config,
+        role=tools.agent_role,
+        store=tools.budget_store,
+        clock=tools.clock,
+    )
     iterations = min(int(config.max_iterations), MAX_ADVISE_ITERATIONS)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": ADVISE_SYSTEM_PROMPT},
@@ -61,6 +66,8 @@ def run_advise_agent(  # noqa: PLR0911 - explicit PASS reasons for each abort
     try:
         for _ in range(iterations):
             turn = llm.complete(messages, ADVISE_TOOL_SPECS)
+            if turn.resolved_model_id:
+                tools.resolved_model_id = turn.resolved_model_id
             if not budget.charge(turn.input_tokens, turn.output_tokens):
                 return _pass(
                     tools,

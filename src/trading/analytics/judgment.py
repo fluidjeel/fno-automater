@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
 
@@ -64,13 +66,18 @@ def evaluate_judgment(
             and signal.mae is not None
             and signal.mfe is not None
         )
-        confidence: Decimal | None = None
+        setup_confidence: Decimal | None = None
         if (
             signal.setup_features is not None
             and signal.setup_features.confidence_kind
             is ConfidenceKind.CALIBRATED_PROBABILITY
         ):
-            confidence = Decimal(signal.setup_features.raw_setup_score)
+            setup_confidence = Decimal(signal.setup_features.raw_setup_score)
+        agent_confidence = (
+            Decimal(signal.agent_confidence)
+            if signal.agent_confidence is not None
+            else None
+        )
         charges = (
             None
             if label is None
@@ -87,7 +94,8 @@ def evaluate_judgment(
                 signal_id=signal.signal_id,
                 should_enter=label,
                 entered=did_enter,
-                confidence=confidence,
+                confidence=setup_confidence,
+                agent_confidence=agent_confidence,
                 mae=signal.mae,
                 mfe=signal.mfe,
                 charges=charges,
@@ -105,17 +113,22 @@ def evaluate_judgment(
 
     precision = _ratio(len(true_positive), len(entered_rows))
     capture = _ratio(len(true_positive), len(should_enter_rows))
-    brier = _brier(labeled)
+    setup_brier = _brier(labeled, lambda row: row.confidence)
+    setup_reliability = _brier_reliability(labeled, lambda row: row.confidence)
+    agent_brier = _brier(labeled, lambda row: row.agent_confidence)
+    agent_reliability = _brier_reliability(labeled, lambda row: row.agent_confidence)
 
     gates: list[str] = []
     if precision is None or precision < thresholds.min_precision:
         gates.append("min_precision")
     if capture is None or capture < thresholds.min_capture:
         gates.append("min_capture")
-    if brier is None:
+    if setup_brier is None:
         gates.append("brier_unavailable")
-    elif brier > thresholds.max_brier:
+    elif setup_brier > thresholds.max_brier:
         gates.append("max_brier")
+    if any(row.agent_confidence is not None for row in labeled) and agent_brier is None:
+        gates.append("agent_brier_unavailable")
 
     return JudgmentReport(
         experiment_id=package.experiment.experiment_id,
@@ -130,7 +143,10 @@ def evaluate_judgment(
         false_negative_count=len(false_negative),
         precision=precision,
         capture=capture,
-        brier_score=brier,
+        brier_score=setup_brier,
+        setup_brier_reliability=setup_reliability,
+        agent_brier_score=agent_brier,
+        agent_brier_reliability=agent_reliability,
         failed_gate_ids=tuple(gates),
         signals=tuple(rows),
     )
@@ -142,14 +158,49 @@ def _ratio(numerator: int, denominator: int) -> Decimal | None:
     return (Decimal(numerator) / Decimal(denominator)).quantize(Decimal("0.0001"))
 
 
-def _brier(rows: list[JudgmentSignalResult]) -> Decimal | None:
+def _brier(
+    rows: list[JudgmentSignalResult],
+    confidence_of: Callable[[JudgmentSignalResult], Decimal | None],
+) -> Decimal | None:
     squares: list[Decimal] = []
     for row in rows:
-        if row.should_enter is None or row.confidence is None:
+        confidence = confidence_of(row)
+        if row.should_enter is None or confidence is None:
             continue
         outcome = Decimal(1) if row.should_enter else Decimal(0)
-        squares.append((row.confidence - outcome) ** 2)
+        squares.append((confidence - outcome) ** 2)
     if not squares:
         return None
     total = sum(squares, start=Decimal(0))
     return (total / Decimal(len(squares))).quantize(Decimal("0.0001"))
+
+
+def _brier_reliability(
+    rows: list[JudgmentSignalResult],
+    confidence_of: Callable[[JudgmentSignalResult], Decimal | None],
+) -> Decimal | None:
+    """Murphy reliability component of the Brier score."""
+    buckets: dict[int, list[tuple[Decimal, Decimal]]] = defaultdict(list)
+    for row in rows:
+        confidence = confidence_of(row)
+        if row.should_enter is None or confidence is None:
+            continue
+        outcome = Decimal(1) if row.should_enter else Decimal(0)
+        bucket = min(4, int(confidence * Decimal(5)))
+        buckets[bucket].append((confidence, outcome))
+    if not buckets:
+        return None
+    total = 0
+    reliability = Decimal(0)
+    for members in buckets.values():
+        if not members:
+            continue
+        forecasts = [item[0] for item in members]
+        outcomes = [item[1] for item in members]
+        mean_forecast = sum(forecasts, start=Decimal(0)) / Decimal(len(forecasts))
+        mean_outcome = sum(outcomes, start=Decimal(0)) / Decimal(len(outcomes))
+        reliability += Decimal(len(members)) * (mean_forecast - mean_outcome) ** 2
+        total += len(members)
+    if total <= 0:
+        return None
+    return (reliability / Decimal(total)).quantize(Decimal("0.0001"))

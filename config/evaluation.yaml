@@ -1,8 +1,8 @@
 # Layer 4 forward-validation thresholds. Freeze before scoring a cohort.
 # Changing any value starts a new evaluation lineage (checksum).
 #
-# Charges remain unverified on purpose: net P&L fails closed until a current
-# broker/tax schedule is recorded with verified_at.
+# charges_per_lot is verified against the published Fyers/NSE schedule (see note).
+# A live contract-note cross-check is still required before LIVE promotion.
 
 schema_version: "1"
 policy_version: "1"

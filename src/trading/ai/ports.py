@@ -37,6 +37,7 @@ class LlmTurn:
     input_tokens: int
     output_tokens: int
     reasoning: str = ""
+    resolved_model_id: str = ""
 
 
 class LlmPort(Protocol):

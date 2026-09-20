@@ -78,6 +78,12 @@ Nested cadence:
 | Pre-open day | Deterministic readiness + last unexpired weekly proposal | No, unless a blocker needs the operator |
 | Week / period | Bounded L4 tool loop over scorecards and evidence | Yes, capped; fail closed to `ABSTAIN` |
 
+Agent Desk authority mode **BOUNDED** (decision C1, 2026-09-20) means
+**config-promotion only**: a signed grant may let an agent propose enabling,
+shadowing or halting already-coded strategy families through the L4 proposal
+path. It never authorises intraday sizing, stops, submits, or any other live-path
+action. Intraday remains L3 + L2 with no LLM.
+
 Asynchronous, advisory components (local `trading.analytics` and `trading.ai`):
 
 - Conservative fill reconstruction from decision-time bid/ask/depth.

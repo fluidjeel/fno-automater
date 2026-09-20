@@ -1,8 +1,76 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 8
+ACTIVE_PLAN_VERSION: 9
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (PAPER-005 BLOCKED).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: Stage A planning (C1 resolved: BOUNDED = config-promotion only).
+
+## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
+
+| ID | Status | Outcome | Scope | Verification | Dependency |
+| --- | --- | --- | --- | --- | --- |
+| ADESK-A0.1 | DONE | Land dashboard so HEAD matches CI | `src/trading/dashboard/`, `tests/test_dashboard.py`, `docs/context/DASHBOARD.md`; remove WIP mypy ignore | Clean checkout: `uv run mypy` + `trading dashboard snapshot` | None |
+| ADESK-A0.2 | DONE | Reconcile CURRENT_STATE with fresh evidence | `docs/context/CURRENT_STATE.md` Verification + charges + dashboard | Claims match `uv run mypy` / `uv run pytest` on committed tree | ADESK-A0.1 |
+| ADESK-A0.3 | DONE | Persist agent budget per `(year_month, role)` | `budget.py`, `agent_budget_ledger` in `schema.sql`, `TradingStore`, loop/advise | Test: two runs share monthly cap; exhaustion → ABSTAIN, never blocks trading | None |
+| ADESK-A0.4 | DONE | Resolved model id, temperature 0, seed, full run persistence | `openai_compat.py`, `recording.py`, `ModelVersions` wiring | Recorded run: `ModelVersions.model` = provider-returned id; request has temperature/seed | None |
+| ADESK-A0.5 | DONE | Score agent confidence + Brier reliability | `judgment.py`; separate agent vs setup Brier | Report shows agent Brier distinct from setup Brier; reliability component present | None |
+| ADESK-A0.6 | DONE | Charges authenticity + doc alignment | `config/evaluation.yaml`, attention, CURRENT_STATE/ACTIVE_PLAN | Schedule `verified_at` accepted for paper; docs consistent; 60s stops remain documented blocker | None |
+
+## Agent Desk Stage A — foundations (C1 resolved; awaiting Stage A plan)
+
+| ID | Status | Outcome | Dependency |
+| --- | --- | --- | --- |
+| ADESK-A1 | BLOCKED | AuthorityGrant + demotion engine | All ADESK-A0.*; C1 resolved (BOUNDED=config-promotion); awaiting Stage A plan |
+| ADESK-A2 | BLOCKED | `agent_decisions` + DecisionLog writer | All ADESK-A0.* |
+| ADESK-A3 | BLOCKED | TradeThesis + invalidation evaluator | All ADESK-A0.* |
+| ADESK-A4 | BLOCKED | ExposureReport + risk.yaml limits | All ADESK-A0.* |
+| ADESK-A5 | BLOCKED | StressReport + assume_no_fills | All ADESK-A0.* |
+| ADESK-A6 | BLOCKED | bias.py battery | ADESK-A2 |
+| ADESK-A7 | BLOCKED | ImprovementRecord contract + table | All ADESK-A0.* |
+| ADESK-A8 | BLOCKED | reason_preconditions + hallucination_events | ADESK-A2 |
+| ADESK-A9 | BLOCKED | versioned packets + delta_gap_rate | All ADESK-A0.* |
+
+## Agent Desk Stage B — desks in SHADOW (BLOCKED until Stage A complete)
+
+| ID | Status | Outcome | Dependency |
+| --- | --- | --- | --- |
+| ADESK-B1 | BLOCKED | Role-based runtime; migrate weekly/advise | Stage A complete |
+| ADESK-B2 | BLOCKED | ENTRY desk + StrikeShortlist + EntryAdvice SHADOW | Stage A complete |
+| ADESK-B3 | BLOCKED | POSITION desk + delta packet SHADOW | Stage A complete |
+| ADESK-B4 | BLOCKED | Review-level labelling in judgment | Stage A complete |
+| ADESK-B5 | BLOCKED | Cold-review scheduler + warm_cold_divergence | Stage A complete |
+| ADESK-B6 | BLOCKED | PORTFOLIO desk SHADOW | Stage A complete |
+| ADESK-B7 | BLOCKED | MACRO desk + MacroCalendar + injection suite | Stage A complete |
+| ADESK-B8 | BLOCKED | POSTTRADE desk + TradeAttribution | Stage A complete |
+| ADESK-B9 | BLOCKED | FRAGILITY desk ADVISORY | Stage A complete |
+| ADESK-B10 | BLOCKED | agent_scorecard.py + CLI | Stage A complete |
+
+## Agent Desk Stage C — terminal policy (BLOCKED until Stage A complete)
+
+| ID | Status | Outcome | Dependency |
+| --- | --- | --- | --- |
+| ADESK-C1 | BLOCKED | TerminalPolicy contracts + eligibility gate | Stage A complete |
+| ADESK-C2 | BLOCKED | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
+| ADESK-C3 | BLOCKED | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
+| ADESK-C4 | BLOCKED | Terminal-policy cost accounting in scorecard | ADESK-C3 |
+
+## Agent Desk Stage D — authority ladder (BLOCKED until Stage B/C; C1 = config-promotion only)
+
+| ID | Status | Outcome | Dependency |
+| --- | --- | --- | --- |
+| ADESK-D1 | BLOCKED | Confidence-bucket enum + Phase-1 downscale-only sizing | Stage B complete |
+| ADESK-D2 | BLOCKED | Promote FRAGILITY and POSTTRADE to ADVISORY | Stage B complete |
+| ADESK-D3 | BLOCKED | Promote PORTFOLIO to BOUNDED for config-promotion proposals only (C1) | Stage B complete; C1=config-promotion |
+| ADESK-D4 | BLOCKED | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | Stage B complete; C1 forbids live-path BOUNDED |
+| ADESK-D5 | BLOCKED | Re-scope ENTRY desk: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | Stage B complete; C1 |
+| ADESK-D6 | BLOCKED | Phase-2 upscale unlock (deterministic envelope only; never agent BOUNDED) | Stage D prerequisites; C1 |
+
+## Agent Desk Stage E — research loop (BLOCKED until Stage D prerequisites)
+
+| ID | Status | Outcome | Dependency |
+| --- | --- | --- | --- |
+| ADESK-E1 | BLOCKED | RESEARCH desk weekly | Stage D prerequisites |
+| ADESK-E2 | BLOCKED | Hypothesis → experiment promotion ladder | ADESK-E1 |
+| ADESK-E3 | BLOCKED | Monthly meta-report | ADESK-E1 |
 
 ## Phase 2–3: Layer 2 control plane
 
@@ -117,5 +185,7 @@ Identification stack (market state, binders, router) wired into paper session.
 L4 weekly agent DeepSeek OpenAI-compat client landed; config/agent.yaml enabled:false.
 PAPER-010 two-tier paper-data contract: P0 gates paper entry; P1 ranking is
 observed-only (no invented IV/skew/term/depth).
-Next: PAPER-005 after verified charges_per_lot + live paper evidence; Monday live CAS depth window; optional trading agent weekly --trial.
+Agent Desk Stage 0 complete (ADESK-A0.1..A0.6): dashboard landed, budget ledger,
+model lineage, agent Brier, charges/docs aligned.
+Next: Stage A planning pass (C1 = config-promotion only); PAPER-005 after live paper evidence.
 ```

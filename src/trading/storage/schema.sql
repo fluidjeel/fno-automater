@@ -65,3 +65,13 @@ CREATE TABLE IF NOT EXISTS protection_state (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_budget_ledger (
+    year_month TEXT NOT NULL,
+    role TEXT NOT NULL,
+    spent_inr TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (year_month, role)
+);
+

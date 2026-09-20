@@ -22,6 +22,8 @@ class LlmSettings(BaseSettings):
     deepseek_api_key: str = Field(default="", alias="DEEPSEEK_API_KEY")
     llm_base_url: str = Field(default="https://api.deepseek.com", alias="LLM_BASE_URL")
     llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")
+    llm_temperature: float = Field(default=0.0, alias="LLM_TEMPERATURE")
+    llm_seed: int = Field(default=1, alias="LLM_SEED")
 
     @classmethod
     def from_repo_root(cls, repo_root: Path) -> LlmSettings:

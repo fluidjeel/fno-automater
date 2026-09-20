@@ -137,9 +137,6 @@ module = [
     "trading.runtime.watchdog",
     "trading.data.fyers.capability_probe",
     "tests.test_paper_protection",
-    "trading.dashboard",
-    "trading.dashboard.*",
-    "tests.test_dashboard",
 ]
 # WIP until QuoteUpdateResult / PaperSessionConfig.protection are wired.
 ignore_errors = true

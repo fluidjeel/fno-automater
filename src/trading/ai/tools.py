@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
+from trading.ai.budget_port import AgentBudgetPort
 from trading.ai.ports import MarketReadPort, NewsReadPort
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.scorecard import build_scorecard
@@ -132,6 +133,9 @@ class ToolContext:
     news: NewsReadPort | None = None
     attention: AttentionSink | None = None
     model_name: str = "weekly-agent"
+    agent_role: str = "weekly"
+    budget_store: AgentBudgetPort | None = None
+    resolved_model_id: str = ""
     emitted: list[AIProposal] = field(default_factory=list)
     advice: list[StructureAdvice] = field(default_factory=list)
     attention_requests: list[AttentionRequest] = field(default_factory=list)
@@ -242,7 +246,7 @@ def _emit_proposal(arguments: dict[str, Any], ctx: ToolContext) -> str:
     payload.setdefault(
         "versions",
         {
-            "model": ctx.model_name,
+            "model": ctx.resolved_model_id or ctx.model_name,
             "prompt_version": "family-v1",
             "retrieval_version": "tools-v1",
             "policy_version": ctx.evaluation.version,

@@ -65,12 +65,14 @@ def parse_openai_chat_completion(payload: dict[str, Any]) -> LlmTurn:
             calls.append(LlmToolCall(call_id=call_id, name=name, arguments=arguments))
     raw_usage = payload.get("usage")
     usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
+    resolved_model = str(payload.get("model") or "")
     return LlmTurn(
         text=text,
         tool_calls=tuple(calls),
         input_tokens=int(usage.get("prompt_tokens") or 0),
         output_tokens=int(usage.get("completion_tokens") or 0),
         reasoning=reasoning,
+        resolved_model_id=resolved_model,
     )
 
 
@@ -142,6 +144,9 @@ def _dump_arguments(raw: object) -> str:
 class OpenAICompatLlm:
     """HTTP client for DeepSeek or any OpenAI-compatible chat API."""
 
+    last_request_body: dict[str, Any] | None
+    last_raw_response: dict[str, Any] | None
+
     def __init__(
         self,
         settings: LlmSettings,
@@ -153,6 +158,8 @@ class OpenAICompatLlm:
         self._settings = settings
         self._timeout_seconds = timeout_seconds
         self.model = settings.llm_model
+        self.last_request_body = None
+        self.last_raw_response = None
 
     def complete(
         self,
@@ -165,7 +172,10 @@ class OpenAICompatLlm:
             "messages": _to_openai_messages(messages),
             "tools": openai_tool_specs(tools),
             "tool_choice": "auto",
+            "temperature": self._settings.llm_temperature,
+            "seed": self._settings.llm_seed,
         }
+        self.last_request_body = body
         headers = {
             "Authorization": f"Bearer {self._settings.deepseek_api_key}",
             "Content-Type": "application/json",
@@ -182,4 +192,5 @@ class OpenAICompatLlm:
         if response.status_code >= HTTPStatus.BAD_REQUEST:
             detail = payload.get("error", payload)
             raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
+        self.last_raw_response = payload
         return parse_openai_chat_completion(payload)

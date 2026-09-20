@@ -19,7 +19,7 @@ from trading.ai.history_ports import (
     StaticNewsPort,
     history_evidence,
 )
-from trading.ai.llm_settings import load_llm_settings
+from trading.ai.llm_settings import LlmSettings, load_llm_settings
 from trading.ai.loop import run_weekly_agent
 from trading.ai.openai_compat import OpenAICompatLlm
 from trading.ai.ports import LlmTimeoutError, LlmTurn
@@ -72,6 +72,7 @@ from trading.ops.attention import (
 )
 from trading.runtime.paper_session import load_paper_session_config, run_paper_session
 from trading.runtime.watchdog import run_paper_watchdog
+from trading.storage.trading_store import TradingStore
 
 __all__ = ["main"]
 
@@ -661,6 +662,13 @@ def _resolve_weekly_cohort(
     return cohort_path, "paper"
 
 
+def _agent_budget_store(root: Path, clock: WallClock) -> TradingStore:
+    """Open the durable monthly agent budget ledger."""
+    path = root / "data" / "agent" / "budget.sqlite"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return TradingStore.open(path, clock=clock)
+
+
 def _cmd_agent_weekly(args: argparse.Namespace) -> int:
     root = _repo_root()
     try:
@@ -685,11 +693,13 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
     market = None
     news = None
     model_name = config.model
+    llm_settings: LlmSettings | None = None
+    budget_store: TradingStore | None = None
     if args.enable:
         config = config.model_copy(update={"enabled": True})
         try:
-            settings = load_llm_settings(root)
-            inner = OpenAICompatLlm(settings)
+            llm_settings = load_llm_settings(root)
+            inner = OpenAICompatLlm(llm_settings)
         except ValueError as exc:
             print(f"agent: {exc}", file=sys.stderr)
             return 1
@@ -705,6 +715,7 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
         )
         recorder = RecordingLlm(inner)
         llm = recorder
+        budget_store = _agent_budget_store(root, clock)
         try:
             history, market = _trial_history_port(
                 root,
@@ -714,6 +725,7 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
                 resolution=args.resolution,
             )
         except (OSError, ValueError, FyersApiError) as exc:
+            budget_store.close()
             print(f"agent history: {exc}", file=sys.stderr)
             return 1
         news = _trial_news_port(root)
@@ -725,6 +737,8 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
         market=market,
         news=news,
         model_name=model_name,
+        agent_role="weekly",
+        budget_store=budget_store,
     )
     prompt = (
         "Propose STRATEGY_FAMILY stances for the next week using tools. "
@@ -752,6 +766,11 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
             history=history,
             meta={
                 "model": model_name,
+                "resolved_model_id": recorder.resolved_model_id or model_name,
+                "llm_temperature": (
+                    llm_settings.llm_temperature if llm_settings is not None else None
+                ),
+                "llm_seed": llm_settings.llm_seed if llm_settings is not None else None,
                 "enabled_override": True,
                 "shipped_agent_enabled": agent_loaded.config.enabled,
                 "symbol": args.symbol,
@@ -765,6 +784,8 @@ def _cmd_agent_weekly(args: argparse.Namespace) -> int:
         print(f"reasoning: {run_dir / 'reasoning.md'}")
         print(f"proposal: {run_dir / 'proposal.json'}")
         print(f"transcript: {run_dir / 'transcript.jsonl'}")
+    if budget_store is not None:
+        budget_store.close()
     return 0
 
 
@@ -793,11 +814,13 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
     market = None
     news = None
     model_name = config.model
+    llm_settings: LlmSettings | None = None
+    budget_store: TradingStore | None = None
     if args.enable:
         config = config.model_copy(update={"enabled": True})
         try:
-            settings = load_llm_settings(root)
-            inner = OpenAICompatLlm(settings)
+            llm_settings = load_llm_settings(root)
+            inner = OpenAICompatLlm(llm_settings)
         except ValueError as exc:
             print(f"agent: {exc}", file=sys.stderr)
             return 1
@@ -813,6 +836,7 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
         )
         recorder = RecordingLlm(inner)
         llm = recorder
+        budget_store = _agent_budget_store(root, clock)
         try:
             history, market = _trial_history_port(
                 root,
@@ -822,6 +846,7 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
                 resolution=args.resolution,
             )
         except (OSError, ValueError, FyersApiError) as exc:
+            budget_store.close()
             print(f"agent history: {exc}", file=sys.stderr)
             return 1
         news = _trial_news_port(root)
@@ -833,6 +858,8 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
         market=market,
         news=news,
         model_name=model_name,
+        agent_role="advise",
+        budget_store=budget_store,
     )
     prompt = (
         "Rank paper structures for the next session using tools. "
@@ -857,6 +884,13 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
     advice_path.write_text(advice.model_dump_json(indent=2) + "\n", encoding="utf-8")
     meta = {
         "model": model_name,
+        "resolved_model_id": (
+            recorder.resolved_model_id if recorder is not None else model_name
+        ),
+        "llm_temperature": (
+            llm_settings.llm_temperature if llm_settings is not None else None
+        ),
+        "llm_seed": llm_settings.llm_seed if llm_settings is not None else None,
         "enabled_override": bool(args.enable),
         "shipped_agent_enabled": agent_loaded.config.enabled,
         "symbol": args.symbol,
@@ -878,6 +912,28 @@ def _cmd_agent_advise(args: argparse.Namespace) -> int:
         (run_dir / "history.json").write_text(
             json.dumps(history, indent=2, default=str) + "\n", encoding="utf-8"
         )
+        requests = [
+            {"turn": index, "request_body": turn.get("request_body")}
+            for index, turn in enumerate(recorder.turns, start=1)
+            if isinstance(turn.get("request_body"), dict)
+        ]
+        if requests:
+            (run_dir / "requests.json").write_text(
+                json.dumps(requests, indent=2, default=str) + "\n",
+                encoding="utf-8",
+            )
+        responses = [
+            {"turn": index, "raw_response": turn.get("raw_response")}
+            for index, turn in enumerate(recorder.turns, start=1)
+            if isinstance(turn.get("raw_response"), dict)
+        ]
+        if responses:
+            (run_dir / "raw_responses.json").write_text(
+                json.dumps(responses, indent=2, default=str) + "\n",
+                encoding="utf-8",
+            )
+    if budget_store is not None:
+        budget_store.close()
     print(f"advice: {advice_path}")
     return 0
 

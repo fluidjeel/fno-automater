@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Phase 4–6 - PAPER P1 option selection
+CURRENT_MILESTONE: Agent Desk Stage 0 — measurement prerequisites
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -12,6 +12,10 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - Weekly AI may propose strategy-family stances only. It never sizes, stops or
   submits. No LLM call on the live path.
 - Forward paper is the evidence path. Real-money use needs a signed promotion.
+- Agent Desk **BOUNDED** (C1, 2026-09-20): config-promotion only. Agents never
+  get intraday live-path authority. Intraday stays L3+L2 with no LLM. BOUNDED
+  may only promote/demote already-coded config (strategy-family enable/shadow/halt)
+  through the existing L4 proposal path after a signed grant.
 
 ## Implemented
 
@@ -26,56 +30,37 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
   exits, Telegram post-trade/EOD, `data/paper/cohorts/` (PAPER-003).
 - PAPER positional fills persist frozen exit policy and restore it on restart
   against paper broker state before new entries (PAPER-006). Protective STOP
-  stubs remain local software coverage, not broker-resident orders. Debit-spread
-  exits keep frozen `LEG_PRICE` on the strategy monitor long (not first
-  `position.legs[0]`, not remapped to `STRATEGY_PNL`). Iron condors stay
-  `STRATEGY_PNL`.
-- Twice-daily NSE positional review at 10:30 and 14:30 IST (config-driven)
-  decides HOLD / TIGHTEN_STOP / PARTIAL_EXIT / FULL_EXIT against that frozen
-  policy, or emits a HEDGE/ROLL proposal that cannot auto-submit (PAPER-007).
-  Missed slots run once on restart if still before EOD. Continuous software
-  exits still evaluate every poll.
-- P0 safety hardening (PAPER-009): Layer 2 validates multi-leg quote bundles
-  without copying `intent.snapshot_id` onto option legs. Entry freeze
-  (`entries_blocked` + reason) is persisted and restored on restart.
-  Missing monitor marks `UNPROTECTED_POSITION` (never silent HOLD). Stale
-  quotes persist `PROTECTION_DEGRADED` and freeze entries. PAPER stops are
-  not broker-resident. 60s poll gap is a measured limitation (not live-safe).
-- Two-tier paper-data contract (PAPER-010/011): `config/paper_data.yaml` lists
-  P0 (LTP, bid/ask, freshness, volume, OI, metadata, margin, broker, event)
-  and P1 (IV surface/skew/term, RV, greeks, depth) with formula windows.
-  Paper session + Layer 2 fail closed on any P0 hole. Observed P1 series
-  change binder ranking and router preference; absence is logged and never
-  invented. Depth is observed on entry and exit; CAS is PAPER when P0 and
-  depth are present, and policy-blocked when depth is absent. LIVE stays off.
-- Paper broker synthetic margin for live weekly symbols. Isolation still refuses
-  Fyers transaction adapters (PAPER-004).
-- Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.
+  stubs remain local software coverage, not broker-resident orders.
+- Twice-daily NSE positional review at 10:30 and 14:30 IST (PAPER-007).
+- P0 safety hardening (PAPER-009) and two-tier paper-data contract (PAPER-010/011).
+- Read-only local dashboard: `trading dashboard serve|snapshot` (ADESK-A0.1).
+- Layer 4 agent measurement hardening (ADESK-A0.3..A0.5): monthly budget ledger,
+  resolved model id + temperature/seed persistence, separate setup vs agent Brier.
+- `evaluation.yaml` `charges_per_lot.verified_at: 2026-09-19` (published schedule
+  estimate; contract-note cross-check still required for LIVE).
 
 ## Verification
 
-- `uv run ruff check .` and `uv run mypy --strict src tests` are clean.
-- PAPER-010 focused suite: `tests/test_paper_data_requirements.py` plus
-  identification, gateway, paper runner/session, contracts, config, and
-  PAPER-009 safety tests. PAPER-011 extends that suite per P1 series.
+- `uv run ruff check .` and `uv run mypy` are clean on the committed tree.
+- `tests/test_dashboard.py`, `tests/test_agent_stage0.py`, `tests/test_l4_agent.py`,
+  and the PAPER-010 focused suite pass.
+- `trading dashboard snapshot` runs without `ModuleNotFoundError`.
 
 ## Blocking gaps
 
 - 60s software-only poll cannot see intra-interval stop prints (case 8).
   SAFETY: NOT ACCEPTABLE for live unattended stops.
-- Unverified `charges_per_lot` keeps net expectancy `None` and eligibility
-  `INELIGIBLE`.
 - LIVE `config/base.yaml` market-rule values remain unverified.
-- PAPER-005 (real-capital promotion) is out of scope until evidence and charges
-  exist.
+- PAPER-005 (real-capital promotion) is out of scope until live paper evidence.
 - CAS still needs a live 15:00–15:30 IST window on real depth for promotion
-  evidence. PAPER stance is on; missing depth or incomplete CAS keys fail closed.
+  evidence.
 
 ## Next action
 
-Sunday: `trading data backfill instruments`. Monday: supervised
-`trading paper session` (Telegram OAuth is the only human step). Do not
-treat software stops or the 60s poll as live-safe.
+Agent Desk Stage 0 (ADESK-A0.1..A0.6) is complete. C1 resolved (BOUNDED =
+config-promotion only). Next: Stage A planning pass, then ADESK-A1+. Monday:
+supervised `trading paper session` + CAS depth benchmark. Do not treat software
+stops or the 60s poll as live-safe.
 
 ## Update rules
 

@@ -13,6 +13,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from trading.domain.contracts import (
     SessionProtectionState,
     VersionedModel,
 )
+from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.enums import (
     Exchange,
     ReasonCode,
@@ -542,6 +544,64 @@ class TradingStore:
             )
             for row in rows
         )
+
+    def get_agent_budget(self, year_month: str, role: str) -> AgentBudgetSnapshot:
+        """Return persisted monthly spend for a role, or zero when absent."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT spent_inr, input_tokens, output_tokens, updated_at "
+                "FROM agent_budget_ledger WHERE year_month = ? AND role = ?",
+                (year_month, role),
+            ).fetchone()
+        if row is None:
+            return AgentBudgetSnapshot(
+                year_month=year_month,
+                role=role,
+                spent_inr=Decimal("0"),
+                input_tokens=0,
+                output_tokens=0,
+                updated_at=self._clock.now_utc(),
+            )
+        return AgentBudgetSnapshot(
+            year_month=year_month,
+            role=role,
+            spent_inr=Decimal(str(row["spent_inr"])),
+            input_tokens=int(row["input_tokens"]),
+            output_tokens=int(row["output_tokens"]),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+
+    def upsert_agent_budget(
+        self,
+        year_month: str,
+        role: str,
+        *,
+        spent_inr: Decimal,
+        input_tokens: int,
+        output_tokens: int,
+        updated_at: datetime | None = None,
+    ) -> None:
+        """Persist absolute monthly spend for one agent role."""
+        stamp = _utc_iso(updated_at or self._clock.now_utc())
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO agent_budget_ledger (year_month, role, spent_inr, "
+                "input_tokens, output_tokens, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(year_month, role) DO UPDATE SET "
+                "spent_inr = excluded.spent_inr, "
+                "input_tokens = excluded.input_tokens, "
+                "output_tokens = excluded.output_tokens, "
+                "updated_at = excluded.updated_at",
+                (
+                    year_month,
+                    role,
+                    str(spent_inr),
+                    input_tokens,
+                    output_tokens,
+                    stamp,
+                ),
+            )
 
     def get_entry_freeze(self) -> EntryFreezeRecord | None:
         """Load the persisted entry-freeze latch, if any."""

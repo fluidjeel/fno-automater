@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Oracle Desk Terminal</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230a0f14'/%3E%3Cpath d='M7 22V10h4v8h4V7h4v11h3v4z' fill='%23efb74d'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand"><span class="brand-mark">OD</span><span><strong>ORACLE DESK</strong><small>CONTROL PLANE</small></span></div>
+      <nav id="nav" aria-label="Terminal sections"></nav>
+      <div class="rail-foot">
+        <span id="connDot" class="dot"></span><span id="connLabel">CONNECTING</span>
+        <small id="buildLabel">BUILD —</small>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow" id="routeEyebrow">COMMAND CENTER</p><h1 id="routeTitle">System truth, end to end</h1></div>
+        <div class="top-actions">
+          <span id="marketPill" class="pill">MARKET —</span>
+          <span id="modePill" class="pill accent">—</span>
+          <time id="clock">--:--:-- IST</time>
+          <button id="refresh" class="icon-button" title="Refresh now" aria-label="Refresh now">↻</button>
+        </div>
+      </header>
+
+      <div id="alertStrip" class="alert-strip" hidden></div>
+      <section id="content" class="content" aria-live="polite">
+        <div class="loading"><span></span><p>Building evidence graph…</p></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="detailDialog">
+    <div class="dialog-head"><div><p class="eyebrow">EVIDENCE INSPECTOR</p><h2 id="dialogTitle">Record</h2></div><button id="dialogClose" class="icon-button" aria-label="Close">×</button></div>
+    <pre id="dialogBody"></pre>
+  </dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

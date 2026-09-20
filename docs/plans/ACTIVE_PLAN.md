@@ -1,65 +1,73 @@
 # Active Implementation Plan
 
 PLAN_STATUS: APPROVED
-CONTEXT_DIGEST_VERSION: 8
-PLANNED_AT: 2026-09-19
+CONTEXT_DIGEST_VERSION: 9
+PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Phase 4–6 — unattended PAPER session**.
+Milestone: **Agent Desk Stage 0 — measurement prerequisites (no desk yet).**
 
 ## Goal
 
-Keep Layers 1–3 as the live trading core. Run them unattended in PAPER against
-live L1 snapshots, persist frozen cohorts, and keep Layer 4 proposal-only. AI
-never places an order or writes config. Historical backtesting remains waived.
+Make Layer 4 measurement honest before any Agent Desk feature work: green
+committed CI for the dashboard import, truthful CURRENT_STATE, persisted
+token budget, reproducible agent run lineage, agent-confidence calibration
+scoring, and charges/docs aligned with a conscious verification decision.
+Stage 0 plan is closed. Stage A is a separate planning pass (C1 resolved).
 
-## Nested cadence (do not collapse these)
+## Nested cadence (unchanged; do not collapse)
 
-1. **Intraday** — `trading paper session`: deterministic L3 `TradeIntent` + L2
-   risk/OMS on the paper broker. No LLM.
-2. **Pre-open day** — Telegram Fyers OAuth, then the session loop. No LLM unless
-   an `AttentionRequest` blocks.
-3. **Week / period** — `trading agent weekly` may emit an expiring
-   `STRATEGY_FAMILY` `AIProposal`. Disabled by default in `config/agent.yaml`.
-
-Champion–challenger is parallel SHADOW/PAPER under existing `risk.yaml`
-fractions, not a daily winner lottery.
+1. **Intraday** — `trading paper session`: L3 + L2 only. No LLM.
+2. **Pre-open day** — Telegram OAuth + readiness. No LLM unless AttentionRequest.
+3. **Week / period** — existing `trading agent weekly` / `advise` only; still
+   `enabled: false` by default. Stage 0 hardens measurement around these loops.
 
 ## Current foundation
 
-- `config/paper.yaml` is `Environment.PAPER` / `ACC-PAPER-1`. `base.yaml` stays
-  BACKTEST.
-- `trading paper session` authenticates via Telegram, polls L1, builds
-  master-backed candidates, scores news event-risk, runs all five strategies
-  through `PaperRunner`, manages exits, notifies on Telegram, and writes
-  `data/paper/cohorts/` at ~15:40 IST.
-- PAPER isolation still refuses Fyers transaction adapters.
-- Conservative `fill_model` is on for the session; L2 E2E remains immediate-fill.
+- L4 weekly + advise loops exist under `src/trading/ai/` (`loop.py`, `advise.py`);
+  no `runtime.py` / `packets.py` yet.
+- Read-only local dashboard: `trading dashboard serve|snapshot` (ADESK-A0.1).
+- `TokenBudget` persists monthly spend per `(year_month, role)` via
+  `agent_budget_ledger` (ADESK-A0.3).
+- Agent runs record resolved model id, temperature/seed, and full request/response
+  artifacts (ADESK-A0.4).
+- `judgment.py` scores setup and agent confidence Brier separately (ADESK-A0.5).
+- `evaluation.yaml` `charges_per_lot.verified_at` is `2026-09-19` (published
+  schedule estimate; contract-note reconciliation still required for LIVE).
+- PAPER positional review + software stops; 60s poll not live-safe.
 
 ## Remaining work
 
-1. PAPER-005 — human promotion record after eligibility, drills and verified
-   charges. The agent may summarise; it cannot sign.
-2. Live close-window CAS cohort now that PAPER stance is on and Monday depth
-   can complete `cas-microstructure-v1`.
-3. Production `LlmPort` is DeepSeek OpenAI-compat (`OpenAICompatLlm`); keep `config/agent.yaml` enabled:false until paper evidence justifies spend. Trial: `trading agent weekly --trial`.
+Stage 0 (ADESK-A0.1..A0.6) is complete. **C1 resolved (2026-09-20): BOUNDED =
+config-promotion only** (no intraday LLM on the live path). Next: fresh
+**Stage A planning pass**, then implement ADESK-A1+ one slice per PR.
 
 ## Blocking gaps
 
-- `evaluation.yaml` `charges_per_lot.verified_at` is null, so net expectancy
-  stays `None` and promotion stays `INELIGIBLE`.
-- LIVE `config/base.yaml` market-rule values remain unverified.
-- No production LLM client.
+- **C1 (resolved 2026-09-20):** BOUNDED means config-promotion only. Intraday
+  remains “never LLM”. Stage D promotions may grant BOUNDED only for
+  config-promotion actions, never for live sizing/stops/submits.
+- **C2 (deferred):** invariant 21 is not amended; Layer 4 guarantees replay via
+  stored artifacts, not bitwise reproduction.
+- **C3 (resolved):** schedule-based `verified_at` is sufficient for paper net
+  P&L scoring; LIVE promotion still needs a contract-note cross-check.
+- Broker-resident protective orders / sub-60s protection remain the highest
+  live-safety gap in the repo.
 
 ## Acceptance
 
-- PAPER cannot submit through a live broker.
-- Missing event-risk or stale snapshots block new entries.
-- Restart reuses idempotency keys; Telegram copy is advisory.
-- Promotion remains a signed human config change.
+- Clean git tree: `uv run mypy` and focused pytest green without relying on
+  untracked files.
+- Two agent runs share one monthly budget key; third can exhaust role budget
+  without freezing L1–L3 trading.
+- A recorded agent run stores provider model id, temperature/seed, request,
+  tool results, raw response.
+- Judgment report exposes agent Brier separately from setup-score Brier.
+- CURRENT_STATE Verification matches that evidence; charges story is consistent.
 
 ## Non-goals
 
-- LLM in the live decision path.
-- Daily strategy lottery, auto-promotion, or Fyers order/span APIs on this
-  process.
+- Any DeskRole, AuthorityGrant, TradeThesis, terminal policy, or SHADOW desk.
+- Touching OMS/broker submit paths or widening gateway approve logic.
+- Amending SAFETY_INVARIANTS without an explicit C2 decision.
+- Stage A+ implementation.

@@ -150,6 +150,7 @@ class CohortSignal(StrictModel):
     reconciled: StrictBool = True
     lots: StrictInt = Field(default=1, gt=0)
     setup_features: SetupFeatures | None = None
+    agent_confidence: ExactDecimal | None = Field(default=None, ge=0, le=1)
     route_decision: RouteDecision | None = None
     executed: StrictBool = True
     judgment_label: StrictBool | None = None
@@ -275,6 +276,7 @@ class JudgmentSignalResult(StrictModel):
     should_enter: StrictBool | None = None
     entered: StrictBool
     confidence: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    agent_confidence: ExactDecimal | None = Field(default=None, ge=0, le=1)
     mae: Money | None = None
     mfe: Money | None = None
     charges: Money | None = None
@@ -297,5 +299,8 @@ class JudgmentReport(VersionedModel):
     precision: ExactDecimal | None = Field(default=None, ge=0, le=1)
     capture: ExactDecimal | None = Field(default=None, ge=0, le=1)
     brier_score: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    setup_brier_reliability: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    agent_brier_score: ExactDecimal | None = Field(default=None, ge=0, le=1)
+    agent_brier_reliability: ExactDecimal | None = Field(default=None, ge=0, le=1)
     failed_gate_ids: tuple[NonEmptyStr, ...] = ()
     signals: tuple[JudgmentSignalResult, ...] = ()

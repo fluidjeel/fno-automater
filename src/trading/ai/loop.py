@@ -54,7 +54,12 @@ def run_weekly_agent(
             reason=ReasonCode.AI_UNAVAILABLE,
             detail="weekly agent is disabled until paper evidence exists",
         )
-    budget = TokenBudget(config)
+    budget = TokenBudget(
+        config,
+        role=tools.agent_role,
+        store=tools.budget_store,
+        clock=tools.clock,
+    )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
@@ -62,6 +67,8 @@ def run_weekly_agent(
     try:
         for _ in range(config.max_iterations):
             turn = llm.complete(messages, TOOL_SPECS)
+            if turn.resolved_model_id:
+                tools.resolved_model_id = turn.resolved_model_id
             if not budget.charge(turn.input_tokens, turn.output_tokens):
                 return _abstain(
                     tools,
@@ -128,7 +135,7 @@ def _abstain(tools: ToolContext, *, reason: ReasonCode, detail: str) -> AIPropos
         as_of_time=now,
         valid_until=now + timedelta(days=7),
         versions=ModelVersions(
-            model=tools.evaluation.version,
+            model=tools.resolved_model_id or tools.model_name,
             prompt_version="family-v1",
             retrieval_version="tools-v1",
             policy_version=tools.evaluation.checksum[:12],
