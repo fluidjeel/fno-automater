@@ -31,6 +31,8 @@ from trading.domain.enums import (
 
 __all__ = ["InvalidationCondition", "TradeThesis"]
 
+MIN_INVALIDATION_CONDITIONS = 2
+
 
 class InvalidationCondition(VersionedModel):
     """One machine-checkable falsifier. No free-text predicates."""
@@ -72,7 +74,7 @@ class TradeThesis(VersionedModel):
             raise ValueError(
                 "TradeThesis requires at least one contradicting_reason_code"
             )
-        if len(self.invalidation) < 2:
+        if len(self.invalidation) < MIN_INVALIDATION_CONDITIONS:
             raise ValueError(
                 "TradeThesis requires at least two invalidation conditions"
             )

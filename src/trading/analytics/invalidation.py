@@ -28,34 +28,25 @@ def compare(
     previous: Decimal | str | None = None,
 ) -> bool:
     """Return True when the comparator relation holds for the observation."""
-    if comparator in {
-        Comparator.LT,
-        Comparator.LTE,
-        Comparator.GT,
-        Comparator.GTE,
-        Comparator.EQ,
-    }:
-        left = _as_decimal(observed)
-        right = _as_decimal(threshold)
-        if comparator is Comparator.LT:
-            return left < right
-        if comparator is Comparator.LTE:
-            return left <= right
-        if comparator is Comparator.GT:
-            return left > right
-        if comparator is Comparator.GTE:
-            return left >= right
-        return left == right
+    left = _as_decimal(observed)
+    right = _as_decimal(threshold)
+    simple = {
+        Comparator.LT: left < right,
+        Comparator.LTE: left <= right,
+        Comparator.GT: left > right,
+        Comparator.GTE: left >= right,
+        Comparator.EQ: left == right,
+    }
+    if comparator in simple:
+        return simple[comparator]
 
     if previous is None:
         raise ValueError(f"{comparator} requires a previous observation")
     prev = _as_decimal(previous)
-    curr = _as_decimal(observed)
-    level = _as_decimal(threshold)
     if comparator is Comparator.CROSSES_BELOW:
-        return prev >= level > curr
+        return prev >= right > left
     if comparator is Comparator.CROSSES_ABOVE:
-        return prev <= level < curr
+        return prev <= right < left
     raise ValueError(f"unsupported comparator: {comparator}")
 
 
