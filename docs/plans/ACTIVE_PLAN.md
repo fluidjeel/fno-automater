@@ -5,84 +5,69 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage C — terminal policy (COMPLETE: C1..C4 DONE).**
+Milestone: **Agent Desk Stage D — authority ladder (D1–D6).**
 
 ## Goal
 
-Land PART 5 terminal policy with **zero LLM**: eligibility at entry, freeze into
-`ExitPolicy`, continuous deterministic enforcement with one-way revert, and cost
-accounting in the scorecard. ENTRY may remain SHADOW — an agent request is
-logged/scored; the deterministic default applies when ineligible or disabled.
+Climb authority one rung at a time under the binding **C1** decision:
+`AuthorityMode.BOUNDED` = **config-promotion only**. No LLM on the live order
+path. Live-path desk actions stay SHADOW/ADVISORY; BOUNDED is only for closed
+config-promotion proposals.
 
 ## Binding decisions (do not re-litigate)
 
-- **Authority BOUNDING (2026-09-20):** `AuthorityMode.BOUNDED` = **config-promotion
-  only**. This is **not** ADESK-C1. Intraday stays L3+L2 with **no LLM**.
-- **Terminal rule:** run-to-expiry is decided **at entry**, never at T-1.
-- ADESK-C1..C3 contain **no LLM call**. Agent request at entry is optional/SHADOW;
-  deterministic gate + enforcement own the path.
-- PART 0 hard rules: one slice per PR; no edits to `src/trading/oms/`,
-  `src/trading/broker/`, or decision logic in `src/trading/risk/gateway.py`
-  except new reject reasons; contracts Pydantic strict/frozen under
-  `src/trading/domain/contracts/`; enums in `enums.py`; no free-text except
-  `narrative` and nothing may parse it; refuse PART 17 non-goals.
+- **C1 (2026-09-20):** `AuthorityMode.BOUNDED` = config-promotion only. Intraday
+  stays L3+L2 with **no LLM**. Spec Stage D table rows that grant live-path
+  BOUNDED (raw D3–D5 in AGENT_DESK_SPEC) are **re-scoped by the ledger**.
+- PART 0 hard rules: one slice per PR; no OMS/broker edits; no gateway decision
+  logic except new reject reasons; contracts strict/frozen; enums in `enums.py`;
+  no free-text except `narrative` (nothing parses it); refuse PART 17.
+- Prefer type-enforced ceilings (`size_multiplier <= 1` via Field) over runtime
+  checks when the acceptance text says "by type, not by check".
 
-## Code map (real tree)
+## Code map
 
-| Spec name | Actual module / notes |
+| Spec / ledger | Actual |
 | --- | --- |
-| ExitPolicy | `src/trading/domain/contracts/position.py` |
-| InvalidationCondition | `src/trading/domain/contracts/trade_thesis.py` |
-| defined-risk helper | `src/trading/risk/gateway.py` (`_is_defined_risk` — reuse only) |
-| EventRiskState | `src/trading/news/contracts.py` |
-| Money | `src/trading/domain/primitives.py` |
-| ENTRY SHADOW | `src/trading/ai/entry.py` |
-| scorecard | `src/trading/analytics/agent_scorecard.py` |
-| review / exits | `src/trading/trade/review.py`, `src/trading/trade/exits.py` |
+| AuthorityGrant / demotion | `domain/contracts/authority.py`, `ai/authority.py` |
+| AgentAction closed sets | `domain/enums.py` (`BOUNDED_ACTIONS`, `ADVISORY_ACTIONS`) |
+| ENTRY / POSITION / PORTFOLIO / FRAGILITY / POSTTRADE | `ai/entry.py`, `position.py`, `portfolio_desk.py`, `fragility.py`, `posttrade.py` |
+| size_multiplier | already `le=1` on some advice contracts — D1 formalizes ConfidenceBucket + Phase-1 |
 
-## Build order (one PR per ledger row; do not reorder)
+## Build order (ledger — C1-safe; do not reorder)
 
-| ID | Slice | Acceptance (summary) |
+| ID | Slice | Acceptance |
 | --- | --- | --- |
-| ADESK-C1 | `TerminalPolicy` contracts + eligibility gate (PART 5.2) | All seven conditions individually tested; ineligible → `FLATTEN_AT_DTE` |
-| ADESK-C2 | Freeze terminal policy into `ExitPolicy` at entry; restore on restart | Restart test preserves policy + `run_conditions` |
-| ADESK-C3 | Deterministic continuous enforcement + one-way revert | Broken condition reverts; cannot be re-granted |
-| ADESK-C4 | Terminal-policy cost accounting in scorecard | Report shows cost saved vs counterfactual flatten, in R and INR |
+| ADESK-D1 | ConfidenceBucket enum + Phase-1 downscale-only sizing | `size_multiplier <= 1.0` enforced by type; bucket→multiplier table; tests |
+| ADESK-D2 | Promote FRAGILITY + POSTTRADE to ADVISORY | Signed AuthorityGrant; Telegram/advisory payload path; tests |
+| ADESK-D3 | PORTFOLIO BOUNDED for **config-promotion proposals only** (C1) | Veto/approve-as-order paths absent; only PROPOSE_* config actions BOUNDED |
+| ADESK-D4 | Re-scope POSITION: SHADOW/ADVISORY only for tighten/partial (**not** BOUNDED) | Mode/grant tests; live BOUNDED for TIGHTEN/PARTIAL rejected |
+| ADESK-D5 | Re-scope ENTRY: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | Same pattern as D4/D3 |
+| ADESK-D6 | Phase-2 upscale unlock (**deterministic envelope only**; never agent BOUNDED) | Upscale only via deterministic calibration gates; agent path cannot emit >1 |
 
 ## Progress
 
-- Stage A / B complete on `main` (tip includes B10 `478227b`).
-- ADESK-C1..C4 DONE. Stage C complete.
+- Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
+- Stage D planning APPROVED; **only ADESK-D1 READY**. D2+ BLOCKED until prior DONE.
 
-## ADESK-C1 (DONE)
+## ADESK-D1 scope (only READY code slice)
 
 **In scope**
 
-1. Enums: `TerminalPolicyKind` (`FLATTEN_AT_DTE`, `RUN_TO_EXPIRY_DEFINED_RISK`,
-   `FLATTEN_EARLY_IF_FRAGILE`) in `enums.py`.
-2. Contracts in e.g. `domain/contracts/terminal_policy.py`:
-   `TerminalPolicyRequest`, accepted/frozen policy snapshot, eligibility input
-   DTO, closed reject-reason enum.
-3. Pure eligibility gate for PART 5.2 seven conditions; on any miss accept
-   `FLATTEN_AT_DTE` with configured default DTE.
-4. Matrix tests: each condition fails alone → fallback; all pass →
-   `RUN_TO_EXPIRY_DEFINED_RISK` accepted.
+1. `ConfidenceBucket` enum (closed set) in `enums.py`.
+2. Deterministic Phase-1 map bucket → `size_multiplier` with **type-level**
+   `<= 1.0` (Pydantic Field / Annotated); reject >1 at validation.
+3. Wire into ENTRY (and any shared sizing advice) without enabling live BOUNDED.
+4. Tests: each bucket; reject multiplier >1; default/unknown fail-closed.
 
-**Out of scope (stop and flag)**
+**Out of scope**
 
-- Mutating OMS/broker; changing gateway *decision* logic (read/reuse only).
-- Wiring freeze into ExitPolicy persistence (C2).
-- Continuous enforcement / revert (C3).
-- Scorecard cost lines (C4).
-- LLM calls; BOUNDED live-path ENTRY actions.
-- Parsing `narrative`.
+- Live-path BOUNDED for ENTRY/POSITION/PORTFOLIO veto/tighten.
+- Phase-2 upscale (D6).
+- OMS/broker/gateway decision changes.
+- LLM on intraday path.
 
-## Nested cadence (unchanged)
+## Acceptance (Stage D plan done when)
 
-1. **Intraday** — `trading paper session`: L3+L2 only. No LLM.
-2. Terminal enforcement is deterministic on review/protection polls (C3).
-
-## Acceptance (Stage C plan done when)
-
-- ADESK-C1..C4 each DONE with green focused tests + ledger/CURRENT_STATE.
-- Zero LLM on terminal-policy path.
+- ADESK-D1..D6 each DONE with green focused tests + ledger/CURRENT_STATE.
+- Zero live-path BOUNDED actions; C1 honored.

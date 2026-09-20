@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage C ADESK-C1..C4 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D1 (Stage D plan APPROVED; C1..C4 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -53,11 +53,11 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage 
 | ADESK-C3 | DONE | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
 | ADESK-C4 | DONE | Terminal-policy cost accounting in scorecard | ADESK-C3 |
 
-## Agent Desk Stage D — authority ladder (BLOCKED until Stage B/C; C1 = config-promotion only)
+## Agent Desk Stage D — authority ladder
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
-| ADESK-D1 | BLOCKED | Confidence-bucket enum + Phase-1 downscale-only sizing | Stage B complete |
+| ADESK-D1 | READY | Confidence-bucket enum + Phase-1 downscale-only sizing | Stage D plan |
 | ADESK-D2 | BLOCKED | Promote FRAGILITY and POSTTRADE to ADVISORY | Stage B complete |
 | ADESK-D3 | BLOCKED | Promote PORTFOLIO to BOUNDED for config-promotion proposals only (C1) | Stage B complete; C1=config-promotion |
 | ADESK-D4 | BLOCKED | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | Stage B complete; C1 forbids live-path BOUNDED |
@@ -196,6 +196,7 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: Stage D `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-D1 only; D2+ BLOCKED until D1 DONE. C1 re-scopes live-path BOUNDED away.
 - 2026-09-20: ADESK-C4 DONE — terminal-policy cost vs flatten in R+INR (`analytics/terminal_policy_cost.py`, `tests/test_terminal_policy_cost.py`); CLI `evaluate terminal-cost`.
 - 2026-09-20: ADESK-C3 DONE — continuous enforcement + one-way revert.
 - 2026-09-20: ADESK-C2 DONE — freeze TerminalPolicy into ExitPolicy; restart preserve.

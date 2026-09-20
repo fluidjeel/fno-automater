@@ -1,10 +1,12 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage C — terminal policy (COMPLETE C1..C4)
+CURRENT_MILESTONE: Agent Desk Stage D — authority ladder (plan APPROVED; D1 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
+
+- Stage D plan APPROVED (2026-09-20); unlocks ADESK-D1 only; C1 keeps BOUNDED = config-promotion only.
 
 - Stage C (ADESK-C1..C4) complete on main; terminal path has zero LLM.
 
