@@ -73,5 +73,7 @@ class TradeThesis(VersionedModel):
                 "TradeThesis requires at least one contradicting_reason_code"
             )
         if len(self.invalidation) < 2:
-            raise ValueError("TradeThesis requires at least two invalidation conditions")
+            raise ValueError(
+                "TradeThesis requires at least two invalidation conditions"
+            )
         return self
