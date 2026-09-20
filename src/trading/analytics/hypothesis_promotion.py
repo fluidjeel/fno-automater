@@ -210,7 +210,8 @@ def promote_improvements(
         bumped = row.model_copy(
             update={
                 "occurrences": max(
-                    row.occurrences, occurrence_by_record.get(row.record_id, row.occurrences)
+                    row.occurrences,
+                    occurrence_by_record.get(row.record_id, row.occurrences)
                 )
             }
         )

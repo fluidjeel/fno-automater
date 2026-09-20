@@ -14,7 +14,7 @@ from trading.analytics.hypothesis_promotion import (
     hypothesis_to_shadow_experiment,
     promote_improvements,
 )
-from trading.analytics.improvements import normalize_claim_key
+from trading.analytics.improvements import cluster_improvements, normalize_claim_key
 from trading.domain.contracts.evaluation import ExperimentDefinition
 from trading.domain.contracts.improvement import ImprovementRecord
 from trading.domain.contracts.research import ExperimentProposal, ResearchHypothesis
@@ -137,8 +137,6 @@ def test_shadow_capital_limit_zero_enforced() -> None:
 
 
 def test_cluster_to_hypothesis_none_when_ineligible() -> None:
-    from trading.analytics.improvements import cluster_improvements
-
     records = (_record("r1", occurrences=1),)
     cluster = cluster_improvements(records)[0]
     assert cluster_to_hypothesis(cluster, records) is None
