@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A5 (ADESK-A4 DONE; ExposureReport + PART 6 limits).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A6 (ADESK-A5 DONE; StressReport + assume_no_fills + entry freeze).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -23,8 +23,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A5 (AD
 | ADESK-A2 | DONE | `agent_decisions` + `DecisionLog` | `tests/test_agent_decision.py`: round-trip write/read; query by role; query by model/prompt/policy triple; duplicate `decision_id` fails closed; JSON/tuple fields survive | ADESK-A1 |
 | ADESK-A3 | DONE | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
 | ADESK-A4 | DONE | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml` policy_version 5; gateway reject matrix | ADESK-A1 |
-| ADESK-A5 | READY | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on budget breach | ADESK-A1 |
-| ADESK-A6 | BLOCKED | `analytics/bias.py` battery | All 11 metrics on fixture cohort | ADESK-A2 |
+| ADESK-A5 | DONE | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on `tail_budget_fraction` breach | ADESK-A1 |
+| ADESK-A6 | READY | `analytics/bias.py` battery | All 11 metrics on fixture cohort | ADESK-A2 |
 | ADESK-A7 | BLOCKED | `ImprovementRecord` + clustering | Table + dedupe; `trading evaluate improvements` | ADESK-A1 |
 | ADESK-A8 | BLOCKED | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | BLOCKED | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
@@ -191,5 +191,5 @@ ADESK-A1 DONE: AuthorityGrant + C1 demotion (BOUNDED = config-promotion only;
 live-path actions rejected at write; missing/expired/mismatched grant → OBSERVE).
 ADESK-A2 DONE: AgentDecision + agent_decisions + DecisionLog (round-trip, role
 and version-triple queries, duplicate decision_id fails closed).
-Next: ADESK-A5 StressReport; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
+Next: ADESK-A6 bias battery; Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```

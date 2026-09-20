@@ -76,6 +76,8 @@ class RiskPolicyConfig(VersionedModel):
     expiry_day_notional_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
     directional_agreement_max: ExactDecimal = Field(gt=0, le=Decimal("1"))
     single_event_exposure_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
+    # ADESK-A5 PART 8 — max |worst_case|/equity before entry freeze.
+    tail_budget_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
     decision_ttl_seconds: StrictInt = Field(gt=0)
     # Defaults to False so a policy that omits the key refuses stop-bounded
     # futures shorts: the fail-closed direction for a new risk class.

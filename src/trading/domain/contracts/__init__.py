@@ -34,6 +34,13 @@ from trading.domain.contracts.evaluation import (
     PromotionEligibilityResult,
     ReasonCount,
 )
+from trading.domain.contracts.stress import (
+    FragilityFlag,
+    ScenarioResult,
+    StressReport,
+    StressScenario,
+    StressScenarioId,
+)
 from trading.domain.contracts.exposure import (
     CorrelationPair,
     EventOverlap,
@@ -152,6 +159,11 @@ __all__ = [
     "ExitTemplate",
     "ExperimentDefinition",
     "ExposureReport",
+    "StressReport",
+    "StressScenario",
+    "StressScenarioId",
+    "FragilityFlag",
+    "ScenarioResult",
     "ExposureSnapshot",
     "FamilyAction",
     "FeatureSnapshot",

@@ -3,7 +3,7 @@
 # across strategies and structures without hard-coding limits in domain logic.
 
 schema_version: "1"
-policy_version: "5"
+policy_version: "6"
 
 strategy_allocations:
   positional_long_option:
@@ -40,6 +40,8 @@ net_vega_limit: "5000"
 expiry_day_notional_fraction: "0.35"
 directional_agreement_max: "0.85"
 single_event_exposure_fraction: "0.25"
+# ADESK-A5 / PART 8 — freeze entries when stress worst-case exceeds this.
+tail_budget_fraction: "0.08"
 decision_ttl_seconds: 300
 
 # PAPER-only SPAN substitute for live futures symbols. Not exchange SPAN.
