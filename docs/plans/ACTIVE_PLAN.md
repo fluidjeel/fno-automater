@@ -48,24 +48,24 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- ADESK-D1 DONE; **ADESK-D2 READY**. D3+ BLOCKED until prior DONE.
+- ADESK-D1..D2 DONE; **ADESK-D3 READY**. D4+ BLOCKED until prior DONE.
 
 ## Progress detail
 
-- **ADESK-D1 DONE:** `ConfidenceBucket`, Phase-1 map, ENTRY wiring, `AgentDecision.size_multiplier` le=1; tests green.
+- **ADESK-D1 DONE:** ConfidenceBucket + Phase-1 sizing.
+- **ADESK-D2 DONE:** FRAGILITY/POSTTRADE ADVISORY via signed grant.
 
-## ADESK-D2 scope (only READY code slice)
+## ADESK-D3 scope (only READY code slice)
 
 **In scope**
 
-1. Signed AuthorityGrant at ADVISORY for FRAGILITY + POSTTRADE.
-2. Wire `resolve_effective_mode`; demote to OBSERVE without grant.
-3. Advisory/Telegram-shaped builder path (string builder; do not send).
-4. Tests: ADVISORY with valid grant; OBSERVE without.
+1. PORTFOLIO BOUNDED solely for PROPOSE_* config-promotion actions.
+2. Prove veto/approve-as-order cannot be BOUNDED.
+3. Tests for grant/mode partition.
 
 **Out of scope**
 
-- Live-path BOUNDED; OMS/broker edits; sending Telegram.
+- Live-path BOUNDED for VETO_ENTRY as order; OMS/broker edits.
 
 ## Acceptance (Stage D plan done when)
 

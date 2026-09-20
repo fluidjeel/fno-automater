@@ -1,4 +1,8 @@
-"""POSTTRADE desk ADVISORY attribution (ADESK-B8)."""
+"""POSTTRADE desk ADVISORY attribution (ADESK-B8 / ADESK-D2).
+
+ADVISORY requires a signed AuthorityGrant; missing/invalid grant demotes to
+OBSERVE. Advisory line builder is string-only — does not send.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,10 @@ from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
 
+from trading.ai.authority import resolve_effective_mode
 from trading.ai.decision_log import DecisionLog
 from trading.domain.contracts.agent_decision import AgentDecision
+from trading.domain.contracts.authority import AuthorityGrant
 from trading.domain.contracts.posttrade import (
     TradeAttribution,
     entry_journal_hash,
@@ -25,14 +31,41 @@ from trading.domain.enums import (
     ThesisVerdict,
 )
 
-__all__ = ["PosttradeResult", "build_trade_attribution", "maybe_log_posttrade"]
+__all__ = [
+    "POSTTRADE_MODEL_ID",
+    "POSTTRADE_PACKET_VERSION",
+    "POSTTRADE_POLICY_VERSION",
+    "POSTTRADE_PROMPT_VERSION",
+    "PosttradeAdvisoryLine",
+    "PosttradeResult",
+    "build_posttrade_advisory_line",
+    "build_trade_attribution",
+    "maybe_log_posttrade",
+]
+
+POSTTRADE_MODEL_ID = "deterministic-shadow"
+POSTTRADE_PROMPT_VERSION = "posttrade-v1"
+POSTTRADE_POLICY_VERSION = "posttrade-policy-v1"
+POSTTRADE_PACKET_VERSION = "posttrade-packet-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class PosttradeAdvisoryLine:
+    """Operator-facing string payload. Builder only — never sends."""
+
+    trade_id: str
+    thesis_verdict: str
+    primary_attribution: str
+    line: str
 
 
 @dataclass(frozen=True, slots=True)
 class PosttradeResult:
-    status: Literal["LOGGED", "SKIPPED_DISABLED", "HASH_MISMATCH"]
+    status: Literal["LOGGED", "SKIPPED_DISABLED", "HASH_MISMATCH", "OBSERVE"]
     attribution: TradeAttribution | None
     decision: AgentDecision | None
+    mode: AuthorityMode
+    advisory: PosttradeAdvisoryLine | None = None
 
 
 def _verdict(*, outcome_r: Decimal, thesis_correct: bool) -> ThesisVerdict:
@@ -88,6 +121,25 @@ def build_trade_attribution(
     )
 
 
+def build_posttrade_advisory_line(
+    attribution: TradeAttribution,
+) -> PosttradeAdvisoryLine:
+    """Advisory/Telegram-shaped line (string builder only — does not send)."""
+    line = (
+        f"POSTTRADE {attribution.trade_id}: verdict="
+        f"{attribution.thesis_verdict.value}; "
+        f"attr={attribution.primary_attribution.value}; "
+        f"outcome_r={attribution.outcome_r}; "
+        f"capture={attribution.capture_ratio}"
+    )
+    return PosttradeAdvisoryLine(
+        trade_id=attribution.trade_id,
+        thesis_verdict=attribution.thesis_verdict.value,
+        primary_attribution=attribution.primary_attribution.value,
+        line=line,
+    )
+
+
 def maybe_log_posttrade(
     *,
     as_of: datetime,
@@ -97,16 +149,31 @@ def maybe_log_posttrade(
     run_id: str,
     snapshot_id: str,
     environment: Environment = Environment.PAPER,
+    grant: AuthorityGrant | None = None,
+    now: datetime | None = None,
 ) -> PosttradeResult:
     if not enabled:
         return PosttradeResult(
-            status="SKIPPED_DISABLED", attribution=None, decision=None
+            status="SKIPPED_DISABLED",
+            attribution=None,
+            decision=None,
+            mode=AuthorityMode.OBSERVE,
+            advisory=None,
         )
+    mode = resolve_effective_mode(
+        DeskRole.POSTTRADE,
+        runtime_model_id=POSTTRADE_MODEL_ID,
+        runtime_prompt_version=POSTTRADE_PROMPT_VERSION,
+        runtime_policy_version=POSTTRADE_POLICY_VERSION,
+        now=now or as_of,
+        grant=grant,
+    )
+    advisory = build_posttrade_advisory_line(attribution)
     decision = AgentDecision(
         decision_id=f"DEC-PT-{uuid4().hex[:12]}",
         run_id=run_id,
         role=DeskRole.POSTTRADE,
-        mode=AuthorityMode.ADVISORY,
+        mode=mode,
         environment=environment,
         trade_id=attribution.trade_id,
         snapshot_id=snapshot_id,
@@ -120,10 +187,10 @@ def maybe_log_posttrade(
         evidence_ids=(attribution.thesis_id,),
         gate_outcome=GateOutcome.SHADOW_ONLY,
         gate_reject_codes=None,
-        model_id="deterministic-shadow",
-        prompt_version="posttrade-v1",
-        policy_version="posttrade-policy-v1",
-        packet_version="posttrade-packet-v1",
+        model_id=POSTTRADE_MODEL_ID,
+        prompt_version=POSTTRADE_PROMPT_VERSION,
+        policy_version=POSTTRADE_POLICY_VERSION,
+        packet_version=POSTTRADE_PACKET_VERSION,
         input_tokens=0,
         output_tokens=0,
         latency_ms=0,
@@ -131,7 +198,16 @@ def maybe_log_posttrade(
     )
     if decision_log is not None:
         decision_log.record(decision)
-    return PosttradeResult(status="LOGGED", attribution=attribution, decision=decision)
+    status: Literal["LOGGED", "OBSERVE"] = (
+        "OBSERVE" if mode is AuthorityMode.OBSERVE else "LOGGED"
+    )
+    return PosttradeResult(
+        status=status,
+        attribution=attribution,
+        decision=decision,
+        mode=mode,
+        advisory=advisory,
+    )
 
 
 # re-export helper for callers writing the entry journal
