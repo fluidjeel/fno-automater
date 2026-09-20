@@ -5,8 +5,8 @@ Pure functions only: no I/O, no LLM, no wall clock. ADESK-A3.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from decimal import Decimal
-from typing import Mapping
 
 from trading.domain.contracts.trade_thesis import InvalidationCondition, TradeThesis
 from trading.domain.enums import Comparator, InvalidationMetric, InvalidationStatus
@@ -160,11 +160,11 @@ class ThesisEvaluation:
     """Aggregate invalidation result for one TradeThesis."""
 
     __slots__ = (
-        "thesis_id",
         "conditions",
         "hard_triggered",
         "soft_triggered",
         "thesis_broken",
+        "thesis_id",
     )
 
     def __init__(
