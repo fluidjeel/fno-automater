@@ -48,23 +48,23 @@ config-promotion proposals.
 ## Progress
 
 - Stage A/B/C complete on `main` (tip includes C4 `88074e5`).
-- ADESK-D1..D3 DONE; **ADESK-D4 READY**. D5+ BLOCKED until prior DONE.
+- ADESK-D1..D4 DONE; **ADESK-D5 READY**. D6 BLOCKED until D5 DONE.
 
 ## Progress detail
 
-- **ADESK-D1..D3 DONE.**
+- **ADESK-D1..D4 DONE.**
 
-## ADESK-D4 scope (only READY code slice)
+## ADESK-D5 scope (only READY code slice)
 
 **In scope**
 
-1. POSITION: SHADOW/ADVISORY only for TIGHTEN_STOP/PARTIAL_EXIT.
-2. Refuse BOUNDED grants for those live-path actions.
-3. Mode/grant tests.
+1. ENTRY: SHADOW/ADVISORY for VETO_ENTRY/REDUCE_SIZE.
+2. BOUNDED only for config-promotion.
+3. Tests mirroring D4/D3 pattern.
 
 **Out of scope**
 
-- Live BOUNDED tighten/partial; OMS/broker edits.
+- Live BOUNDED veto/reduce-as-order; OMS/broker edits.
 
 ## Acceptance (Stage D plan done when)
 

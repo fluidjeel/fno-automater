@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D4 (ADESK-D3 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D5 (ADESK-D4 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -60,8 +60,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-D4 (AD
 | ADESK-D1 | DONE | Confidence-bucket enum + Phase-1 downscale-only sizing | Stage D plan |
 | ADESK-D2 | DONE | Promote FRAGILITY and POSTTRADE to ADVISORY | ADESK-D1 |
 | ADESK-D3 | DONE | Promote PORTFOLIO to BOUNDED for config-promotion proposals only (C1) | ADESK-D2 |
-| ADESK-D4 | READY | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | ADESK-D3 |
-| ADESK-D5 | BLOCKED | Re-scope ENTRY desk: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | Stage B complete; C1 |
+| ADESK-D4 | DONE | Re-scope POSITION desk: SHADOW/ADVISORY only for tighten/partial (not BOUNDED) | ADESK-D3 |
+| ADESK-D5 | READY | Re-scope ENTRY desk: SHADOW/ADVISORY for veto/reduce; BOUNDED only if config-promotion | ADESK-D4 |
 | ADESK-D6 | BLOCKED | Phase-2 upscale unlock (deterministic envelope only; never agent BOUNDED) | Stage D prerequisites; C1 |
 
 ## Agent Desk Stage E — research loop (BLOCKED until Stage D prerequisites)
@@ -196,6 +196,7 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: ADESK-D4 DONE — POSITION SHADOW/ADVISORY only for tighten/partial (`tests/test_position_authority.py`).
 - 2026-09-20: ADESK-D3 DONE — PORTFOLIO BOUNDED config-promotion only (`BOUNDED_ACTIONS`, `maybe_log_portfolio_config_promotion`, `tests/test_portfolio_bounded.py`).
 - 2026-09-20: ADESK-D2 DONE — FRAGILITY/POSTTRADE grant-backed ADVISORY (`tests/test_advisory_promotion.py`); demote OBSERVE without grant.
 - 2026-09-20: ADESK-D1 DONE — ConfidenceBucket + Phase-1 downscale map (`confidence_sizing.py`, `tests/test_confidence_sizing.py`); agent `size_multiplier` le=1; unlocks D2.
