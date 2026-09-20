@@ -23,7 +23,7 @@ never filled.
 | Term structure | P1 | ATM IV on 2+ expiries (`min_points`) | Skip term tilt. Single expiry is absent, not a curve |
 | Realized volatility | P1 | Completed Fyers 5m history bars via `build_market_state` | Skip RV ranking / expansion override. No invented RV |
 | Greeks | P1 | Fyers chain greeks (`fyers_chain`) | Binders still require delta+IV; theta/vega ranking skipped if absent |
-| Depth | P1 | Fyers REST `/data/depth` top-of-book `volume`; quote sizes if sent | Skip depth ranking. `cas_microstructure` blocked. Exit still protects |
+| Depth | P1 | Fyers REST `/data/depth` top-of-book `volume`; quote sizes if sent | Skip depth ranking. `cas_microstructure` blocked until size is observed. Exit still protects |
 
 ## P1 formulas and windows
 
@@ -85,5 +85,6 @@ absence reasons on `SetupFeatures.p1_absence_reasons`.
 ## Policy
 
 - LIVE stays off. Families are not auto-ENABLED.
-- CAS remains SHADOW and is policy-blocked when depth is absent.
+- CAS is PAPER when observed depth is present, and policy-blocked when depth is
+  absent. Incomplete CAS keys fail closed (`DATA_GAP`).
 - Thresholds live in `config/paper_data.yaml`, not in domain literals.

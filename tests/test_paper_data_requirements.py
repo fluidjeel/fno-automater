@@ -727,6 +727,25 @@ def test_allow_table_blocks_cas_when_p1_depth_is_absent() -> None:
     assert "cas_microstructure" not in allowed
 
 
+def test_allow_table_allows_cas_when_p1_depth_is_present() -> None:
+    """Invariant 6: observed size unblocks CAS; missing size is never filled."""
+    candidates = (
+        _id_option(
+            "AAA-24000-CE",
+            strike="24000",
+            delta="0.52",
+            iv="20",
+            bid_size=100,
+            ask_size=100,
+        ),
+    )
+    market = _market_state()
+    observed = observe_p1_features(candidates, requirements=REQUIREMENTS)
+    assert PaperDataField.DEPTH in observed.present
+    allowed = allowed_families_for(market, POLICY, p1=observed, paper_data=REQUIREMENTS)
+    assert "cas_microstructure" in allowed
+
+
 def test_exit_depth_gap_does_not_block_software_stop(tmp_path: Path) -> None:
     """Invariant 6: missing exit depth is logged; existing protection still fires."""
     clock = FrozenClock(NOW + timedelta(seconds=60))

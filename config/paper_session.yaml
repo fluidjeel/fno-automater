@@ -14,7 +14,7 @@ strategy_stances:
   positional_long_option: PAPER
   debit_spread: PAPER
   defined_risk_multileg: SHADOW
-  cas_microstructure: SUSPENDED
+  cas_microstructure: PAPER
   commodity_futures_trend: SHADOW
 commodity_underlying: CRUDEOIL
 commodity_exchange: MCX

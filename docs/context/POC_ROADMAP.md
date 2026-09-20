@@ -80,9 +80,10 @@ cannot deploy.
 ## Phase 7: Additional strategies — **IN PROGRESS**
 
 CAS `cas-microstructure-v1` keys are produced in Layer 1 from timestamped depth
-(CAS-001 feature producer done). SHADOW/PAPER CAS still needs a live close-window
-cohort; constructed tests are not promotion evidence. Other plug-ins stay behind
-existing contracts with their own specifications and gates.
+(CAS-001 feature producer done). PAPER stance is on for `cas_microstructure`;
+missing depth or incomplete keys fail closed. A live close-window cohort is
+still required for promotion. Other plug-ins stay behind existing contracts
+with their own specifications and gates.
 
 ## POC constraints
 

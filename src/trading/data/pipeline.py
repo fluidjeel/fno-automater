@@ -13,6 +13,7 @@ from trading.data.config import (
     UnderlyingConfig,
     load_data_pipeline_config,
 )
+from trading.data.cas_features import select_prior_depth
 from trading.data.cycle import build_cycle_snapshot
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed
@@ -239,6 +240,7 @@ class DataPipeline:
             self._store.append_canonical(event)
         if self._catalog is not None:
             self._catalog.append(events)
+        snapshot_events = self._with_prior_depth(events, symbol=symbol, as_of=instant)
         quality = assess_combined_snapshot(
             chain=chain_event,
             quote=quote_event,
@@ -262,7 +264,7 @@ class DataPipeline:
             instrument_spec=spec,
         )
         snapshot = build_cycle_snapshot(
-            events,
+            snapshot_events,
             quality=quality,
             as_of=instant,
             builder=builder,
@@ -271,7 +273,7 @@ class DataPipeline:
             symbol=symbol,
             as_of=instant,
             quality=quality,
-            event_ids=tuple(event.event_id for event in events),
+            event_ids=tuple(event.event_id for event in snapshot_events),
             snapshot=snapshot,
         )
         self._snapshots.append(record)
@@ -285,6 +287,35 @@ class DataPipeline:
             macro_news_factor=factor,
             macro_news_parse_errors=parse_errors,
         )
+
+    def _with_prior_depth(
+        self,
+        events: list[CanonicalMarketEvent],
+        *,
+        symbol: str,
+        as_of: datetime,
+    ) -> list[CanonicalMarketEvent]:
+        """Reuse a recent stored depth snapshot. Missing stays missing."""
+        current = next(
+            (
+                event
+                for event in reversed(events)
+                if event.event_type == "DEPTH_SNAPSHOT"
+            ),
+            None,
+        )
+        if current is None:
+            return events
+        lookback_ms = max(self._depth_max_age_ms, 1) * 2
+        stored = self._store.read_canonical(
+            symbol=symbol,
+            start=as_of - timedelta(milliseconds=lookback_ms),
+            end=as_of,
+        )
+        prior = select_prior_depth(stored, current=current)
+        if prior is None:
+            return events
+        return [prior, *events]
 
 
 def build_pipeline(repo_root: Path) -> DataPipeline:

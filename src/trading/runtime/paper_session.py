@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from decimal import Decimal
@@ -80,7 +80,12 @@ from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment
 
-__all__ = ["PaperSessionConfig", "load_paper_session_config", "run_paper_session"]
+__all__ = [
+    "PaperSessionConfig",
+    "cas_paper_execute",
+    "load_paper_session_config",
+    "run_paper_session",
+]
 
 _IST = ZoneInfo("Asia/Kolkata")
 _NOTIFY_MAX = 4000
@@ -141,6 +146,21 @@ def load_paper_session_config(path: Path) -> PaperSessionConfig:
         raise ValueError("paper session config must be a mapping")
     payload.pop("schema_version", None)
     return PaperSessionConfig.model_validate(payload)
+
+
+def cas_paper_execute(
+    *,
+    stance: ExecutionMode,
+    allowed: frozenset[str],
+    candidates: Sequence[FeatureSnapshot],
+) -> tuple[bool, ExecutionMode]:
+    """PAPER-submit CAS only when stance, allow-table, and one option agree."""
+    execute = (
+        stance is ExecutionMode.PAPER
+        and "cas_microstructure" in allowed
+        and len(candidates) == 1
+    )
+    return execute, ExecutionMode.PAPER if execute else ExecutionMode.SHADOW
 
 
 class PaperSession:
@@ -728,9 +748,12 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
                 mode = ExecutionMode.SHADOW
             elif strategy_id == "cas_microstructure":
                 candidates = long_binding.candidates
-                execute = False
-                setup = None
-                mode = ExecutionMode.SHADOW
+                execute, mode = cas_paper_execute(
+                    stance=configured_stance,
+                    allowed=allowed,
+                    candidates=candidates,
+                )
+                setup = long_binding.setup_features if execute else None
             else:
                 candidates = ()
                 execute = False

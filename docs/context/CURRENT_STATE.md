@@ -1,6 +1,6 @@
 # Current State
 
-LAST_UPDATED: 2026-09-19
+LAST_UPDATED: 2026-09-20
 CURRENT_MILESTONE: Phase 4–6 - PAPER P1 option selection
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
@@ -46,8 +46,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
   and P1 (IV surface/skew/term, RV, greeks, depth) with formula windows.
   Paper session + Layer 2 fail closed on any P0 hole. Observed P1 series
   change binder ranking and router preference; absence is logged and never
-  invented. Depth is observed on entry and exit; CAS stays SHADOW and blocked
-  without size.
+  invented. Depth is observed on entry and exit; CAS is PAPER when P0 and
+  depth are present, and policy-blocked when depth is absent. LIVE stays off.
 - Paper broker synthetic margin for live weekly symbols. Isolation still refuses
   Fyers transaction adapters (PAPER-004).
 - Layer 4 scorecard/eligibility CLI; weekly agent ships `enabled: false`.
@@ -68,7 +68,8 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 - LIVE `config/base.yaml` market-rule values remain unverified.
 - PAPER-005 (real-capital promotion) is out of scope until evidence and charges
   exist.
-- CAS still needs a live 15:00–15:30 IST window on real depth.
+- CAS still needs a live 15:00–15:30 IST window on real depth for promotion
+  evidence. PAPER stance is on; missing depth or incomplete CAS keys fail closed.
 
 ## Next action
 

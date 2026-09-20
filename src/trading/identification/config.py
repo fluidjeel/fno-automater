@@ -74,6 +74,7 @@ class AllowTablePolicy(_Frozen):
     high_iv_percentile: Decimal = Field(ge=0, le=100)
     auction_windows_ist: tuple[TimeWindow, ...]
     continuous_window_ist: TimeWindow
+    cas_windows_ist: tuple[TimeWindow, ...] = ()
     rules: tuple[AllowRule, ...]
 
 

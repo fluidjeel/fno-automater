@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from trading.domain.contracts import MarketState
 from trading.domain.contracts.advice import StructureChoice
 from trading.domain.contracts.paper_data import PaperDataRequirements
-from trading.identification.config import AllowRule, IdentificationPolicy
+from trading.identification.config import AllowRule, IdentificationPolicy, TimeWindow
 from trading.identification.p1_features import ObservedP1Features, blocked_families
 
 __all__ = [
@@ -89,7 +89,14 @@ def allowed_families_for(
             allowed.update(rule.allowed_families)
 
     families = frozenset(
-        _apply_hard_filters(allowed, trend=trend, iv_bucket=iv_bucket, session=session)
+        _apply_hard_filters(
+            allowed,
+            trend=trend,
+            iv_bucket=iv_bucket,
+            session=session,
+            moment=market.calculated_at,
+            cas_windows=policy.allow_table.cas_windows_ist,
+        )
     )
     if p1 is not None and paper_data is not None:
         return frozenset(families - blocked_families(p1, paper_data))
@@ -102,13 +109,28 @@ def _apply_hard_filters(
     trend: str,
     iv_bucket: IvBucket,
     session: SessionBucket,
+    moment: datetime,
+    cas_windows: tuple[TimeWindow, ...],
 ) -> set[str]:
     out = set(families) - _NIFTY_EXCLUDED
     if not (iv_bucket is IvBucket.HIGH and trend == "RANGE"):
         out.discard(StructureChoice.DEFINED_RISK_MULTILEG.value)
-    if session is not SessionBucket.AUCTION:
+    if not _cas_session_open(moment, session, cas_windows):
         out.discard(StructureChoice.CAS_MICROSTRUCTURE.value)
     return out
+
+
+def _cas_session_open(
+    moment: datetime, session: SessionBucket, cas_windows: tuple[TimeWindow, ...]
+) -> bool:
+    """CAS is allowed in NSE auction buckets or the configured F&O close window."""
+    if session is SessionBucket.AUCTION:
+        return True
+    clock = moment.astimezone(_IST).time().replace(tzinfo=None)
+    return any(
+        _in_window(clock, _hhmm(window.start), _hhmm(window.end))
+        for window in cas_windows
+    )
 
 
 def _match(

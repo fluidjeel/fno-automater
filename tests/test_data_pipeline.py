@@ -7,7 +7,7 @@ Invariant 19: canonical events carry lineage and raw references.
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,6 +15,7 @@ import duckdb
 import pytest
 
 from trading.config import load_config
+from trading.data.cas_features import CAS_FEATURE_KEYS, CAS_FEATURE_SET_VERSION
 from trading.data.config import (
     QualityConfig,
     SessionConfig,
@@ -34,7 +35,7 @@ from trading.data.normalize import (
     normalize_fyers_quotes,
     normalize_fyers_ws_tick,
 )
-from trading.data.pipeline import DataPipeline
+from trading.data.pipeline import DataPipeline, PipelineResult
 from trading.data.quality import (
     assess_combined_snapshot,
     assess_option_chain,
@@ -210,6 +211,7 @@ class FakeFeed:
         *,
         quotes_capture: RawMarketCapture | None = None,
         history_capture: RawMarketCapture | None = None,
+        depth_capture: RawMarketCapture | None = None,
     ) -> None:
         self._chain_capture = chain_capture
         received = chain_capture.received_at
@@ -217,7 +219,7 @@ class FakeFeed:
         self._history_capture = history_capture or _history_capture(
             chain_capture.received_at
         )
-        self._depth_capture = _depth_capture(received)
+        self._depth_capture = depth_capture or _depth_capture(received)
         self._status_capture = _status_capture(received)
 
     def fetch_option_chain(self, symbol: str) -> RawMarketCapture:
@@ -640,6 +642,56 @@ class TestPipelineAndReplay:
         assert result.snapshot.features["call_oi"] == Decimal(2000)
         canonical = list((tmp_path / "data" / "canonical").glob("*.jsonl"))
         assert canonical
+
+    def test_second_depth_cycle_completes_cas_keys_without_inventing(
+        self, tmp_path: Path
+    ) -> None:
+        """Invariant 6: one depth is a gap; a stored prior completes CAS keys."""
+        first_at = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        second_at = first_at + timedelta(seconds=60)
+        store = JsonlEventStore(tmp_path / "data")
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+
+        def _run(
+            when: datetime, buy: int, sell: int, capture_id: str
+        ) -> PipelineResult:
+            payload = json.loads(DEPTH_FIXTURE.read_text(encoding="utf-8"))
+            book = payload["d"]["NSE:NIFTY50-INDEX"]
+            book["totalbuyqty"] = buy
+            book["totalsellqty"] = sell
+            book["bids"][0]["volume"] = buy
+            book["ask"][0]["volume"] = sell
+            depth = RawMarketCapture(
+                capture_id=capture_id,
+                provider="fyers",
+                endpoint="depth",
+                received_at=when,
+                payload=payload,
+                http_status=200,
+            )
+            pipeline = DataPipeline(
+                pipeline_config=pipeline_config,
+                feed=FakeFeed(
+                    _capture(when),
+                    quotes_capture=_quotes_capture(when),
+                    history_capture=_history_capture(when),
+                    depth_capture=depth,
+                ),
+                store=store,
+                app_config_path=BASE_CONFIG,
+                repo_root=tmp_path,
+                clock=FrozenClock(when),
+            )
+            return pipeline.run_once(_underlying(), now=when)
+
+        first = _run(first_at, 150, 120, "cap-depth-1")
+        assert first.snapshot is not None
+        assert first.snapshot.feature_set_version != CAS_FEATURE_SET_VERSION
+        assert "cas_trade_flow_imbalance" not in first.snapshot.features
+        second = _run(second_at, 180, 80, "cap-depth-2")
+        assert second.snapshot is not None
+        assert set(CAS_FEATURE_KEYS) <= set(second.snapshot.features)
+        assert second.snapshot.feature_set_version == CAS_FEATURE_SET_VERSION
 
     def test_instrument_spec_supplies_tick_and_lot_size(self, tmp_path: Path) -> None:
         now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
