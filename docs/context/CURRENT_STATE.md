@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage 0 — measurement prerequisites
+CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A1 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -57,9 +57,9 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Next action
 
-Agent Desk Stage 0 (ADESK-A0.1..A0.6) is complete. C1 resolved (BOUNDED =
-config-promotion only). Next: Stage A planning pass, then ADESK-A1+. Monday:
-supervised `trading paper session` + CAS depth benchmark. Do not treat software
+Agent Desk Stage 0 is complete; C1 = config-promotion only. Stage A plan v10
+is approved: next code is **ADESK-A1** (AuthorityGrant + demotion). Monday:
+Fyers auth, CAS depth benchmark, supervised paper session. Do not treat software
 stops or the 60s poll as live-safe.
 
 ## Update rules

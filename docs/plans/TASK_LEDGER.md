@@ -1,8 +1,8 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 9
+ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: Stage A planning (C1 resolved: BOUNDED = config-promotion only).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A1 (Stage A plan approved; C1 = config-promotion only).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -15,19 +15,19 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: Stage A plan
 | ADESK-A0.5 | DONE | Score agent confidence + Brier reliability | `judgment.py`; separate agent vs setup Brier | Report shows agent Brier distinct from setup Brier; reliability component present | None |
 | ADESK-A0.6 | DONE | Charges authenticity + doc alignment | `config/evaluation.yaml`, attention, CURRENT_STATE/ACTIVE_PLAN | Schedule `verified_at` accepted for paper; docs consistent; 60s stops remain documented blocker | None |
 
-## Agent Desk Stage A — foundations (C1 resolved; awaiting Stage A plan)
+## Agent Desk Stage A — foundations (zero LLM; plan v10)
 
-| ID | Status | Outcome | Dependency |
-| --- | --- | --- | --- |
-| ADESK-A1 | BLOCKED | AuthorityGrant + demotion engine | All ADESK-A0.*; C1 resolved (BOUNDED=config-promotion); awaiting Stage A plan |
-| ADESK-A2 | BLOCKED | `agent_decisions` + DecisionLog writer | All ADESK-A0.* |
-| ADESK-A3 | BLOCKED | TradeThesis + invalidation evaluator | All ADESK-A0.* |
-| ADESK-A4 | BLOCKED | ExposureReport + risk.yaml limits | All ADESK-A0.* |
-| ADESK-A5 | BLOCKED | StressReport + assume_no_fills | All ADESK-A0.* |
-| ADESK-A6 | BLOCKED | bias.py battery | ADESK-A2 |
-| ADESK-A7 | BLOCKED | ImprovementRecord contract + table | All ADESK-A0.* |
-| ADESK-A8 | BLOCKED | reason_preconditions + hallucination_events | ADESK-A2 |
-| ADESK-A9 | BLOCKED | versioned packets + delta_gap_rate | All ADESK-A0.* |
+| ID | Status | Outcome | Scope / verification | Dependency |
+| --- | --- | --- | --- | --- |
+| ADESK-A1 | READY | Authority enums + `AuthorityGrant` + demotion | `DeskRole`/`AuthorityMode`/`AgentAction`; `authority_grants`; no/expired/triple-mismatch → OBSERVE; BOUNDED rejects live-path actions (C1) | All ADESK-A0.*; C1 |
+| ADESK-A2 | BLOCKED | `agent_decisions` + `DecisionLog` | Round-trip; query by role + model/prompt/policy versions | ADESK-A1 |
+| ADESK-A3 | BLOCKED | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
+| ADESK-A4 | BLOCKED | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml`; gateway reject matrix | ADESK-A1 |
+| ADESK-A5 | BLOCKED | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on budget breach | ADESK-A1 |
+| ADESK-A6 | BLOCKED | `analytics/bias.py` battery | All 11 metrics on fixture cohort | ADESK-A2 |
+| ADESK-A7 | BLOCKED | `ImprovementRecord` + clustering | Table + dedupe; `trading evaluate improvements` | ADESK-A1 |
+| ADESK-A8 | BLOCKED | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
+| ADESK-A9 | BLOCKED | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
 ## Agent Desk Stage B — desks in SHADOW (BLOCKED until Stage A complete)
 
@@ -187,5 +187,5 @@ PAPER-010 two-tier paper-data contract: P0 gates paper entry; P1 ranking is
 observed-only (no invented IV/skew/term/depth).
 Agent Desk Stage 0 complete (ADESK-A0.1..A0.6): dashboard landed, budget ledger,
 model lineage, agent Brier, charges/docs aligned.
-Next: Stage A planning pass (C1 = config-promotion only); PAPER-005 after live paper evidence.
+Next: implement ADESK-A1 (AuthorityGrant + C1 demotion); Monday Fyers + CAS depth + supervised paper; PAPER-005 after live paper evidence.
 ```

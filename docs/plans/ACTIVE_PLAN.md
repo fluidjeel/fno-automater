@@ -1,73 +1,99 @@
 # Active Implementation Plan
 
 PLAN_STATUS: APPROVED
-CONTEXT_DIGEST_VERSION: 9
+CONTEXT_DIGEST_VERSION: 10
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage 0 — measurement prerequisites (no desk yet).**
+Milestone: **Agent Desk Stage A — foundations (zero LLM calls).**
 
 ## Goal
 
-Make Layer 4 measurement honest before any Agent Desk feature work: green
-committed CI for the dashboard import, truthful CURRENT_STATE, persisted
-token budget, reproducible agent run lineage, agent-confidence calibration
-scoring, and charges/docs aligned with a conscious verification decision.
-Stage 0 plan is closed. Stage A is a separate planning pass (C1 resolved).
+Land the deterministic contracts and measurement substrate the Agent Desk needs
+before any desk runtime or LLM path: authority grants (with C1 baked in),
+decision log, trade theses + invalidation, exposure/stress reports, bias battery,
+improvement records, grounded-reason validation, and versioned packets.
 
-## Nested cadence (unchanged; do not collapse)
+Stage A ships **no LLM calls** and **no live-path agent influence**. If we stopped
+after Stage A, paper trading and risk measurement would still be strictly better.
+
+## Binding decisions (do not re-litigate in implementation)
+
+- **C1 (2026-09-20):** `AuthorityMode.BOUNDED` = **config-promotion only**.
+  Intraday stays L3 + L2 with **no LLM**. A BOUNDED grant may only allow actions
+  that propose enable/shadow/halt of already-coded strategy families via the L4
+  proposal path. It must **reject** grants that name live-path actions (size,
+  stop, submit, veto-as-order, tighten, partial exit, roll, hedge, add).
+- **C2:** Invariant 21 is **not** amended; L4 replay is via stored artifacts.
+- **C3:** Schedule `verified_at` accepted for paper; LIVE still needs contract-note
+  cross-check.
+- Stage 0 (ADESK-A0.1..A0.6) is **DONE** on `main` (`24435de`).
+
+## Nested cadence (unchanged)
 
 1. **Intraday** — `trading paper session`: L3 + L2 only. No LLM.
-2. **Pre-open day** — Telegram OAuth + readiness. No LLM unless AttentionRequest.
-3. **Week / period** — existing `trading agent weekly` / `advise` only; still
-   `enabled: false` by default. Stage 0 hardens measurement around these loops.
+2. **Pre-open day** — Telegram OAuth + readiness.
+3. **Week / period** — existing L4 weekly/advise loops only; still default-off.
 
-## Current foundation
+## Build order (one PR per ledger row; do not reorder)
 
-- L4 weekly + advise loops exist under `src/trading/ai/` (`loop.py`, `advise.py`);
-  no `runtime.py` / `packets.py` yet.
-- Read-only local dashboard: `trading dashboard serve|snapshot` (ADESK-A0.1).
-- `TokenBudget` persists monthly spend per `(year_month, role)` via
-  `agent_budget_ledger` (ADESK-A0.3).
-- Agent runs record resolved model id, temperature/seed, and full request/response
-  artifacts (ADESK-A0.4).
-- `judgment.py` scores setup and agent confidence Brier separately (ADESK-A0.5).
-- `evaluation.yaml` `charges_per_lot.verified_at` is `2026-09-19` (published
-  schedule estimate; contract-note reconciliation still required for LIVE).
-- PAPER positional review + software stops; 60s poll not live-safe.
+| ID | Slice | Acceptance (summary) |
+| --- | --- | --- |
+| ADESK-A1 | Enums + `AuthorityGrant` + `authority_grants` + demotion | No/expired/mismatched grant → OBSERVE; BOUNDED grant with live-path action → reject at write; config-promotion actions only when BOUNDED |
+| ADESK-A2 | `agent_decisions` + `DecisionLog` | Round-trip write/read; query by role + versions |
+| ADESK-A3 | `TradeThesis` + invalidation evaluator | Golden fixtures for every `InvalidationMetric` |
+| ADESK-A4 | `ExposureReport` + `risk.yaml` limits | Matrix tests; gateway rejects each new limit |
+| ADESK-A5 | `StressReport` + `assume_no_fills` | Debit-spread worst case = net debit; budget breach freezes entry |
+| ADESK-A6 | `analytics/bias.py` battery | All 11 metrics on a fixture cohort (needs A2) |
+| ADESK-A7 | `ImprovementRecord` + table + clustering | `trading evaluate improvements` ranks clusters |
+| ADESK-A8 | Reason preconditions + `hallucination_events` | Ungrounded code → ABSTAIN + event (needs A2) |
+| ADESK-A9 | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash test |
 
-## Remaining work
+## C1 enforcement in A1 (non-negotiable)
 
-Stage 0 (ADESK-A0.1..A0.6) is complete. **C1 resolved (2026-09-20): BOUNDED =
-config-promotion only** (no intraday LLM on the live path). Next: fresh
-**Stage A planning pass**, then implement ADESK-A1+ one slice per PR.
+When implementing ADESK-A1:
 
-## Blocking gaps
+1. Closed enums: `DeskRole`, `AuthorityMode` (OBSERVE / SHADOW / ADVISORY / BOUNDED),
+   `AgentAction`.
+2. Partition `AgentAction` into **config-promotion** vs **live-path** (and any
+   advisory-only). BOUNDED grants may list **only** config-promotion actions.
+3. Persist grants in `authority_grants`; load path demotes to OBSERVE on missing,
+   expired, or `(model_id, prompt_version, policy_version)` triple mismatch.
+4. **No auto-renewal. No agent-written grants.** Only operator/signed insert.
+5. Unit tests must include a BOUNDED grant that tries `TIGHTEN_STOP` / `VETO_ENTRY`
+   as order-path actions and is **rejected**.
 
-- **C1 (resolved 2026-09-20):** BOUNDED means config-promotion only. Intraday
-  remains “never LLM”. Stage D promotions may grant BOUNDED only for
-  config-promotion actions, never for live sizing/stops/submits.
-- **C2 (deferred):** invariant 21 is not amended; Layer 4 guarantees replay via
-  stored artifacts, not bitwise reproduction.
-- **C3 (resolved):** schedule-based `verified_at` is sufficient for paper net
-  P&L scoring; LIVE promotion still needs a contract-note cross-check.
-- Broker-resident protective orders / sub-60s protection remain the highest
-  live-safety gap in the repo.
+## Current foundation (already on main)
 
-## Acceptance
+- Dashboard, monthly `agent_budget_ledger`, temp=0/seed/resolved model + artifacts,
+  separate setup vs agent Brier, paper `charges_per_lot.verified_at`.
+- L4 weekly `STRATEGY_FAMILY` proposals (`AIProposal`) — the only future BOUNDED
+  surface under C1.
+- Paper session with software stops (still not live-safe).
 
-- Clean git tree: `uv run mypy` and focused pytest green without relying on
-  untracked files.
-- Two agent runs share one monthly budget key; third can exhaust role budget
-  without freezing L1–L3 trading.
-- A recorded agent run stores provider model id, temperature/seed, request,
-  tool results, raw response.
-- Judgment report exposes agent Brier separately from setup-score Brier.
-- CURRENT_STATE Verification matches that evidence; charges story is consistent.
+## Remaining work this plan
+
+Implement ADESK-A1 through ADESK-A9 as separate PRs in order. After A9, close this
+plan and open a Stage B planning pass (SHADOW desks). Do not start Stage B code
+in this plan.
+
+## Blocking gaps (outside Stage A code)
+
+- Broker-resident protective orders / sub-60s protection (highest live-safety gap).
+- Monday ops: Fyers auth + CAS depth benchmark + supervised paper session.
+- Stage D live veto/tighten-as-BOUNDED is **out of scope forever under C1**; Stage D
+  will be re-planned as config-promotion BOUNDED + SHADOW/ADVISORY for the rest.
+
+## Acceptance (plan done when)
+
+- All ADESK-A1..A9 are DONE with green `ruff` / `mypy` / `pytest`.
+- Zero LLM calls added on the intraday path.
+- A1 tests prove C1: BOUNDED cannot carry live-path actions.
+- CURRENT_STATE Verification cites Stage A evidence.
 
 ## Non-goals
 
-- Any DeskRole, AuthorityGrant, TradeThesis, terminal policy, or SHADOW desk.
-- Touching OMS/broker submit paths or widening gateway approve logic.
-- Amending SAFETY_INVARIANTS without an explicit C2 decision.
-- Stage A+ implementation.
+- Any desk runtime, SHADOW/ADVISORY LLM loop, or Stage B+ code.
+- Amending “intraday never LLM” or granting BOUNDED for veto/tighten/size.
+- Touching OMS/broker submit paths except new **reject** reasons for exposure/stress.
+- Auto-renewal of grants; agents writing grants; parsing `narrative`.
