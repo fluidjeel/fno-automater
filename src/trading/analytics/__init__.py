@@ -3,6 +3,13 @@
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.fills import simulate_fill, simulate_legs
 from trading.analytics.judgment import JudgmentError, evaluate_judgment, label_signal
+from trading.analytics.bias import (
+    BiasBatteryBands,
+    DecisionBiasInput,
+    TradeOutcomeInput,
+    WarmColdPair,
+    build_bias_report,
+)
 from trading.analytics.stress import (
     PositionStressInput,
     build_stress_entry_freeze,
@@ -25,6 +32,11 @@ __all__ = [
     "PositionStressInput",
     "build_stress_entry_freeze",
     "build_stress_report",
+    "BiasBatteryBands",
+    "DecisionBiasInput",
+    "TradeOutcomeInput",
+    "WarmColdPair",
+    "build_bias_report",
     "evaluate_tail_budget",
     "evaluate_judgment",
     "label_signal",
