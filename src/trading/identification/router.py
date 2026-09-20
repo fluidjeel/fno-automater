@@ -11,11 +11,14 @@ from trading.domain.contracts.identification import (
     MacroStatus,
     SetupFeatures,
     TrendState,
+    VolatilityState,
 )
+from trading.domain.contracts.paper_data import PaperDataField
 from trading.domain.enums import ReasonCode
 from trading.identification.allow_table import allowed_families_for
 from trading.identification.binders import BoundCandidates
 from trading.identification.config import IdentificationPolicy
+from trading.identification.p1_features import ObservedP1Features
 
 __all__ = ["RoutedOpportunity", "route_nifty_options"]
 
@@ -38,6 +41,7 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
     existing_correlated_exposure: bool = False,
     cooldown_active: bool = False,
     allowed_families: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
 ) -> tuple[RouteDecision, tuple[RoutedOpportunity, ...]]:
     families = (
         allowed_families
@@ -66,7 +70,7 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
     if market.event_state not in {"NORMAL", "CAUTION"}:
         hard_reasons.append(ReasonCode.EVENT_BLACKOUT)
 
-    preferred = _preferred(market, policy)
+    preferred = _preferred(market, policy, p1=p1)
     if preferred is not None and preferred not in families:
         hard_reasons.append(ReasonCode.STRATEGY_HALTED)
     scored = sorted(
@@ -90,9 +94,14 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
                 if not alternatives
                 else max(Decimal(0), winner_score - alternatives[0])
             )
-            if (
-                winner_score >= policy.router.min_winner_score
-                and score_gap >= policy.router.min_score_gap
+            expanding_rv = (
+                p1 is not None
+                and PaperDataField.REALIZED_VOLATILITY in p1.present
+                and market.volatility is VolatilityState.EXPANDING
+                and preferred == "debit_spread"
+            )
+            if winner_score >= policy.router.min_winner_score and (
+                expanding_rv or score_gap >= policy.router.min_score_gap
             ):
                 winner = preferred
 
@@ -150,9 +159,20 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
     return decision, opportunities
 
 
-def _preferred(market: MarketState, policy: IdentificationPolicy) -> str | None:
+def _preferred(
+    market: MarketState,
+    policy: IdentificationPolicy,
+    *,
+    p1: ObservedP1Features | None = None,
+) -> str | None:
     if market.iv_percentile is None or market.iv_rv_ratio is None:
         return None
+    if (
+        p1 is not None
+        and PaperDataField.REALIZED_VOLATILITY in p1.present
+        and market.volatility is VolatilityState.EXPANDING
+    ):
+        return "debit_spread"
     if (
         market.iv_percentile <= policy.router.low_iv_percentile
         and market.iv_rv_ratio <= policy.router.low_iv_rv_ratio

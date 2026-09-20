@@ -70,6 +70,7 @@ variant needs a neutral-regime rule that is not yet specified.
 | PAPER-008 | DONE | Observational 12-case PAPER positional e2e sim (no production patch) | `tests/paper_positional_sim/`; debit-spread SNAPSHOT_MISMATCH recorded as P0 |
 | PAPER-009 | DONE | P0 safety hardening: multi-leg quote bundle, persistent entry freeze, missing-monitor UNPROTECTED_POSITION, stale PROTECTION_DEGRADED | 75 focused tests pass; ruff/mypy clean; 60s poll is SAFETY not OK for live; unattended PAPER is not claimed ready |
 | PAPER-010 | DONE | Two-tier PaperDataRequirements: P0 fail-closed entry gate, observed-only P1 selection | `tests/test_paper_data_requirements.py`; ruff/mypy; LIVE still off |
+| PAPER-011 | DONE | Full P1 builders (IV surface/skew/term, RV, greeks, depth) wired into ranking, router, allow-table, and exit observation | `tests/test_paper_data_requirements.py`; ruff/mypy; LIVE still off; families not auto-ENABLED |
 | PAPER-005 | BLOCKED | Minimal-capital promotion record and rollback plan | Requires completed paper evidence and verified LIVE configuration |
 | CAS-001 | DONE | Produce and quality-gate `cas-microstructure-v1` in Layer 1 | All four keys from depth; version stamped only when complete; live SHADOW still PAPER-003 |
 

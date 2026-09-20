@@ -23,10 +23,11 @@ from trading.config.schema import Environment
 from trading.data.config import DataPipelineConfig, load_data_pipeline_config
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.auth import run_telegram_auth
-from trading.data.fyers.client import FyersMarketFeed
+from trading.data.fyers.client import FyersApiError, FyersMarketFeed
 from trading.data.fyers.telegram import send_telegram_message, telegram_configured
-from trading.data.normalize import normalize_fyers_quotes
+from trading.data.normalize import normalize_fyers_depth, normalize_fyers_quotes
 from trading.data.pipeline import build_pipeline
+from trading.data.prices import depth_top_sizes, observed_book_sizes, optional_int_qty
 from trading.data.settings import FyersSettings
 from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.data.storage.snapshot_store import SnapshotStore
@@ -47,12 +48,12 @@ from trading.identification import (
     allowed_families_for,
     bind_debit_spread,
     bind_long_option,
-    blocked_families,
     build_market_state,
     load_identification_policy,
     observe_p1_features,
     publish_macro_assessment,
     route_nifty_options,
+    top_book_size,
 )
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
@@ -438,10 +439,14 @@ def _quote_from_capture(
     ask = row.get("ask")
     if last is None:
         return None
+    bid_size, ask_size = observed_book_sizes(row)
     return MarketQuote(
         last=Price.snap(str(last), tick),
         bid=Price.snap(str(bid), tick) if bid else None,
         ask=Price.snap(str(ask), tick) if ask else None,
+        volume=optional_int_qty(row.get("volume")),
+        bid_size=bid_size,
+        ask_size=ask_size,
     )
 
 
@@ -455,6 +460,54 @@ def _quotes_from_capture(
         if quote is not None and quote.bid is not None and quote.ask is not None:
             quotes[symbol] = quote
     return quotes
+
+
+def _with_option_depth(
+    candidates: tuple[FeatureSnapshot, ...],
+    feed: FyersMarketFeed,
+    paper_data: PaperDataRequirements,
+) -> tuple[FeatureSnapshot, ...]:
+    """Attach REST depth sizes to the highest-OI options. Missing stays missing."""
+    cap = paper_data.windows.depth.max_symbols
+    if cap <= 0 or not candidates:
+        return candidates
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            -(
+                0
+                if item.derivatives is None or item.derivatives.open_interest is None
+                else item.derivatives.open_interest
+            ),
+            item.contract.symbol,
+        ),
+    )
+    remaining = cap
+    by_symbol = {item.contract.symbol: item for item in candidates}
+    for item in ranked:
+        if remaining <= 0:
+            break
+        if top_book_size(item) is not None:
+            continue
+        remaining -= 1
+        try:
+            capture = feed.fetch_depth(item.contract.symbol)
+        except (FyersApiError, ValueError, OSError):
+            continue
+        event = normalize_fyers_depth(
+            capture,
+            symbol=item.contract.symbol,
+            normalization_version="1",
+            raw_ref=capture.capture_id,
+        )
+        bid_size, ask_size = depth_top_sizes(event)
+        if bid_size is None or ask_size is None:
+            continue
+        quote = item.market.model_copy(
+            update={"bid_size": bid_size, "ask_size": ask_size}
+        )
+        by_symbol[item.contract.symbol] = item.model_copy(update={"market": quote})
+    return tuple(by_symbol[item.contract.symbol] for item in candidates)
 
 
 def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
@@ -552,6 +605,10 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
                     strikes_each_side=session_cfg.option_strikes_each_side,
                     quotes=observed_quotes,
                 )
+            if paper_data is not None:
+                option_candidates = _with_option_depth(
+                    option_candidates, feed, paper_data
+                )
             instruments.update(option_specs)
             for candidate in option_candidates:
                 snapshots[candidate.contract.symbol] = candidate
@@ -622,9 +679,9 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
             position.contract.underlying == index_underlying.contract.underlying
             for position in broker.get_positions()
         )
-        allowed = allowed_families_for(market_state, identification)
-        if p1 is not None and paper_data is not None:
-            allowed = frozenset(allowed - blocked_families(p1, paper_data))
+        allowed = allowed_families_for(
+            market_state, identification, p1=p1, paper_data=paper_data
+        )
         route, opportunities = route_nifty_options(
             market_state,
             long_option=long_binding,
@@ -633,6 +690,7 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
             existing_correlated_exposure=correlated,
             cooldown_active=cooldown_active,
             allowed_families=allowed,
+            p1=p1,
         )
         if route.paper_winner is not None:
             last_winner_at = now
