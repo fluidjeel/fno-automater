@@ -1,23 +1,41 @@
 """Append-only Agent Desk decision log. Zero LLM calls; never a live mutation.
 
 Invariant 2: recording a decision cannot place an order or mutate config.
-The writer validates the contract then persists; desks and grounding (A8) are
-out of scope for ADESK-A2.
+The writer validates the contract then persists through a typed port so this
+module never imports the trading store, broker or OMS.
 """
 
 from __future__ import annotations
 
+from typing import Protocol
+
 from trading.domain.contracts.agent_decision import AgentDecision
 from trading.domain.enums import DeskRole
-from trading.storage.trading_store import TradingStore
 
-__all__ = ["DecisionLog"]
+__all__ = ["AgentDecisionPort", "DecisionLog"]
+
+
+class AgentDecisionPort(Protocol):
+    """Persist and query logged desk decisions. Implemented by TradingStore."""
+
+    def insert_agent_decision(self, decision: AgentDecision) -> None: ...
+
+    def get_agent_decision(self, decision_id: str) -> AgentDecision | None: ...
+
+    def list_agent_decisions(
+        self,
+        *,
+        role: DeskRole | None = None,
+        model_id: str | None = None,
+        prompt_version: str | None = None,
+        policy_version: str | None = None,
+    ) -> tuple[AgentDecision, ...]: ...
 
 
 class DecisionLog:
     """Thin deterministic API over `agent_decisions`. No LLM, no broker calls."""
 
-    def __init__(self, store: TradingStore) -> None:
+    def __init__(self, store: AgentDecisionPort) -> None:
         self._store = store
 
     def record(self, decision: AgentDecision) -> AgentDecision:
