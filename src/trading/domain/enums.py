@@ -28,6 +28,12 @@ __all__ = [
     "FamilyStance",
     "FillOutcome",
     "GateOutcome",
+    "InvalidationMetric",
+    "Comparator",
+    "DirectionalClaim",
+    "DriverCode",
+    "InvalidationSeverity",
+    "InvalidationStatus",
     "HoldingStyle",
     "InstrumentKind",
     "IntentState",
@@ -683,3 +689,77 @@ class ReasonCode(StrEnum):
     AI_NOT_PROMOTED = "AI_NOT_PROMOTED"
     AI_BUDGET_EXHAUSTED = "AI_BUDGET_EXHAUSTED"
     OPERATOR_ATTENTION = "OPERATOR_ATTENTION"
+
+
+@unique
+class DirectionalClaim(StrEnum):
+    """Closed directional stance on the thesis. No free text."""
+
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    NEUTRAL = "NEUTRAL"
+    VOL_LONG = "VOL_LONG"
+    VOL_SHORT = "VOL_SHORT"
+
+
+@unique
+class DriverCode(StrEnum):
+    """Primary thesis driver. Closed vocabulary for SAME_THESIS_DRIVER later."""
+
+    TREND_CONTINUATION = "TREND_CONTINUATION"
+    MEAN_REVERSION = "MEAN_REVERSION"
+    VOL_EXPANSION = "VOL_EXPANSION"
+    VOL_COMPRESSION = "VOL_COMPRESSION"
+    EVENT_DRIVEN = "EVENT_DRIVEN"
+    FLOW_IMBALANCE = "FLOW_IMBALANCE"
+    STRUCTURE_SKEW = "STRUCTURE_SKEW"
+    OTHER = "OTHER"
+
+
+@unique
+class InvalidationMetric(StrEnum):
+    """Machine-evaluable thesis invalidation metrics. No prose metrics."""
+
+    SPOT_PCT_FROM_ENTRY = "SPOT_PCT_FROM_ENTRY"
+    IV_PERCENTILE = "IV_PERCENTILE"
+    TREND_SCORE = "TREND_SCORE"
+    OI_CHANGE_PCT = "OI_CHANGE_PCT"
+    ATR_MULTIPLE = "ATR_MULTIPLE"
+    DTE = "DTE"
+    MAE_R = "MAE_R"
+    DELTA = "DELTA"
+    VEGA_PNL_R = "VEGA_PNL_R"
+    EVENT_RISK_STATE = "EVENT_RISK_STATE"
+    REALIZED_VOL_RATIO = "REALIZED_VOL_RATIO"
+    INDIA_VIX = "INDIA_VIX"
+
+
+@unique
+class Comparator(StrEnum):
+    """How an observed metric is compared to an InvalidationCondition threshold."""
+
+    LT = "LT"
+    LTE = "LTE"
+    GT = "GT"
+    GTE = "GTE"
+    EQ = "EQ"
+    CROSSES_BELOW = "CROSSES_BELOW"
+    CROSSES_ABOVE = "CROSSES_ABOVE"
+
+
+@unique
+class InvalidationSeverity(StrEnum):
+    """SOFT = tighten / warn; HARD = thesis broken, exit path."""
+
+    SOFT = "SOFT"
+    HARD = "HARD"
+
+
+@unique
+class InvalidationStatus(StrEnum):
+    """Result of evaluating one InvalidationCondition against observations."""
+
+    HOLDING = "HOLDING"
+    TRIGGERED = "TRIGGERED"
+    MISSING_OBSERVATION = "MISSING_OBSERVATION"
+

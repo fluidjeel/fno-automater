@@ -9,6 +9,10 @@ from trading.domain.contracts.advice import (
 from trading.domain.contracts.agent_decision import AgentDecision
 from trading.domain.contracts.attention import AttentionRequest
 from trading.domain.contracts.authority import AuthorityGrant
+from trading.domain.contracts.trade_thesis import (
+    InvalidationCondition,
+    TradeThesis,
+)
 from trading.domain.contracts.base import (
     SCHEMA_VERSION,
     ContractError,
@@ -123,6 +127,8 @@ __all__ = [
     "ApprovedLeg",
     "AttentionRequest",
     "AuthorityGrant",
+    "InvalidationCondition",
+    "TradeThesis",
     "CandidateBinding",
     "CapitalReservation",
     "CohortPackage",

@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 10
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A3 (ADESK-A2 DONE; DecisionLog round-trip + role/version queries).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A4 (ADESK-A3 DONE; TradeThesis + invalidation evaluator).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -21,8 +21,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-A3 (AD
 | --- | --- | --- | --- | --- |
 | ADESK-A1 | DONE | Authority enums + `AuthorityGrant` + demotion | `tests/test_authority_grant.py`: no/expired/triple-mismatch → OBSERVE (never an error); BOUNDED + TIGHTEN_STOP/VETO_ENTRY rejected at validate/write; PAPER BOUNDED config-promotion accepted; store round-trip | All ADESK-A0.*; C1 |
 | ADESK-A2 | DONE | `agent_decisions` + `DecisionLog` | `tests/test_agent_decision.py`: round-trip write/read; query by role; query by model/prompt/policy triple; duplicate `decision_id` fails closed; JSON/tuple fields survive | ADESK-A1 |
-| ADESK-A3 | READY | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
-| ADESK-A4 | BLOCKED | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml`; gateway reject matrix | ADESK-A1 |
+| ADESK-A3 | DONE | `TradeThesis` + invalidation evaluator | `analytics/invalidation.py`; golden fixtures per `InvalidationMetric` | ADESK-A1 |
+| ADESK-A4 | READY | `ExposureReport` + risk limits | `portfolio/exposure.py` + `risk.yaml`; gateway reject matrix | ADESK-A1 |
 | ADESK-A5 | BLOCKED | `StressReport` + `assume_no_fills` | Debit worst case = net debit; entry freeze on budget breach | ADESK-A1 |
 | ADESK-A6 | BLOCKED | `analytics/bias.py` battery | All 11 metrics on fixture cohort | ADESK-A2 |
 | ADESK-A7 | BLOCKED | `ImprovementRecord` + clustering | Table + dedupe; `trading evaluate improvements` | ADESK-A1 |
