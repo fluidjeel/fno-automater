@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 12
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage B ADESK-B1..B10 DONE).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-C1 (Stage C plan APPROVED; B1..B10 DONE).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -44,11 +44,11 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: none (Stage 
 | ADESK-B9 | DONE | FRAGILITY desk ADVISORY | `tests/test_fragility_desk.py`; Telegram line builder |
 | ADESK-B10 | DONE | agent_scorecard.py + CLI | `trading evaluate desk --role`; `tests/test_agent_scorecard.py` |
 
-## Agent Desk Stage C — terminal policy (BLOCKED until Stage A complete)
+## Agent Desk Stage C — terminal policy
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
-| ADESK-C1 | BLOCKED | TerminalPolicy contracts + eligibility gate | Stage A complete |
+| ADESK-C1 | READY | TerminalPolicy contracts + eligibility gate | Stage C plan |
 | ADESK-C2 | BLOCKED | Freeze terminal policy into ExitPolicy at entry | ADESK-C1 |
 | ADESK-C3 | BLOCKED | Deterministic continuous enforcement + one-way revert | ADESK-C2 |
 | ADESK-C4 | BLOCKED | Terminal-policy cost accounting in scorecard | ADESK-C3 |
@@ -196,4 +196,5 @@ Next: Stage B SHADOW desks (B1 runtime); Monday Fyers + CAS depth + supervised p
 
 ## Notes
 
+- 2026-09-20: Stage C `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-C1 only; C2+ BLOCKED until C1 DONE.
 - 2026-09-20: Stage B `ACTIVE_PLAN.md` APPROVED (digest v11). Unlocks ADESK-B1 only; B2+ remain BLOCKED until B1 DONE.
