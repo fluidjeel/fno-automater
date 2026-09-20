@@ -5,7 +5,7 @@ CONTEXT_DIGEST_VERSION: 11
 PLANNED_AT: 2026-09-20
 CONTEXT_REFRESH_REQUIRED: no
 
-Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B5 DONE; next: B6).**
+Milestone: **Agent Desk Stage B — desks in SHADOW (ADESK-B6 DONE; next: B7).**
 
 ## Goal
 
@@ -60,7 +60,8 @@ There is **no** `ai/finance.py`. Do not invent one; migrate `advise.py`.
 - ADESK-B3 DONE: POSITION SHADOW over DeltaPacket (`ai/position.py`).
 - ADESK-B4 DONE: review precision/capture + `trading evaluate reviews`.
 - ADESK-B5 DONE: cold-review every 5th + warm_cold_divergence.
-- Next READY: **ADESK-B6** PORTFOLIO SHADOW.
+- ADESK-B6 DONE: PORTFOLIO SHADOW + SAME_THESIS_DRIVER recall.
+- Next READY: **ADESK-B7** MACRO desk.
 
 ## ADESK-B1 scope (landed)
 

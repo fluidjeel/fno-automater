@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 11
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B6 (ADESK-B5 DONE; cold-review divergence).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B7 (ADESK-B6 DONE; PORTFOLIO shared-fate).
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 
@@ -29,7 +29,7 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B6 (AD
 | ADESK-A8 | DONE | Reason preconditions + hallucinations | Ungrounded → ABSTAIN + `hallucination_events` | ADESK-A2 |
 | ADESK-A9 | DONE | Versioned packets + `delta_gap_rate` | Golden packets; prefix-stability hash | ADESK-A1 |
 
-## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B5 DONE; B6 READY)
+## Agent Desk Stage B — desks in SHADOW (plan APPROVED; B6 DONE; B7 READY)
 
 | ID | Status | Outcome | Dependency |
 | --- | --- | --- | --- |
@@ -38,8 +38,8 @@ Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: ADESK-B6 (AD
 | ADESK-B3 | DONE | POSITION desk + delta packet SHADOW | `tests/test_position_desk.py`; slot shadow; no live influence |
 | ADESK-B4 | DONE | Review-level labelling in judgment | `trading evaluate reviews`; `tests/test_review_judgment.py` |
 | ADESK-B5 | DONE | Cold-review scheduler + warm_cold_divergence | `tests/test_cold_review.py`; every 5th dual-path |
-| ADESK-B6 | READY | PORTFOLIO desk SHADOW | ADESK-B5 |
-| ADESK-B7 | BLOCKED | MACRO desk + MacroCalendar + injection suite | Stage A complete |
+| ADESK-B6 | DONE | PORTFOLIO desk SHADOW | `tests/test_portfolio_desk.py`; SAME_THESIS_DRIVER recall |
+| ADESK-B7 | READY | MACRO desk + MacroCalendar + injection suite | ADESK-B6 |
 | ADESK-B8 | BLOCKED | POSTTRADE desk + TradeAttribution | Stage A complete |
 | ADESK-B9 | BLOCKED | FRAGILITY desk ADVISORY | Stage A complete |
 | ADESK-B10 | BLOCKED | agent_scorecard.py + CLI | Stage A complete |
