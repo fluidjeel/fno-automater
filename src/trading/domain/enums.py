@@ -10,11 +10,18 @@ from __future__ import annotations
 from enum import StrEnum, unique
 
 __all__ = [
+    "ADVISORY_ACTIONS",
+    "CONFIG_PROMOTION_ACTIONS",
+    "LIVE_PATH_ACTIONS",
+    "AgentAction",
     "AssetClass",
     "AttentionBlocker",
+    "AuthorityMode",
     "DataQuality",
+    "DeskRole",
     "DifferenceClass",
     "EligibilityStatus",
+    "Environment",
     "Exchange",
     "ExecutionMode",
     "ExitScope",
@@ -76,6 +83,19 @@ class InstrumentKind(StrEnum):
 class OptionType(StrEnum):
     CALL = "CALL"
     PUT = "PUT"
+
+
+@unique
+class Environment(StrEnum):
+    """Process-level environment. Distinct from per-trade ExecutionMode."""
+
+    BACKTEST = "BACKTEST"
+    PAPER = "PAPER"
+    LIVE = "LIVE"
+
+    @property
+    def touches_real_capital(self) -> bool:
+        return self is Environment.LIVE
 
 
 @unique
@@ -433,6 +453,126 @@ class AttentionBlocker(StrEnum):
     AGENT_DISABLED = "AGENT_DISABLED"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     PROTECTION_DEGRADED = "PROTECTION_DEGRADED"
+
+
+@unique
+class DeskRole(StrEnum):
+    """Agent Desk role. Authority is per-role via AuthorityGrant, never inherent."""
+
+    ENTRY = "ENTRY"
+    POSITION = "POSITION"
+    PORTFOLIO = "PORTFOLIO"
+    MACRO = "MACRO"
+    FRAGILITY = "FRAGILITY"
+    POSTTRADE = "POSTTRADE"
+    RESEARCH = "RESEARCH"
+
+
+@unique
+class AuthorityMode(StrEnum):
+    """How far a desk's output may travel. Missing grant demotes to OBSERVE."""
+
+    OBSERVE = "OBSERVE"
+    SHADOW = "SHADOW"
+    ADVISORY = "ADVISORY"
+    BOUNDED = "BOUNDED"
+
+
+@unique
+class AgentAction(StrEnum):
+    """Closed agent output vocabulary. C1: BOUNDED may grant config-promotion only."""
+
+    # Config-promotion — the only BOUNDED-eligible set (C1 2026-09-20).
+    # Names follow FamilyStance / STRATEGY_FAMILY proposal vocabulary.
+    PROPOSE_FAMILY_ENABLE = "PROPOSE_FAMILY_ENABLE"
+    PROPOSE_FAMILY_SHADOW = "PROPOSE_FAMILY_SHADOW"
+    PROPOSE_FAMILY_HALT = "PROPOSE_FAMILY_HALT"
+
+    # Live-path — never BOUNDED. Size, stop, submit, veto-as-order, tighten,
+    # partial/full exit as order influence, roll, hedge, add.
+    VETO_ENTRY = "VETO_ENTRY"
+    REDUCE_SIZE = "REDUCE_SIZE"
+    TIGHTEN_STOP = "TIGHTEN_STOP"
+    PARTIAL_EXIT = "PARTIAL_EXIT"
+    FULL_EXIT = "FULL_EXIT"
+    SUBMIT_ORDER = "SUBMIT_ORDER"
+    PROPOSE_ROLL = "PROPOSE_ROLL"
+    PROPOSE_HEDGE = "PROPOSE_HEDGE"
+    PROPOSE_SIZE_INCREASE = "PROPOSE_SIZE_INCREASE"
+    PROPOSE_ADD = "PROPOSE_ADD"
+
+    # Advisory / journal — logged or operator-facing; not BOUNDED under C1.
+    ABSTAIN = "ABSTAIN"
+    HOLD = "HOLD"
+    RANK_STRUCTURES = "RANK_STRUCTURES"
+    SELECT_STRIKE_CANDIDATE = "SELECT_STRIKE_CANDIDATE"
+    REQUEST_TERMINAL_POLICY = "REQUEST_TERMINAL_POLICY"
+    REQUEST_OPERATOR_ATTENTION = "REQUEST_OPERATOR_ATTENTION"
+    RECORD_IMPROVEMENT = "RECORD_IMPROVEMENT"
+
+    @property
+    def is_config_promotion(self) -> bool:
+        """True when this action only proposes FamilyStance via the L4 path."""
+        return self in CONFIG_PROMOTION_ACTIONS
+
+    @property
+    def is_live_path(self) -> bool:
+        """True when this action could influence size, stops, submits or exits."""
+        return self in LIVE_PATH_ACTIONS
+
+    @property
+    def is_advisory(self) -> bool:
+        """True when the action is logged or operator-facing only."""
+        return self in ADVISORY_ACTIONS
+
+    def to_family_stance(self) -> FamilyStance:
+        """Map a config-promotion action onto FamilyStance. Raises otherwise."""
+        try:
+            return _FAMILY_STANCE_BY_ACTION[self]
+        except KeyError:
+            raise ValueError(
+                f"{self} is not a config-promotion action; FamilyStance is "
+                "defined only for STRATEGY_FAMILY proposals"
+            ) from None
+
+
+CONFIG_PROMOTION_ACTIONS: frozenset[AgentAction] = frozenset(
+    {
+        AgentAction.PROPOSE_FAMILY_ENABLE,
+        AgentAction.PROPOSE_FAMILY_SHADOW,
+        AgentAction.PROPOSE_FAMILY_HALT,
+    }
+)
+LIVE_PATH_ACTIONS: frozenset[AgentAction] = frozenset(
+    {
+        AgentAction.VETO_ENTRY,
+        AgentAction.REDUCE_SIZE,
+        AgentAction.TIGHTEN_STOP,
+        AgentAction.PARTIAL_EXIT,
+        AgentAction.FULL_EXIT,
+        AgentAction.SUBMIT_ORDER,
+        AgentAction.PROPOSE_ROLL,
+        AgentAction.PROPOSE_HEDGE,
+        AgentAction.PROPOSE_SIZE_INCREASE,
+        AgentAction.PROPOSE_ADD,
+    }
+)
+ADVISORY_ACTIONS: frozenset[AgentAction] = frozenset(
+    {
+        AgentAction.ABSTAIN,
+        AgentAction.HOLD,
+        AgentAction.RANK_STRUCTURES,
+        AgentAction.SELECT_STRIKE_CANDIDATE,
+        AgentAction.REQUEST_TERMINAL_POLICY,
+        AgentAction.REQUEST_OPERATOR_ATTENTION,
+        AgentAction.RECORD_IMPROVEMENT,
+    }
+)
+_FAMILY_STANCE_BY_ACTION: dict[AgentAction, FamilyStance] = {
+    AgentAction.PROPOSE_FAMILY_ENABLE: FamilyStance.ENABLE,
+    AgentAction.PROPOSE_FAMILY_SHADOW: FamilyStance.SHADOW,
+    AgentAction.PROPOSE_FAMILY_HALT: FamilyStance.HALT,
+}
 
 
 @unique

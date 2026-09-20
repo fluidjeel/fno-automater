@@ -1,7 +1,7 @@
 # Current State
 
 LAST_UPDATED: 2026-09-20
-CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A1 READY)
+CURRENT_MILESTONE: Agent Desk Stage A — foundations (ADESK-A1 DONE; ADESK-A2 READY)
 STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Confirmed decisions
@@ -38,11 +38,14 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
   resolved model id + temperature/seed persistence, separate setup vs agent Brier.
 - `evaluation.yaml` `charges_per_lot.verified_at: 2026-09-19` (published schedule
   estimate; contract-note cross-check still required for LIVE).
+- ADESK-A1: `AuthorityGrant` + `authority_grants` + demotion to OBSERVE. BOUNDED
+  is config-promotion only; live-path actions rejected at write.
 
 ## Verification
 
 - `uv run ruff check .` and `uv run mypy` are clean on the committed tree.
 - `tests/test_dashboard.py`, `tests/test_agent_stage0.py`, `tests/test_l4_agent.py`,
+  `tests/test_authority_grant.py` (C1 BOUNDED live-path reject + OBSERVE demotion),
   and the PAPER-010 focused suite pass.
 - `trading dashboard snapshot` runs without `ModuleNotFoundError`.
 
@@ -57,10 +60,9 @@ STATUS: P0_HARDENED_P1_SELECTION_UNATTENDED_NOT_LIVE_SAFE
 
 ## Next action
 
-Agent Desk Stage 0 is complete; C1 = config-promotion only. Stage A plan v10
-is approved: next code is **ADESK-A1** (AuthorityGrant + demotion). Monday:
-Fyers auth, CAS depth benchmark, supervised paper session. Do not treat software
-stops or the 60s poll as live-safe.
+Agent Desk Stage 0 complete; **ADESK-A1 done** (AuthorityGrant + C1 demotion).
+Next code is **ADESK-A2** (DecisionLog). Monday: Fyers auth, CAS depth benchmark,
+supervised paper session. Do not treat software stops or the 60s poll as live-safe.
 
 ## Update rules
 
