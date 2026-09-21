@@ -1,0 +1,40 @@
+# Universe scanner configuration — directional conviction strategy.
+# Every change starts a new observation cohort.
+
+schema_version: "1"
+scan_version: "universe-scanner-v1"
+scan_interval_minutes: 5
+top_candidates: 5
+
+# Liquidity hard gates
+min_avg_daily_volume: 500000
+min_option_oi: 1000
+max_spread_fraction: "0.05"
+
+# Composite scoring weights (must sum to 1.00)
+weight_relative_strength: "0.25"
+weight_sector_rs: "0.15"
+weight_volume_surge: "0.15"
+weight_vwap_distance: "0.15"
+weight_oi_buildup: "0.15"
+weight_price_structure: "0.15"
+
+# Conviction thresholds (score 0-100)
+conviction_none_max: "50"
+conviction_weak_max: "65"
+conviction_moderate_max: "75"
+conviction_strong_max: "85"
+
+# Conviction scoring weights (must sum to 1.00)
+conviction_weight_trend_alignment: "0.25"
+conviction_weight_volume_confirmation: "0.20"
+conviction_weight_oi_confirmation: "0.15"
+conviction_weight_price_action: "0.15"
+conviction_weight_sector_support: "0.10"
+conviction_weight_regime_alignment: "0.15"
+
+# Minimum conviction level to enter a trade
+# Options: NONE, WEAK, MODERATE, STRONG, VERY_STRONG
+min_entry_conviction: MODERATE
+min_entry_conviction_regime_aligned: MODERATE
+min_entry_conviction_regime_opposed: STRONG

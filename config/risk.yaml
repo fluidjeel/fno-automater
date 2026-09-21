@@ -18,6 +18,8 @@ strategy_allocations:
     allocation_fraction: "0.05"
   cas_microstructure:
     allocation_fraction: "0.05"
+  directional_conviction:
+    allocation_fraction: "0.15"
 
 underlying_concentration_fraction: "0.25"
 options_premium_budget_fraction: "0.15"

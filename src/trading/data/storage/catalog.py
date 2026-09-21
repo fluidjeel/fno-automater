@@ -11,6 +11,16 @@ from trading.data.events import CanonicalMarketEvent
 
 __all__ = ["CatalogWriter"]
 
+_SNAPSHOT_INDEX_COLUMNS: tuple[tuple[str, type], ...] = (
+    ("snapshot_id", str),
+    ("symbol", str),
+    ("as_of", str),
+    ("decision", str),
+    ("quality_state", str),
+    ("permits_new_exposure", bool),
+    ("reason_codes", str),
+)
+
 
 def _event_row(event: CanonicalMarketEvent) -> dict[str, Any]:
     return {
@@ -85,6 +95,20 @@ class CatalogWriter:
             incoming_path.unlink(missing_ok=True)
         return path
 
+    def _normalize_snapshot_index(self, frame: Any) -> Any:
+        """Align catalog rows so legacy Null-typed columns concat with new strings."""
+        import polars as pl
+
+        row_count = frame.height
+        columns: dict[str, Any] = {}
+        for name, py_type in _SNAPSHOT_INDEX_COLUMNS:
+            dtype = pl.Boolean if py_type is bool else pl.Utf8
+            if name in frame.columns:
+                columns[name] = frame[name].cast(dtype)
+            else:
+                columns[name] = pl.Series(name, [None] * row_count, dtype=dtype)
+        return pl.DataFrame(columns)
+
     def append_snapshots(self, rows: Sequence[Mapping[str, Any]]) -> Path | None:
         """Index decision-cycle metadata. The snapshot JSONL keeps the payload."""
         if not rows:
@@ -97,9 +121,11 @@ class CatalogWriter:
         first_as_of = str(rows[0]["as_of"])
         day = first_as_of[:10]
         path = self._parquet / f"snapshots-{day}.parquet"
-        incoming = pl.DataFrame([dict(row) for row in rows])
+        incoming = self._normalize_snapshot_index(
+            pl.DataFrame([dict(row) for row in rows])
+        )
         if path.is_file():
-            existing = pl.read_parquet(path)
+            existing = self._normalize_snapshot_index(pl.read_parquet(path))
             merged = pl.concat([existing, incoming], how="vertical").unique(
                 subset=["as_of", "symbol"],
                 keep="last",

@@ -19,6 +19,7 @@ def build_cycle_snapshot(
     quality: DataQualityReport,
     as_of: datetime,
     builder: MarketSnapshotBuilder,
+    index_only: bool = False,
 ) -> FeatureSnapshot | None:
     """Emit a snapshot unless the cycle is INVALID.
 
@@ -29,4 +30,6 @@ def build_cycle_snapshot(
     """
     if quality.state is DataQuality.INVALID:
         return None
+    if index_only:
+        return builder.build_index(events, as_of=as_of, quality=quality)
     return builder.build(events, as_of=as_of, quality=quality)

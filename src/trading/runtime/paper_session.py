@@ -422,6 +422,9 @@ def run_paper_session(
         paper_data_requirements=paper_data,
     )
     settings = FyersSettings.from_repo_root(repo_root)
+    cached = settings.load_cached_token(repo_root)
+    if cached and not settings.fyers_access_token:
+        settings = settings.model_copy(update={"fyers_access_token": cached})
     if notifier is None:
         if not telegram_configured(
             settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
@@ -652,6 +655,8 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
         macro: MacroAssessment | None = None
         for underlying_cfg in pipeline_cfg.underlyings:
             if underlying_cfg.instrument_kind is InstrumentKind.FUTURE:
+                continue
+            if underlying_cfg.symbol == identification.vix_symbol:
                 continue
             result = pipeline.run_once(underlying_cfg, now=now)
             if result.snapshot is None:

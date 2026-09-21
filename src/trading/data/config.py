@@ -32,6 +32,7 @@ class UnderlyingConfig(BaseModel):
     underlying: str
     instrument_kind: InstrumentKind
     asset_class: AssetClass
+    fetch_option_chain: bool = True
 
 
 class StorageConfig(BaseModel):

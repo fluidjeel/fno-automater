@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import duckdb
+import polars as pl
 import pytest
 
 from trading.config import load_config
@@ -988,6 +989,44 @@ class TestPipelineAndReplay:
         connection.close()
         assert count is not None
         assert count[0] == len(run.events)
+
+    def test_append_snapshots_merges_legacy_null_snapshot_id(self, tmp_path: Path) -> None:
+        """Legacy catalog rows with Null snapshot_id must not break new appends."""
+        parquet_dir = tmp_path / "data" / "parquet"
+        parquet_dir.mkdir(parents=True)
+        legacy = pl.DataFrame(
+            {
+                "snapshot_id": pl.Series([None], dtype=pl.Null),
+                "symbol": ["NSE:NIFTY50-INDEX"],
+                "as_of": ["2026-09-21T04:20:00+00:00"],
+                "decision": ["PASS"],
+                "quality_state": ["VALID"],
+                "permits_new_exposure": [True],
+                "reason_codes": ["[]"],
+            }
+        )
+        legacy.write_parquet(parquet_dir / "snapshots-2026-09-21.parquet")
+        catalog = CatalogWriter(
+            tmp_path / "data",
+            duckdb_path=tmp_path / "data" / "catalog.duckdb",
+        )
+        path = catalog.append_snapshots(
+            [
+                {
+                    "snapshot_id": "SNAP-NEW",
+                    "symbol": "NSE:NIFTY50-INDEX",
+                    "as_of": "2026-09-21T04:21:00+00:00",
+                    "decision": "PASS",
+                    "quality_state": "VALID",
+                    "permits_new_exposure": True,
+                    "reason_codes": "[]",
+                }
+            ]
+        )
+        assert path is not None
+        merged = pl.read_parquet(path).sort("as_of")
+        assert merged.height == 2
+        assert merged["snapshot_id"].to_list() == [None, "SNAP-NEW"]
 
 
 class TestWebSocketTicks:

@@ -32,7 +32,7 @@ from trading.data.normalize import (
     normalize_fyers_quotes,
 )
 from trading.data.ports import EventStore, MarketFeedPort
-from trading.data.quality import assess_combined_snapshot
+from trading.data.quality import assess_combined_snapshot, assess_index_snapshot
 from trading.data.settings import FyersSettings
 from trading.data.snapshot_builder import MarketSnapshotBuilder
 from trading.data.storage.catalog import CatalogWriter
@@ -111,6 +111,8 @@ class DataPipeline:
         *,
         now: datetime | None = None,
     ) -> PipelineResult:
+        if not underlying.fetch_option_chain:
+            return self._run_once_index_quote(underlying, now=now)
         symbol = underlying.symbol
         fyers = self._pipeline_config.fyers
         # None until `data backfill instruments` has run, which keeps tick and
@@ -268,6 +270,158 @@ class DataPipeline:
             quality=quality,
             as_of=instant,
             builder=builder,
+        )
+        record = SnapshotRecord.for_cycle(
+            symbol=symbol,
+            as_of=instant,
+            quality=quality,
+            event_ids=tuple(event.event_id for event in snapshot_events),
+            snapshot=snapshot,
+        )
+        self._snapshots.append(record)
+        if self._catalog is not None:
+            self._catalog.append_snapshots([self._snapshots.index_rows(record)])
+        return PipelineResult(
+            symbol=symbol,
+            events=tuple(events),
+            snapshot=snapshot,
+            raw_refs=tuple(raw_refs),
+            macro_news_factor=factor,
+            macro_news_parse_errors=parse_errors,
+        )
+
+    def _run_once_index_quote(
+        self,
+        underlying: UnderlyingConfig,
+        *,
+        now: datetime | None = None,
+    ) -> PipelineResult:
+        """Quote/bar path for cash indices without a Fyers option chain."""
+        symbol = underlying.symbol
+        fyers = self._pipeline_config.fyers
+        spec = self._instruments.find(symbol)
+        quote_capture = self._feed.fetch_quotes((symbol,))
+        depth_capture: RawMarketCapture | None = None
+        status_capture: RawMarketCapture | None = None
+        if fyers.fetch_depth:
+            depth_capture = self._feed.fetch_depth(symbol)
+        if fyers.fetch_market_status:
+            status_capture = self._feed.fetch_market_status()
+        trade_date = quote_capture.received_at.astimezone(_IST).date()
+        range_from = (trade_date - timedelta(days=fyers.bar_lookback_days)).isoformat()
+        range_to = trade_date.isoformat()
+        bar_captures: list[tuple[str, RawMarketCapture]] = []
+        for resolution in fyers.bar_resolutions:
+            bar_captures.append(
+                (
+                    resolution,
+                    self._feed.fetch_history(
+                        symbol,
+                        resolution=resolution,
+                        range_from=range_from,
+                        range_to=range_to,
+                    ),
+                )
+            )
+        captures = [quote_capture, *(capture for _, capture in bar_captures)]
+        if depth_capture is not None:
+            captures.append(depth_capture)
+        if status_capture is not None:
+            captures.append(status_capture)
+        latest_receive = max(capture.received_at for capture in captures)
+        instant = latest_receive if now is None else max(now, latest_receive)
+        raw_refs: list[str] = []
+        events: list[CanonicalMarketEvent] = []
+
+        def persist(capture: RawMarketCapture) -> str:
+            path = self._store.append_raw(capture)
+            ref = str(path.relative_to(self._repo_root))
+            raw_refs.append(ref)
+            return ref
+
+        quote_ref = persist(quote_capture)
+        version = self._pipeline_config.normalization_version
+        quote_event = normalize_fyers_quotes(
+            quote_capture,
+            symbol=symbol,
+            normalization_version=version,
+            raw_ref=quote_ref,
+        )
+        news_items = self._macro_news_feed.items()
+        load_result = self._macro_news_feed.last_load
+        factor = score_macro_news(
+            news_items,
+            scope=underlying.underlying,
+            as_of=instant,
+            max_age_seconds=self._pipeline_config.macro_news.max_age_seconds,
+            half_life_seconds=self._pipeline_config.macro_news.half_life_seconds,
+            calculation_version=self._pipeline_config.macro_news.calculation_version,
+        )
+        parse_errors = load_result.errors if load_result is not None else ()
+        quote_event = replace(
+            quote_event,
+            payload=merge_factor_into_payload(quote_event.payload, factor),
+        )
+        events.append(quote_event)
+        depth_event: CanonicalMarketEvent | None = None
+        if depth_capture is not None:
+            depth_event = normalize_fyers_depth(
+                depth_capture,
+                symbol=symbol,
+                normalization_version=version,
+                raw_ref=persist(depth_capture),
+            )
+            events.append(depth_event)
+        status_event: CanonicalMarketEvent | None = None
+        if status_capture is not None:
+            status_event = normalize_fyers_market_status(
+                status_capture,
+                symbol=symbol,
+                normalization_version=version,
+                raw_ref=persist(status_capture),
+                segment=self._pipeline_config.session.segment,
+            )
+            events.append(status_event)
+        bar_event: CanonicalMarketEvent | None = None
+        for resolution, capture in bar_captures:
+            bar_event = normalize_fyers_history(
+                capture,
+                symbol=symbol,
+                resolution=resolution,
+                normalization_version=version,
+                raw_ref=persist(capture),
+            )
+            events.append(bar_event)
+        for event in events:
+            self._store.append_canonical(event)
+        if self._catalog is not None:
+            self._catalog.append(events)
+        snapshot_events = self._with_prior_depth(events, symbol=symbol, as_of=instant)
+        quality = assess_index_snapshot(
+            quote=quote_event,
+            bar=bar_event,
+            now=instant,
+            quote_max_age_ms=self._quote_max_age_ms,
+            bar_max_age_ms=self._bar_max_age_ms,
+            depth=depth_event,
+            market_status=status_event,
+            depth_max_age_ms=self._depth_max_age_ms,
+            session=self._pipeline_config.session,
+            quality_config=self._pipeline_config.quality,
+        )
+        builder = MarketSnapshotBuilder(
+            underlying,
+            config_version=self._config_version,
+            config_checksum=self._config_checksum,
+            code_version=self._code_version,
+            instrument_spec=spec,
+        )
+        snapshot = build_cycle_snapshot(
+            snapshot_events,
+            quality=quality,
+            as_of=instant,
+            builder=builder,
+            index_only=True,
         )
         record = SnapshotRecord.for_cycle(
             symbol=symbol,

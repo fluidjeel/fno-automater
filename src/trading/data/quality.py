@@ -22,6 +22,7 @@ __all__ = [
     "assess_bar_snapshot",
     "assess_combined_snapshot",
     "assess_depth_snapshot",
+    "assess_index_snapshot",
     "assess_option_chain",
     "assess_quote_snapshot",
     "assess_tick",
@@ -262,6 +263,99 @@ def _bps_gap(left: Decimal, right: Decimal) -> Decimal:
     if base == 0:
         return Decimal(0)
     return abs(left - right) / base * Decimal(10_000)
+
+
+def assess_index_snapshot(
+    *,
+    quote: CanonicalMarketEvent,
+    bar: CanonicalMarketEvent | None,
+    now: datetime,
+    quote_max_age_ms: int,
+    bar_max_age_ms: int,
+    depth: CanonicalMarketEvent | None = None,
+    market_status: CanonicalMarketEvent | None = None,
+    depth_max_age_ms: int = 60_000,
+    session: SessionConfig | None = None,
+    quality_config: QualityConfig | None = None,
+) -> DataQualityReport:
+    """Quality gate for cash indices without an option chain (e.g. India VIX)."""
+    cfg = quality_config or QualityConfig()
+    bar_count = int(bar.payload.get("bar_count", 0)) if bar is not None else 0
+    warmup = bar is None or bar_count >= cfg.min_bar_count
+    quality = assess_quote_snapshot(
+        quote,
+        now=now,
+        max_age_ms=quote_max_age_ms,
+        warmup_complete=warmup,
+    )
+    last = bar_close(bar) if bar is not None else None
+    if last is None:
+        last = quote_last(quote)
+    if last is None:
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.INVALID,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="price_unavailable",
+                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
+            ),
+        )
+    if session is not None and not session.verified:
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.INVALID,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="session_unverified",
+                reason_codes=(ReasonCode.CONFIG_UNVERIFIED,),
+            ),
+        )
+    if not warmup:
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.INVALID,
+                age_ms=quality.age_ms,
+                warmup_complete=False,
+                source_status="warmup",
+                reason_codes=(ReasonCode.WARMUP_INCOMPLETE,),
+            ),
+        )
+    if bar is not None:
+        bar_quality = assess_bar_snapshot(
+            bar,
+            now=now,
+            max_age_ms=bar_max_age_ms,
+            warmup_complete=warmup,
+        )
+        quality = _merge(quality, bar_quality)
+    if depth is not None:
+        quality = _merge(
+            quality,
+            assess_depth_snapshot(
+                depth,
+                now=now,
+                max_age_ms=depth_max_age_ms,
+                warmup_complete=warmup,
+            ),
+        )
+    if market_status is not None and session is not None and in_session(now, session):
+        status = str(market_status.payload.get("status") or "").upper()
+        if status and status != "OPEN":
+            quality = _merge(
+                quality,
+                _report(
+                    state=DataQuality.DEGRADED,
+                    age_ms=quality.age_ms,
+                    warmup_complete=warmup,
+                    source_status="market_closed",
+                    reason_codes=(ReasonCode.DATA_DEGRADED,),
+                ),
+            )
+    return quality
 
 
 def assess_combined_snapshot(

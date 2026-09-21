@@ -118,6 +118,132 @@ class MarketSnapshotBuilder:
                 return TickSize.of(ref_tick)
         return TickSize.of(DEFAULT_TICK_SIZE)
 
+    def build_index(
+        self,
+        events: Sequence[CanonicalMarketEvent],
+        *,
+        as_of: datetime,
+        quality: DataQualityReport,
+    ) -> FeatureSnapshot:
+        """Build a cash-index snapshot from quotes and bars (no option chain)."""
+        if not events:
+            raise ValueError("cannot build a snapshot from zero events")
+        quote = _latest_event(events, "QUOTE_SNAPSHOT")
+        if quote is None:
+            raise ValueError("quote event is required for index snapshot build")
+        bar = _latest_event(events, "BAR_SNAPSHOT")
+        reference = _latest_event(events, "INSTRUMENT_REFERENCE")
+        depth = _latest_event(events, "DEPTH_SNAPSHOT")
+        tick = self._tick_size(reference)
+        bid = ask = last = open_ = high = low = close = None
+        volume: int | None = None
+        bid_size: int | None = None
+        ask_size: int | None = None
+        bar_is_final = False
+        quotes = quote.payload.get("quotes", [])
+        if isinstance(quotes, list) and quotes and isinstance(quotes[0], dict):
+            row = quotes[0]
+            bid = _positive(row.get("bid"))
+            ask = _positive(row.get("ask"))
+            last = _positive(row.get("lp", row.get("ltp")))
+            open_ = _positive(row.get("open_price"))
+            high = _positive(row.get("high_price"))
+            low = _positive(row.get("low_price"))
+            close = _positive(row.get("prev_close_price"))
+            volume = _int_qty(row.get("volume"))
+        if depth is not None:
+            bids = depth.payload.get("bid_levels", [])
+            asks = depth.payload.get("ask_levels", [])
+            if isinstance(bids, list) and bids and isinstance(bids[0], dict):
+                bid = _positive(bids[0].get("price")) or bid
+                bid_size = _int_qty(bids[0].get("volume"))
+            if isinstance(asks, list) and asks and isinstance(asks[0], dict):
+                ask = _positive(asks[0].get("price")) or ask
+                ask_size = _int_qty(asks[0].get("volume"))
+        if bar is not None:
+            bars = bar.payload.get("bars", [])
+            if isinstance(bars, list) and bars and isinstance(bars[-1], dict):
+                latest_bar = bars[-1]
+                open_ = _positive(latest_bar.get("open")) or open_
+                high = _positive(latest_bar.get("high")) or high
+                low = _positive(latest_bar.get("low")) or low
+                close = _positive(latest_bar.get("close")) or close
+                last = _positive(latest_bar.get("close")) or last
+                volume = _int_qty(latest_bar.get("volume")) or volume
+                bar_is_final = bool(bar.payload.get("is_final", True))
+        if last is None or last <= 0:
+            raise PriceUnavailableError(
+                "no authoritative last price in quote, depth or bar"
+            )
+        market = MarketQuote(
+            last=Price.snap(last, tick),
+            bid=Price.snap(bid, tick) if bid is not None else None,
+            ask=Price.snap(ask, tick) if ask is not None else None,
+            open=Price.snap(open_, tick) if open_ is not None else None,
+            high=Price.snap(high, tick) if high is not None else None,
+            low=Price.snap(low, tick) if low is not None else None,
+            close=Price.snap(close, tick) if close is not None else None,
+            volume=volume,
+            bid_size=bid_size,
+            ask_size=ask_size,
+            bar_is_final=bar_is_final,
+        )
+        latest = max(events, key=lambda event: event.receive_time)
+        times = SnapshotTimes(
+            event_time=latest.event_time,
+            source_time=latest.source_time,
+            receive_time=latest.receive_time,
+            calculation_time=as_of,
+        )
+        features: dict[str, Decimal] = {}
+        if self._underlying.underlying == "INDIAVIX":
+            features["india_vix"] = last
+        if self._instrument_spec is not None:
+            features["lot_size"] = Decimal(self._instrument_spec.lot_size)
+        macro = quote.payload.get("macro_news_factor")
+        if isinstance(macro, dict):
+            sentiment = macro.get("sentiment")
+            coverage = macro.get("coverage")
+            event_count = macro.get("event_count")
+            if isinstance(sentiment, str | int | Decimal) and not isinstance(
+                sentiment, bool
+            ):
+                features["macro_news_sentiment"] = Decimal(str(sentiment))
+            if isinstance(coverage, str | int | Decimal) and not isinstance(
+                coverage, bool
+            ):
+                features["macro_news_coverage"] = Decimal(str(coverage))
+            if isinstance(event_count, int) and not isinstance(event_count, bool):
+                features["macro_news_event_count"] = Decimal(event_count)
+        source_ids = [event.symbol for event in events]
+        raw_refs = [event.raw_ref for event in events]
+        macro_ids = self._macro_source_ids(quote.payload)
+        macro_refs = self._macro_source_refs(quote.payload)
+        lineage = Lineage(
+            provider="fyers",
+            source_ids=tuple(dict.fromkeys((*source_ids, *macro_ids))),
+            raw_event_refs=tuple(dict.fromkeys((*raw_refs, *macro_refs))),
+            normalization_version=quote.normalization_version,
+            versions=self._versions,
+        )
+        contract = ContractRef(
+            exchange=self._underlying.exchange,
+            symbol=self._underlying.underlying,
+            instrument_kind=self._underlying.instrument_kind,
+            asset_class=self._underlying.asset_class,
+            underlying=self._underlying.underlying,
+        )
+        return FeatureSnapshot(
+            snapshot_id=f"SNAP-{quote.event_id}",
+            contract=contract,
+            times=times,
+            market=market,
+            feature_set_version=self._underlying.feature_set_version,
+            features=features,
+            quality=quality,
+            lineage=lineage,
+        )
+
     def build(
         self,
         events: Sequence[CanonicalMarketEvent],

@@ -117,3 +117,5 @@ underlyings:
     underlying: INDIAVIX
     instrument_kind: INDEX
     asset_class: EQUITY_INDEX
+    # Fyers options-chain-v3 has no expiries for India VIX; quote+bars only.
+    fetch_option_chain: false
