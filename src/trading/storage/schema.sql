@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS protection_state (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS session_protection (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_budget_ledger (
     year_month TEXT NOT NULL,
     role TEXT NOT NULL,

@@ -39,6 +39,7 @@ from trading.data.normalize import (
 from trading.data.pipeline import DataPipeline, PipelineResult
 from trading.data.quality import (
     assess_combined_snapshot,
+    assess_index_snapshot,
     assess_option_chain,
     assess_quote_snapshot,
 )
@@ -89,6 +90,18 @@ def _underlying() -> UnderlyingConfig:
     )
 
 
+def _vix_underlying() -> UnderlyingConfig:
+    return UnderlyingConfig(
+        symbol="NSE:INDIAVIX-INDEX",
+        feature_set_version="india_vix_v1",
+        exchange=Exchange.NSE,
+        underlying="INDIAVIX",
+        instrument_kind=InstrumentKind.INDEX,
+        asset_class=AssetClass.EQUITY_INDEX,
+        fetch_option_chain=False,
+    )
+
+
 def _capture(now: datetime) -> RawMarketCapture:
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     data = payload.get("data")
@@ -108,6 +121,21 @@ def _quotes_capture(now: datetime) -> RawMarketCapture:
     payload = json.loads(QUOTES_FIXTURE.read_text(encoding="utf-8"))
     return RawMarketCapture(
         capture_id="cap-quotes-1",
+        provider="fyers",
+        endpoint="quotes",
+        received_at=now,
+        payload=payload,
+        http_status=200,
+    )
+
+
+def _vix_quotes_capture(now: datetime) -> RawMarketCapture:
+    payload = json.loads(QUOTES_FIXTURE.read_text(encoding="utf-8"))
+    rows = payload.get("d")
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        rows[0]["n"] = "NSE:INDIAVIX-INDEX"
+    return RawMarketCapture(
+        capture_id="cap-vix-quotes-1",
         provider="fyers",
         endpoint="quotes",
         received_at=now,
@@ -251,6 +279,45 @@ class FakeFeed:
 
     def fetch_expiry_dates(self, symbol: str) -> RawMarketCapture:
         raise FyersApiError("expiry endpoint unavailable")
+
+
+class FakeIndexFeed:
+    """Quote-only feed for cash indices without a Fyers option chain."""
+
+    def __init__(
+        self,
+        quotes_capture: RawMarketCapture,
+        *,
+        history_capture: RawMarketCapture | None = None,
+        depth_capture: RawMarketCapture | None = None,
+    ) -> None:
+        received = quotes_capture.received_at
+        self._quotes_capture = quotes_capture
+        self._history_capture = history_capture or _history_capture(received)
+        self._depth_capture = depth_capture or _depth_capture(received)
+        self._status_capture = _status_capture(received)
+
+    def fetch_quotes(self, symbols: tuple[str, ...]) -> RawMarketCapture:
+        assert symbols == ("NSE:INDIAVIX-INDEX",)
+        return self._quotes_capture
+
+    def fetch_history(
+        self,
+        symbol: str,
+        *,
+        resolution: str,
+        range_from: str,
+        range_to: str,
+    ) -> RawMarketCapture:
+        assert symbol == "NSE:INDIAVIX-INDEX"
+        return self._history_capture
+
+    def fetch_depth(self, symbol: str) -> RawMarketCapture:
+        assert symbol == "NSE:INDIAVIX-INDEX"
+        return self._depth_capture
+
+    def fetch_market_status(self) -> RawMarketCapture:
+        return self._status_capture
 
 
 class TestNormalizeAndQuality:
@@ -504,6 +571,27 @@ class TestMacroNewsFactor:
             bar=None,
             now=now,
             chain_max_age_ms=120_000,
+            quote_max_age_ms=60_000,
+            bar_max_age_ms=300_000,
+            session=_session(),
+        )
+        assert report.state is DataQuality.INVALID
+        assert ReasonCode.OUTSIDE_SESSION in report.reason_codes
+        assert not report.permits_new_exposure
+
+    def test_index_outside_session_blocks_exposure(self) -> None:
+        """Quote-only indices use the same session gate as option-chain cycles."""
+        now = datetime(2024, 9, 13, 3, 0, tzinfo=UTC)
+        quote = normalize_fyers_quotes(
+            _vix_quotes_capture(now),
+            symbol="NSE:INDIAVIX-INDEX",
+            normalization_version="1",
+            raw_ref="q.json",
+        )
+        report = assess_index_snapshot(
+            quote=quote,
+            bar=None,
+            now=now,
             quote_max_age_ms=60_000,
             bar_max_age_ms=300_000,
             session=_session(),
@@ -989,6 +1077,87 @@ class TestPipelineAndReplay:
         connection.close()
         assert count is not None
         assert count[0] == len(run.events)
+
+    def test_run_once_index_quote_builds_vix_snapshot(self, tmp_path: Path) -> None:
+        """India VIX uses quote+bars only; no Fyers option chain."""
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        store = JsonlEventStore(tmp_path / "data")
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeIndexFeed(_vix_quotes_capture(now)),
+            store=store,
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        run = pipeline.run_once(_vix_underlying(), now=now)
+        assert run.snapshot is not None
+        assert run.snapshot.features["india_vix"] > 0
+        assert "OPTION_CHAIN_SNAPSHOT" not in {event.event_type for event in run.events}
+
+    def test_replay_rebuilds_index_snapshots_from_storage(self, tmp_path: Path) -> None:
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        store = JsonlEventStore(tmp_path / "data")
+        pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
+        pipeline = DataPipeline(
+            pipeline_config=pipeline_config,
+            feed=FakeIndexFeed(_vix_quotes_capture(now)),
+            store=store,
+            app_config_path=BASE_CONFIG,
+            repo_root=tmp_path,
+            clock=FrozenClock(now),
+        )
+        run = pipeline.run_once(_vix_underlying(), now=now)
+        loaded = load_config(BASE_CONFIG)
+        replay = ReplayEngine(
+            pipeline_config=pipeline_config,
+            store=store,
+            config_version=loaded.version,
+            config_checksum=loaded.checksum,
+        ).replay(
+            _vix_underlying(),
+            start=now.replace(hour=0),
+            end=now.replace(hour=23),
+        )
+        assert len(replay.snapshots) == 1
+        assert replay.snapshots[0].features == run.snapshot.features
+
+    def test_append_events_merges_legacy_null_event_id(self, tmp_path: Path) -> None:
+        """Legacy canonical-event rows with Null columns must not break appends."""
+        parquet_dir = tmp_path / "data" / "parquet"
+        parquet_dir.mkdir(parents=True)
+        legacy = pl.DataFrame(
+            {
+                "event_id": pl.Series([None], dtype=pl.Null),
+                "provider": ["fyers"],
+                "symbol": ["NSE:NIFTY50-INDEX"],
+                "event_type": ["QUOTE_SNAPSHOT"],
+                "event_time": ["2026-09-21T04:20:00+00:00"],
+                "source_time": ["2026-09-21T04:20:00+00:00"],
+                "receive_time": ["2026-09-21T04:20:00+00:00"],
+                "provider_sequence": pl.Series([None], dtype=pl.Null),
+                "raw_ref": ["legacy.json"],
+                "normalization_version": ["1"],
+            }
+        )
+        legacy.write_parquet(parquet_dir / "2026-09-21.parquet")
+        catalog = CatalogWriter(
+            tmp_path / "data",
+            duckdb_path=tmp_path / "data" / "catalog.duckdb",
+        )
+        now = datetime(2026, 9, 21, 4, 21, tzinfo=UTC)
+        event = normalize_fyers_quotes(
+            _quotes_capture(now),
+            symbol="NSE:NIFTY50-INDEX",
+            normalization_version="1",
+            raw_ref="new.json",
+        )
+        path = catalog.append([event])
+        assert path is not None
+        merged = pl.read_parquet(path).sort("receive_time")
+        assert merged.height == 2
+        assert merged["event_id"].to_list()[-1] == event.event_id
 
     def test_append_snapshots_merges_legacy_null_snapshot_id(self, tmp_path: Path) -> None:
         """Legacy catalog rows with Null snapshot_id must not break new appends."""

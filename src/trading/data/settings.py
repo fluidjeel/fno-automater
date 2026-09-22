@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["FyersSettings", "load_fyers_settings"]
+
+_JWT_SEGMENTS = 3
 
 
 class FyersSettings(BaseSettings):
@@ -113,9 +118,40 @@ class FyersSettings(BaseSettings):
             return cls(_env_file=env_file)  # type: ignore[call-arg]
         return cls()  # type: ignore[call-arg]
 
+    @classmethod
+    def from_repo_root_with_cache(cls, repo_root: Path) -> FyersSettings:
+        """Load settings and prefer the freshest access token on disk."""
+        settings = cls.from_repo_root(repo_root)
+        cached = settings.load_cached_token(repo_root)
+        if not cached:
+            return settings
+        if not settings.fyers_access_token:
+            return settings.model_copy(update={"fyers_access_token": cached})
+        cached_exp = _token_expiry(cached)
+        env_exp = _token_expiry(settings.fyers_access_token)
+        if cached_exp is not None and (env_exp is None or cached_exp > env_exp):
+            return settings.model_copy(update={"fyers_access_token": cached})
+        return settings
+
+
+def _token_expiry(token: str) -> datetime | None:
+    """Decode JWT ``exp`` when present."""
+    parts = token.split(".")
+    if len(parts) != _JWT_SEGMENTS:
+        return None
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    exp = payload.get("exp") if isinstance(payload, dict) else None
+    if not isinstance(exp, int):
+        return None
+    return datetime.fromtimestamp(exp, tz=UTC)
+
 
 def load_fyers_settings(repo_root: Path | None = None) -> FyersSettings:
     """Load broker settings from the repo-root ``.env`` when present."""
     if repo_root is None:
         return FyersSettings()  # type: ignore[call-arg]
-    return FyersSettings.from_repo_root(repo_root)
+    return FyersSettings.from_repo_root_with_cache(repo_root)

@@ -76,6 +76,7 @@ from trading.runtime.paper_runner import (
     PaperRunner,
     PaperStrategyRequest,
 )
+from trading.runtime.protection import ProtectionConfig
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment
@@ -128,6 +129,7 @@ class PaperSessionConfig(BaseModel):
     positional_review: PositionalReviewConfig = Field(
         default_factory=PositionalReviewConfig
     )
+    protection: ProtectionConfig = Field(default_factory=ProtectionConfig)
 
 
 class SessionNotifier(Protocol):
@@ -421,10 +423,7 @@ def run_paper_session(
         execution_mode=ExecutionMode.PAPER,
         paper_data_requirements=paper_data,
     )
-    settings = FyersSettings.from_repo_root(repo_root)
-    cached = settings.load_cached_token(repo_root)
-    if cached and not settings.fyers_access_token:
-        settings = settings.model_copy(update={"fyers_access_token": cached})
+    settings = FyersSettings.from_repo_root_with_cache(repo_root)
     if notifier is None:
         if not telegram_configured(
             settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id

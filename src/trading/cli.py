@@ -151,10 +151,7 @@ def _cmd_data_fetch(args: argparse.Namespace) -> int:
 def _cmd_data_stream(args: argparse.Namespace) -> int:
     root = _repo_root()
     config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
-    settings = FyersSettings.from_repo_root(root)
-    cached = settings.load_cached_token(root)
-    if cached and not settings.fyers_access_token:
-        settings = settings.model_copy(update={"fyers_access_token": cached})
+    settings = FyersSettings.from_repo_root_with_cache(root)
     targets = [
         u for u in config.underlyings if not args.symbol or u.symbol == args.symbol
     ]
@@ -199,10 +196,7 @@ def _cmd_data_stream(args: argparse.Namespace) -> int:
 
 def _fyers_feed(root: Path) -> FyersMarketFeed:
     config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
-    settings = FyersSettings.from_repo_root(root)
-    cached = settings.load_cached_token(root)
-    if cached and not settings.fyers_access_token:
-        settings = settings.model_copy(update={"fyers_access_token": cached})
+    settings = FyersSettings.from_repo_root_with_cache(root)
     return FyersMarketFeed(
         settings,
         WallClock(),

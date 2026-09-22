@@ -14,7 +14,7 @@ from trading.data.config import (
 )
 from trading.data.cycle import build_cycle_snapshot
 from trading.data.events import CanonicalMarketEvent
-from trading.data.quality import assess_combined_snapshot
+from trading.data.quality import assess_combined_snapshot, assess_index_snapshot
 from trading.data.snapshot_builder import MarketSnapshotBuilder
 from trading.data.storage.parquet_store import JsonlEventStore
 from trading.domain.contracts import FeatureSnapshot
@@ -108,32 +108,49 @@ class ReplayEngine:
         )
         snapshots: list[FeatureSnapshot] = []
         for group in _group_events(events):
-            chain = _latest_in_group(group, "OPTION_CHAIN_SNAPSHOT")
-            if chain is None:
-                continue
-            # A snapshot can only be computed once every event in the cycle has
-            # arrived, so the calculation instant is the latest receive time,
-            # mirroring the live pipeline's `instant`.
             calculation_time = group[-1].receive_time
-            quality = assess_combined_snapshot(
-                chain=chain,
-                quote=_latest_in_group(group, "QUOTE_SNAPSHOT"),
-                bar=_latest_in_group(group, "BAR_SNAPSHOT"),
-                now=calculation_time,
-                chain_max_age_ms=self._chain_max_age_ms,
-                quote_max_age_ms=self._quote_max_age_ms,
-                bar_max_age_ms=self._bar_max_age_ms,
-                depth=_latest_in_group(group, "DEPTH_SNAPSHOT"),
-                market_status=_latest_in_group(group, "MARKET_STATUS"),
-                depth_max_age_ms=self._depth_max_age_ms,
-                session=self._pipeline_config.session,
-                quality_config=self._pipeline_config.quality,
-            )
+            if underlying.fetch_option_chain:
+                chain = _latest_in_group(group, "OPTION_CHAIN_SNAPSHOT")
+                if chain is None:
+                    continue
+                quality = assess_combined_snapshot(
+                    chain=chain,
+                    quote=_latest_in_group(group, "QUOTE_SNAPSHOT"),
+                    bar=_latest_in_group(group, "BAR_SNAPSHOT"),
+                    now=calculation_time,
+                    chain_max_age_ms=self._chain_max_age_ms,
+                    quote_max_age_ms=self._quote_max_age_ms,
+                    bar_max_age_ms=self._bar_max_age_ms,
+                    depth=_latest_in_group(group, "DEPTH_SNAPSHOT"),
+                    market_status=_latest_in_group(group, "MARKET_STATUS"),
+                    depth_max_age_ms=self._depth_max_age_ms,
+                    session=self._pipeline_config.session,
+                    quality_config=self._pipeline_config.quality,
+                )
+                index_only = False
+            else:
+                quote = _latest_in_group(group, "QUOTE_SNAPSHOT")
+                if quote is None:
+                    continue
+                quality = assess_index_snapshot(
+                    quote=quote,
+                    bar=_latest_in_group(group, "BAR_SNAPSHOT"),
+                    now=calculation_time,
+                    quote_max_age_ms=self._quote_max_age_ms,
+                    bar_max_age_ms=self._bar_max_age_ms,
+                    depth=_latest_in_group(group, "DEPTH_SNAPSHOT"),
+                    market_status=_latest_in_group(group, "MARKET_STATUS"),
+                    depth_max_age_ms=self._depth_max_age_ms,
+                    session=self._pipeline_config.session,
+                    quality_config=self._pipeline_config.quality,
+                )
+                index_only = True
             snapshot = build_cycle_snapshot(
                 group,
                 quality=quality,
                 as_of=calculation_time,
                 builder=builder,
+                index_only=index_only,
             )
             if snapshot is not None:
                 snapshots.append(snapshot)

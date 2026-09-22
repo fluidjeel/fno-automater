@@ -18,11 +18,7 @@ def _repo_root() -> Path:
 
 
 def _load_settings(root: Path) -> FyersSettings:
-    settings = FyersSettings.from_repo_root(root)
-    cached = settings.load_cached_token(root)
-    if cached and not settings.fyers_access_token:
-        settings = settings.model_copy(update={"fyers_access_token": cached})
-    return settings
+    return FyersSettings.from_repo_root_with_cache(root)
 
 
 def main(argv: list[str] | None = None) -> int:

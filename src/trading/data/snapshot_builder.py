@@ -34,6 +34,11 @@ __all__ = [
 # supplies a tick size, which happens when replaying pre-catalog events.
 DEFAULT_TICK_SIZE = "0.05"
 
+# feature_set_version → primary level feature for quote-only index snapshots.
+_INDEX_LEVEL_FEATURES: dict[str, str] = {
+    "india_vix_v1": "india_vix",
+}
+
 
 class PriceUnavailableError(ValueError):
     """Raised when no feed supplies an authoritative price for the cycle."""
@@ -196,8 +201,9 @@ class MarketSnapshotBuilder:
             calculation_time=as_of,
         )
         features: dict[str, Decimal] = {}
-        if self._underlying.underlying == "INDIAVIX":
-            features["india_vix"] = last
+        level_key = _INDEX_LEVEL_FEATURES.get(self._underlying.feature_set_version)
+        if level_key is not None:
+            features[level_key] = last
         if self._instrument_spec is not None:
             features["lot_size"] = Decimal(self._instrument_spec.lot_size)
         macro = quote.payload.get("macro_news_factor")

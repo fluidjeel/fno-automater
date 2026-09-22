@@ -133,7 +133,7 @@ class ProtectionCoordinator:
             fingerprint = _fingerprint(quote)
             bucket = int(received_at.timestamp())
             prior = self._dedupe.get(symbol)
-            if prior == (fingerprint, bucket):
+            if prior == (fingerprint, bucket) and not self.runner.protection_degraded:
                 continue
             self._dedupe[symbol] = (fingerprint, bucket)
             filtered[symbol] = quote
@@ -165,7 +165,7 @@ class ProtectionCoordinator:
         fingerprint = _fingerprint(quote)
         bucket = int(received_at.timestamp())
         prior = self._dedupe.get(symbol)
-        if prior == (fingerprint, bucket):
+        if prior == (fingerprint, bucket) and not self.runner.protection_degraded:
             return
         self._dedupe[symbol] = (fingerprint, bucket)
         result = self.runner.on_quote_update(

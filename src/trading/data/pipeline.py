@@ -476,10 +476,7 @@ def build_pipeline(repo_root: Path) -> DataPipeline:
     """Wire the default production pipeline from config on disk."""
     config_path = repo_root / "config" / "data_pipeline.yaml"
     pipeline_config = load_data_pipeline_config(config_path)
-    settings = FyersSettings.from_repo_root(repo_root)
-    cached = settings.load_cached_token(repo_root)
-    if cached and not settings.fyers_access_token:
-        settings = settings.model_copy(update={"fyers_access_token": cached})
+    settings = FyersSettings.from_repo_root_with_cache(repo_root)
     clock = WallClock()
     feed = FyersMarketFeed(
         settings,

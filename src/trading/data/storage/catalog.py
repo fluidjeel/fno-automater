@@ -21,6 +21,19 @@ _SNAPSHOT_INDEX_COLUMNS: tuple[tuple[str, type], ...] = (
     ("reason_codes", str),
 )
 
+_EVENT_INDEX_COLUMNS: tuple[tuple[str, type], ...] = (
+    ("event_id", str),
+    ("provider", str),
+    ("symbol", str),
+    ("event_type", str),
+    ("event_time", str),
+    ("source_time", str),
+    ("receive_time", str),
+    ("provider_sequence", int),
+    ("raw_ref", str),
+    ("normalization_version", str),
+)
+
 
 def _event_row(event: CanonicalMarketEvent) -> dict[str, Any]:
     return {
@@ -64,9 +77,11 @@ class CatalogWriter:
             return None
         day = events[0].receive_time.astimezone(UTC).strftime("%Y-%m-%d")
         path = self._parquet / f"{day}.parquet"
-        incoming = pl.DataFrame([_event_row(event) for event in events])
+        incoming = self._normalize_event_index(
+            pl.DataFrame([_event_row(event) for event in events])
+        )
         if path.is_file():
-            existing = pl.read_parquet(path)
+            existing = self._normalize_event_index(pl.read_parquet(path))
             merged = pl.concat([existing, incoming], how="vertical").unique(
                 subset=["event_id"],
                 keep="last",
@@ -95,19 +110,37 @@ class CatalogWriter:
             incoming_path.unlink(missing_ok=True)
         return path
 
-    def _normalize_snapshot_index(self, frame: Any) -> Any:
-        """Align catalog rows so legacy Null-typed columns concat with new strings."""
+    def _normalize_frame(
+        self,
+        frame: Any,
+        schema: tuple[tuple[str, type], ...],
+    ) -> Any:
+        """Align catalog rows so legacy Null-typed columns concat with new values."""
         import polars as pl
 
         row_count = frame.height
         columns: dict[str, Any] = {}
-        for name, py_type in _SNAPSHOT_INDEX_COLUMNS:
-            dtype = pl.Boolean if py_type is bool else pl.Utf8
+        for name, py_type in schema:
+            dtype: Any
+            if py_type is bool:
+                dtype = pl.Boolean
+            elif py_type is int:
+                dtype = pl.Int64
+            else:
+                dtype = pl.Utf8
             if name in frame.columns:
                 columns[name] = frame[name].cast(dtype)
             else:
                 columns[name] = pl.Series(name, [None] * row_count, dtype=dtype)
         return pl.DataFrame(columns)
+
+    def _normalize_snapshot_index(self, frame: Any) -> Any:
+        """Align snapshot-index rows before concat."""
+        return self._normalize_frame(frame, _SNAPSHOT_INDEX_COLUMNS)
+
+    def _normalize_event_index(self, frame: Any) -> Any:
+        """Align canonical-event rows before concat."""
+        return self._normalize_frame(frame, _EVENT_INDEX_COLUMNS)
 
     def append_snapshots(self, rows: Sequence[Mapping[str, Any]]) -> Path | None:
         """Index decision-cycle metadata. The snapshot JSONL keeps the payload."""

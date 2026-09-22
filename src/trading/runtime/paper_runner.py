@@ -41,7 +41,8 @@ from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
 from trading.domain.contracts.portfolio import PositionRecord
 from trading.domain.contracts.position import PositionState
-from trading.domain.contracts.snapshot import MarketQuote
+from trading.domain.contracts.protection import ProtectionStateRecord
+from trading.domain.contracts.snapshot import MarketQuote, SnapshotTimes
 from trading.domain.enums import (
     DeskRole,
     DifferenceClass,
@@ -52,6 +53,7 @@ from trading.domain.enums import (
     OrderPlanState,
     OrderState,
     OrderType,
+    ProtectionStatus,
     ReasonCode,
     ReconciliationTrigger,
     ReviewAction,
@@ -104,6 +106,7 @@ __all__ = [
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
     "PositionRecoveryResult",
+    "QuoteUpdateResult",
 ]
 
 
@@ -114,6 +117,17 @@ class LifecycleAlert:
     trade_id: str
     reason_code: ReasonCode
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteUpdateResult:
+    """Outcome of one event-driven protection quote evaluation."""
+
+    alerts: tuple[LifecycleAlert, ...] = ()
+    events: tuple[OrderEvent, ...] = ()
+    degraded: bool = False
+    recovered: bool = False
+    detection_latency_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,6 +297,7 @@ class PaperRunner:
             reservations=reservations,
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
+        self._protection_snapshots: dict[str, FeatureSnapshot] = {}
         self._lifecycle_recovered = False
         self._decision_log = DecisionLog(store)
         self._review_engine = ReviewEngine()
@@ -341,6 +356,91 @@ class PaperRunner:
         return self._services.trade_manager
 
     @property
+    def protection_degraded(self) -> bool:
+        return self._services.controls.state.protection_degraded or any(
+            position.protection_degraded or position.software_stop_unavailable
+            for position in self._services.trade_manager.list_positions()
+            if position.state is not TradeState.CLOSED
+        )
+
+    def open_position_count(self) -> int:
+        return sum(
+            position.state is not TradeState.CLOSED
+            for position in self._services.trade_manager.list_positions()
+        )
+
+    def monitor_symbols(self) -> tuple[str, ...]:
+        symbols: set[str] = set()
+        for trade_id, (intent, _) in self._open_book.items():
+            if any(
+                p.trade_id == trade_id and p.state is not TradeState.CLOSED
+                for p in self._services.trade_manager.list_positions()
+            ):
+                symbols.update(leg.contract.symbol for leg in intent.legs)
+        return tuple(sorted(symbols))
+
+    def seed_protection_snapshots(
+        self, snapshots: Mapping[str, FeatureSnapshot]
+    ) -> None:
+        self._protection_snapshots.update(snapshots)
+
+    def persist_session_protection(self, state: object) -> None:
+        self._services.store.upsert_session_protection(state)  # type: ignore[arg-type]
+
+    def on_quote_update(
+        self,
+        quotes: Mapping[str, MarketQuote],
+        *,
+        source: object,
+        received_at: datetime,
+        quote_max_age_ms: int,
+    ) -> QuoteUpdateResult:
+        before = self.protection_degraded
+        updated: dict[str, FeatureSnapshot] = {}
+        for symbol, quote in quotes.items():
+            snapshot = self._protection_snapshots.get(symbol)
+            if snapshot is None:
+                continue
+            updated[symbol] = snapshot.model_copy(
+                update={
+                    "market": quote,
+                    "times": SnapshotTimes(
+                        event_time=received_at,
+                        source_time=received_at,
+                        receive_time=received_at,
+                        calculation_time=received_at,
+                    ),
+                }
+            )
+        self._protection_snapshots.update(updated)
+        events = self.manage_exits(self._protection_snapshots)
+        if updated and all(
+            not snapshot.quality.state.blocks_new_exposure
+            for snapshot in updated.values()
+        ):
+            for position in self._services.trade_manager.list_positions():
+                if position.state is TradeState.OPEN:
+                    self._clear_protection_degraded(position)
+            self._services.controls.restore_protection(
+                actor="paper-protection", scope="session"
+            )
+        latency = None
+        if updated:
+            latency = max(
+                0,
+                *(
+                    int((received_at - snap.times.event_time).total_seconds() * 1000)
+                    for snap in updated.values()
+                ),
+            )
+        return QuoteUpdateResult(
+            events=events,
+            degraded=self.protection_degraded,
+            recovered=before and not self.protection_degraded,
+            detection_latency_ms=latency,
+        )
+
+    @property
     def open_book(self) -> Mapping[str, tuple[TradeIntent, RiskDecision]]:
         return self._open_book
 
@@ -384,6 +484,15 @@ class PaperRunner:
             restored.append(persisted.trade_id)
         active_ids = {item.trade_id for item in active}
         for persisted in active:
+            protection = self._services.store.get_protection_state(persisted.trade_id)
+            if (
+                protection is not None
+                and protection.status is ProtectionStatus.DEGRADED
+            ):
+                self._services.controls.degrade_protection(
+                    actor="paper-recovery", scope=f"trade/{persisted.trade_id}"
+                )
+                unprotected.append(persisted.trade_id)
             broker_legs = tuple(broker_by_trade.get(persisted.trade_id, ()))
             for alert in _lifecycle_issues(persisted, broker_legs):
                 alerts.append(alert)
@@ -447,7 +556,7 @@ class PaperRunner:
             unreconciled.append(trade_id)
         unique_alerts = tuple(_unique_alerts(alerts))
         persisted_freeze = self._services.store.get_entry_freeze()
-        entries_blocked = bool(unique_alerts) or (
+        entries_blocked = bool(unique_alerts or unprotected or unreconciled) or (
             persisted_freeze is not None and persisted_freeze.entries_blocked
         )
         if unique_alerts:
@@ -1208,20 +1317,26 @@ class PaperRunner:
             self._ensure_entries_blocked(derived[0], derived[1])
             return
         persisted = self._services.store.get_entry_freeze()
-        if persisted is None or not persisted.entries_blocked:
-            return
-        released = EntryFreezeRecord(
-            entries_blocked=False,
-            reason_code=None,
-            detail=None,
-            updated_at=self._clock.now_utc(),
-        )
-        self._services.store.upsert_entry_freeze(
-            released,
-            event_id=self._ids.new_id("FRZ"),
-        )
+        if persisted is not None and persisted.entries_blocked:
+            released = EntryFreezeRecord(
+                entries_blocked=False,
+                reason_code=None,
+                detail=None,
+                updated_at=self._clock.now_utc(),
+            )
+            self._services.store.upsert_entry_freeze(
+                released,
+                event_id=self._ids.new_id("FRZ"),
+            )
         if controls.state.entry_frozen:
             controls.release_entry_freeze(
+                actor="paper-lifecycle",
+                scope="paper/entry-freeze",
+                trigger=Trigger.RECONCILIATION,
+                incident_id=self._ids.new_id("INC"),
+            )
+        if controls.state.protection_degraded:
+            controls.restore_protection(
                 actor="paper-lifecycle",
                 scope="paper/entry-freeze",
                 trigger=Trigger.RECONCILIATION,
@@ -1429,6 +1544,12 @@ class PaperRunner:
         )
         self._services.trade_manager.restore_position(cleared)
         self._write_lifecycle(position.trade_id)
+        # Stale path sets controls.protection_degraded; clear it or
+        # blocks_entry() stays true after quotes recover.
+        self._services.controls.restore_protection(
+            actor="paper-protection",
+            scope=f"trade/{position.trade_id}",
+        )
 
     def _mark_protection(
         self,
@@ -1453,6 +1574,27 @@ class PaperRunner:
         )
         self._services.trade_manager.restore_position(updated)
         self._write_lifecycle(position.trade_id)
+        if degraded:
+            self._services.controls.degrade_protection(
+                actor="paper-protection", scope=f"trade/{position.trade_id}"
+            )
+        else:
+            self._services.controls.restore_protection(
+                actor="paper-protection", scope=f"trade/{position.trade_id}"
+            )
+        self._services.store.upsert_protection_state(
+            ProtectionStateRecord(
+                trade_id=position.trade_id,
+                status=(
+                    ProtectionStatus.DEGRADED if degraded else ProtectionStatus.ACTIVE
+                ),
+                reason_code=(ReasonCode.PROTECTION_DEGRADED if degraded else None),
+                degraded_since=updated.protection_degraded_since if degraded else None,
+                last_heartbeat_at=now,
+                monitor_symbols=tuple(leg.contract.symbol for leg in position.legs),
+                as_of=now,
+            )
+        )
 
     def _run_strategy(
         self,

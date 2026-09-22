@@ -313,6 +313,17 @@ def assess_index_snapshot(
                 reason_codes=(ReasonCode.CONFIG_UNVERIFIED,),
             ),
         )
+    elif session is not None and not in_session(now, session):
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.INVALID,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="outside_session",
+                reason_codes=(ReasonCode.OUTSIDE_SESSION,),
+            ),
+        )
     if not warmup:
         quality = _merge(
             quality,
@@ -322,6 +333,18 @@ def assess_index_snapshot(
                 warmup_complete=False,
                 source_status="warmup",
                 reason_codes=(ReasonCode.WARMUP_INCOMPLETE,),
+            ),
+        )
+    spread_bps = _quote_spread_bps(quote)
+    if spread_bps is not None and spread_bps > cfg.max_spread_bps:
+        quality = _merge(
+            quality,
+            _report(
+                state=DataQuality.DEGRADED,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="wide_spread",
+                reason_codes=(ReasonCode.SPREAD_TOO_WIDE,),
             ),
         )
     if bar is not None:
@@ -353,6 +376,47 @@ def assess_index_snapshot(
                     warmup_complete=warmup,
                     source_status="market_closed",
                     reason_codes=(ReasonCode.DATA_DEGRADED,),
+                ),
+            )
+    drift = max(0, int((quote.receive_time - quote.event_time).total_seconds() * 1000))
+    if drift > cfg.max_clock_drift_ms:
+        drift_state = (
+            DataQuality.INVALID if cfg.clock_drift_invalid else DataQuality.DEGRADED
+        )
+        quality = _merge(
+            quality,
+            _report(
+                state=drift_state,
+                age_ms=quality.age_ms,
+                warmup_complete=warmup,
+                source_status="clock_drift",
+                reason_codes=(ReasonCode.CLOCK_DRIFT,),
+                clock_drift_ms=drift,
+            ),
+        )
+    prices: list[Decimal] = []
+    quote_price = quote_last(quote)
+    if quote_price is not None:
+        prices.append(quote_price)
+    if bar is not None:
+        close = bar_close(bar)
+        if close is not None:
+            prices.append(close)
+    if len(prices) >= _MIN_PRICES_FOR_CROSS_CHECK:
+        widest = max(
+            _bps_gap(prices[i], prices[j])
+            for i in range(len(prices))
+            for j in range(i + 1, len(prices))
+        )
+        if widest > cfg.max_cross_source_bps:
+            quality = _merge(
+                quality,
+                _report(
+                    state=DataQuality.DEGRADED,
+                    age_ms=quality.age_ms,
+                    warmup_complete=warmup,
+                    source_status="cross_source",
+                    reason_codes=(ReasonCode.SNAPSHOT_MISMATCH,),
                 ),
             )
     return quality
