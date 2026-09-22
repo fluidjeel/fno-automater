@@ -319,6 +319,12 @@ class FakeIndexFeed:
     def fetch_market_status(self) -> RawMarketCapture:
         return self._status_capture
 
+    def fetch_option_chain(self, symbol: str) -> RawMarketCapture:
+        raise FyersApiError(f"option chain unavailable for index {symbol}")
+
+    def fetch_expiry_dates(self, symbol: str) -> RawMarketCapture:
+        raise FyersApiError(f"expiry endpoint unavailable for index {symbol}")
+
 
 class TestNormalizeAndQuality:
     def test_normalize_maps_fyers_chain_to_canonical_event(self) -> None:
@@ -1121,6 +1127,7 @@ class TestPipelineAndReplay:
             end=now.replace(hour=23),
         )
         assert len(replay.snapshots) == 1
+        assert run.snapshot is not None
         assert replay.snapshots[0].features == run.snapshot.features
 
     def test_append_events_merges_legacy_null_event_id(self, tmp_path: Path) -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from datetime import datetime
 from decimal import Decimal
 
 NIFTY_SECTORS = {
@@ -49,8 +51,11 @@ def classify_sector(symbol: str) -> str:
 
 _MIN_POINTS = 2
 
+Bar = tuple[datetime, Decimal, Decimal, Decimal, Decimal, Decimal]
+
+
 def compute_sector_rs(
-    stock_bars: list[tuple], sector_bars: list[tuple]
+    stock_bars: Sequence[Bar], sector_bars: Sequence[Bar]
 ) -> Decimal | None:
     """Compute relative strength of a stock vs its sector index."""
     if not stock_bars or not sector_bars:
