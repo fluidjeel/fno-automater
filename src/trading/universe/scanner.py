@@ -11,6 +11,8 @@ Bar = tuple[datetime, Decimal, Decimal, Decimal, Decimal, Decimal]
 OiRecord = tuple[datetime, int, Decimal]
 
 
+_MIN_BARS = 20
+
 def scan_universe(
     *,
     stock_bars: dict[str, list[Bar]],
@@ -25,21 +27,21 @@ def scan_universe(
     """Scan the universe for top long/short candidates."""
     scores = []
     total_scanned = 0
-    
+
     for symbol, bars in stock_bars.items():
-        if len(bars) < 20:
+        if len(bars) < _MIN_BARS:
             continue
-            
+
         # Liquidity filter
-        avg_vol = sum(b[5] for b in bars[-20:]) / Decimal("20")
+        avg_vol = sum(b[5] for b in bars[-_MIN_BARS:]) / Decimal("20")
         if avg_vol < Decimal(config.min_avg_daily_volume):
             continue
-            
+
         total_scanned += 1
-        
+
         symbol_oi = oi_data.get(symbol, [])
         sym_sector_bars = sector_bars.get(symbol, [])
-        
+
         score = compute_stock_score(
             symbol=symbol,
             bars=bars,
@@ -49,9 +51,9 @@ def scan_universe(
             as_of=as_of,
         )
         scores.append(score)
-        
+
     longs, shorts = rank_universe(scores, regime, top_n=config.top_candidates)
-    
+
     return UniverseScanResult(
         scan_id=scan_id,
         scanned_at=as_of,
@@ -62,4 +64,4 @@ def scan_universe(
         scan_version=config.scan_version,
     )
 
-__all__ = ["scan_universe", "Bar", "OiRecord"]
+__all__ = ["Bar", "OiRecord", "scan_universe"]

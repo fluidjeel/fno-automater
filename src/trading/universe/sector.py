@@ -47,18 +47,20 @@ def classify_sector(symbol: str) -> str:
     """Classify a stock symbol into its sector."""
     return NIFTY_SECTORS.get(symbol, "Others")
 
+_MIN_POINTS = 2
+
 def compute_sector_rs(
     stock_bars: list[tuple], sector_bars: list[tuple]
 ) -> Decimal | None:
     """Compute relative strength of a stock vs its sector index."""
     if not stock_bars or not sector_bars:
         return None
-    if len(stock_bars) < 2 or len(sector_bars) < 2:
+    if len(stock_bars) < _MIN_POINTS or len(sector_bars) < _MIN_POINTS:
         return None
-        
+
     stock_return = (stock_bars[-1][4] - stock_bars[0][4]) / stock_bars[0][4]
     sector_return = (sector_bars[-1][4] - sector_bars[0][4]) / sector_bars[0][4]
-    
+
     return stock_return - sector_return
 
 __all__ = ["NIFTY_SECTORS", "classify_sector", "compute_sector_rs"]

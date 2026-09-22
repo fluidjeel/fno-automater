@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from trading.domain.contracts.identification import TrendState
 from trading.identification.regime import (
@@ -21,11 +22,9 @@ from trading.universe.contracts import (
     MarketRegime,
     StockScore,
     TradeDirection,
-    UniverseScanResult,
 )
 from trading.universe.ranking import compute_stock_score, rank_universe
 from trading.universe.sector import NIFTY_SECTORS, classify_sector
-
 
 # ---- Fixtures ---------------------------------------------------------------
 
@@ -116,7 +115,7 @@ class TestStockScore:
         assert score.direction == TradeDirection.LONG
 
     def test_score_out_of_range_rejected(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             StockScore(
                 symbol="RELIANCE",
                 underlying="RELIANCE",
@@ -140,7 +139,7 @@ class TestConvictionAssessment:
         assert restored == conv
 
     def test_score_ranges(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             _make_conviction(score=Decimal("-10"))
 
 
@@ -346,7 +345,7 @@ class TestRankUniverse:
             )
             for i in range(5)
         ]
-        longs, shorts = rank_universe(scores, MarketRegime.STRONG_BULL, top_n=5)
+        _longs, shorts = rank_universe(scores, MarketRegime.STRONG_BULL, top_n=5)
         assert len(shorts) == 0
 
     def test_strong_bear_suppresses_longs(self) -> None:
@@ -367,7 +366,7 @@ class TestRankUniverse:
             )
             for i in range(5)
         ]
-        longs, shorts = rank_universe(scores, MarketRegime.STRONG_BEAR, top_n=5)
+        longs, _shorts = rank_universe(scores, MarketRegime.STRONG_BEAR, top_n=5)
         assert len(longs) == 0
 
 

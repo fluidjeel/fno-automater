@@ -16,7 +16,7 @@ from trading.universe.contracts import (
     ConvictionAssessment,
 )
 
-__all__ = ["evaluate_carry_forward", "compute_positional_stop"]
+__all__ = ["compute_positional_stop", "evaluate_carry_forward"]
 
 
 def evaluate_carry_forward(
@@ -55,7 +55,8 @@ def evaluate_carry_forward(
     reasons: list[str] = []
     if not conviction_high:
         reasons.append(
-            f"conviction {conviction_at_close.conviction_score} < {min_conviction_for_carry}"
+            f"conviction {conviction_at_close.conviction_score} "
+            f"< {min_conviction_for_carry}"
         )
     if not in_profit:
         reasons.append(f"position not in profit (PnL={current_pnl})")

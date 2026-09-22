@@ -140,7 +140,7 @@ class DirectionalConvictionSizingEngine:
         regime_multiplier: Decimal = _ONE,
         conviction_score: Decimal = Decimal("75"),
     ) -> DirectionalConvictionSizingResult:
-        """Compute lots from risk × regime × conviction, capped by hard limits."""
+        """Compute lots from risk x regime x conviction, capped by hard limits."""
         intent = request.intent
         if len(intent.legs) != 1:
             raise ValueError("directional conviction sizing supports exactly one leg")

@@ -51,7 +51,11 @@ def classify_regime(
             and current_vix < config.low_vix_threshold
         ):
             return MarketRegime.STRONG_BULL
-        if config.mild_bull_breadth_min <= breadth_pct <= config.strong_bull_breadth_min:
+        if (
+            config.mild_bull_breadth_min
+            <= breadth_pct
+            <= config.strong_bull_breadth_min
+        ):
             return MarketRegime.MILD_BULL
 
     elif nifty_trend is TrendState.DOWN:
@@ -61,7 +65,11 @@ def classify_regime(
             and current_vix > config.high_vix_threshold
         ):
             return MarketRegime.STRONG_BEAR
-        if config.strong_bear_breadth_max <= breadth_pct <= config.strong_bull_breadth_min:
+        if (
+            config.strong_bear_breadth_max
+            <= breadth_pct
+            <= config.strong_bull_breadth_min
+        ):
             return MarketRegime.MILD_BEAR
 
     return MarketRegime.NEUTRAL

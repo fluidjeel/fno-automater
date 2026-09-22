@@ -52,7 +52,7 @@ class DirectionalConvictionStrategy:
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
 
-    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:
+    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:  # noqa: PLR0911
         decision = StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
@@ -63,9 +63,13 @@ class DirectionalConvictionStrategy:
         )
 
         if not ctx.view.entries_permitted:
-            return self._reject(decision, ctx, ReasonCode.ENTRY_FROZEN, "entries not permitted")
+            return self._reject(
+                decision, ctx, ReasonCode.ENTRY_FROZEN, "entries not permitted"
+            )
         if not ctx.candidates:
-            return self._reject(decision, ctx, ReasonCode.INSTRUMENT_UNKNOWN, "no candidates provided")
+            return self._reject(
+                decision, ctx, ReasonCode.INSTRUMENT_UNKNOWN, "no candidates provided"
+            )
 
         reason = self._validation_reason(ctx)
         if reason is not None:
@@ -91,14 +95,19 @@ class DirectionalConvictionStrategy:
 
         matching_option = None
         for cand in ctx.candidates:
-            if cand.contract.option_type is option_type and self._option_eligibility_reason(cand) is None:
+            if (
+                cand.contract.option_type is option_type
+                and self._option_eligibility_reason(cand) is None
+            ):
                 matching_option = cand
                 break
 
         if not matching_option:
             return decision
 
-        intent = self._build_intent(ctx, matching_option, setup_code, option_type, conviction_score_val)
+        intent = self._build_intent(
+            ctx, matching_option, setup_code, option_type, conviction_score_val
+        )
         return StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
