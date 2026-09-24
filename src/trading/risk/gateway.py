@@ -32,6 +32,7 @@ from trading.domain.enums import (
     ReservationState,
     RiskAction,
     Side,
+    Trigger,
 )
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Lots, LotSize, Money, Percent
@@ -176,6 +177,8 @@ class RiskGateway:
             self._mode_book = FourModeBook(modes_config=self._modes_config)
         else:
             self._mode_book = None
+        self._mode_fill_recorded: set[str] = set()
+        self._mode_close_recorded: set[str] = set()
         self._long_option_sizer = LongOptionSizingEngine()
         self._debit_spread_sizer = DebitSpreadSizingEngine()
         self._credit_spread_sizer = CreditSpreadSizingEngine()
@@ -197,13 +200,46 @@ class RiskGateway:
         *,
         margin: Money,
         premium: Money | None = None,
+        trade_id: str | None = None,
     ) -> None:
-        """Hook for mode-book fill accounting; wired in the fix-4 risk slice."""
-        _ = (mode_id, margin, premium)
+        """Move a mode reservation into filled open risk after entry complete.
 
-    def note_mode_close(self, mode_id: ModeId, amount: Money) -> None:
-        """Hook for mode-book close accounting; wired in the fix-4 risk slice."""
-        _ = (mode_id, amount)
+        Idempotent per ``trade_id`` so duplicate fill events never double-count.
+        """
+        if self._mode_book is None:
+            return
+        if trade_id is not None and trade_id in self._mode_fill_recorded:
+            return
+        zero = Money.zero(margin.currency)
+        self._mode_book.record_fill(
+            mode_id, margin=margin, premium=premium if premium is not None else zero
+        )
+        if trade_id is not None:
+            self._mode_fill_recorded.add(trade_id)
+            self._mode_close_recorded.discard(trade_id)
+
+    def note_mode_close(self, mode_id: ModeId, amount: Money, *, trade_id: str | None = None) -> None:
+        """Release mode open risk after a position fully closes."""
+        if self._mode_book is None:
+            return
+        if trade_id is not None and trade_id in self._mode_close_recorded:
+            return
+        self._mode_book.release_open_risk(mode_id, amount)
+        if trade_id is not None:
+            self._mode_close_recorded.add(trade_id)
+            self._mode_fill_recorded.discard(trade_id)
+
+    def note_mode_release(
+        self, mode_id: ModeId, amount: Money, *, trade_id: str | None = None
+    ) -> None:
+        """Release a pending mode reservation after reject/abort/failed prefix."""
+        if self._mode_book is None:
+            return
+        if trade_id is not None and trade_id in self._mode_fill_recorded:
+            # Already moved into margin; abort path should use note_mode_close.
+            self.note_mode_close(mode_id, amount, trade_id=trade_id)
+            return
+        self._mode_book.release_reservation(mode_id, amount)
 
     def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:
         """Return an approval with reserved capital or a machine-readable rejection."""
@@ -471,6 +507,9 @@ class RiskGateway:
             limits,
             recalculated_max_loss=sizing.recalculated_max_loss,
             approved_lots=sizing.approved_lots,
+            mode_ledger=mode_ledger,
+            modes_config=self._modes_config,
+            mode_book=self._mode_book,
         )
         if not limit_check.passed:
             return self._reject(
@@ -518,7 +557,28 @@ class RiskGateway:
                 audit=audit,
             )
         if self._mode_book is not None and intent.mode_id is not None:
-            self._mode_book.try_reserve(intent.mode_id, sizing.recalculated_max_loss)
+            global_cap = (
+                policy.max_global_open_risk.to_money()
+                if policy.max_global_open_risk is not None
+                else None
+            )
+            if not self._mode_book.try_reserve(
+                intent.mode_id,
+                sizing.recalculated_max_loss,
+                global_cap=global_cap,
+            ):
+                self._reservations.release(
+                    reservation.reservation_id,
+                    trigger=Trigger.LOCAL_COMMAND,
+                )
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(ReasonCode.CAPITAL_UNAVAILABLE,),
+                    applied_limits=("mode_available_capital", "max_global_open_risk"),
+                    decided_at=now,
+                    audit=audit,
+                )
 
         post_trade = project_post_trade_exposure(
             portfolio,

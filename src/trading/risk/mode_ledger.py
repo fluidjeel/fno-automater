@@ -5,12 +5,22 @@ Enforces:
 - Reference capital = min(start allocation, conservative equity).
 - No cross-mode borrowing.
 - Crash recovery and reconstruction from durable store events/reservations/positions.
+
+Open risk is ``reserved_capital + margin_used``. Pending entry holds live in
+``reserved_capital`` (durable ``RESERVED`` only). Filled positions live in
+``margin_used``. Committed reservations are not added again as reserved — they
+are represented by the open position's margin so totals never double-count.
+
+Accounting caveat (unresolved): ``realized_pnl_today`` equals
+``realized_gross_pnl_today`` until broker charges are persisted on fill events.
+Do not treat that equality as complete net accounting.
 """
 
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from threading import Lock
 from typing import Any, Final, Self
 
 from pydantic import Field, model_validator
@@ -19,7 +29,7 @@ from trading.domain.contracts.base import StrictModel
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.order import OrderEvent
-from trading.domain.enums import ModeId, OrderState, Side, TradeState
+from trading.domain.enums import ModeId, OrderState, ReservationState, Side, TradeState
 from trading.domain.primitives import Currency, Money, Rounding
 from trading.storage.trading_store import TradingEventType, TradingStore
 
@@ -156,6 +166,11 @@ class ModeLedger(StrictModel):
         """True if requested amount <= available_capital."""
         return amount <= self.available_capital
 
+    @property
+    def open_risk(self) -> Money:
+        """Capital held as open loss: pending reservations plus filled margin."""
+        return self.reserved_capital + self.margin_used
+
     def record_reservation(self, amount: Money) -> ModeLedger:
         """Returns updated copy with reserved_capital + amount."""
         if amount.is_negative:
@@ -200,6 +215,7 @@ class FourModeBook:
             self._ledgers = dict(ledgers)
         else:
             self._ledgers = self._build_ledgers(self._total_equity, self._modes_config)
+        self._reserve_lock = Lock()
 
     @classmethod
     def _build_ledgers(
@@ -244,17 +260,58 @@ class FourModeBook:
     def available_for(self, mode_id: ModeId) -> Money:
         return self.get_ledger(mode_id).available_capital
 
-    def try_reserve(self, mode_id: ModeId, amount: Money) -> bool:
-        """Reserve amount if available in mode; return False otherwise."""
-        ledger = self.get_ledger(mode_id)
-        if not ledger.can_reserve(amount):
-            return False
-        self._ledgers[mode_id] = ledger.record_reservation(amount)
-        return True
+    def try_reserve(
+        self,
+        mode_id: ModeId,
+        amount: Money,
+        *,
+        global_cap: Money | None = None,
+    ) -> bool:
+        """Reserve amount if available in mode (and under the global cap).
+
+        Locked so concurrent proposals in one process cannot oversubscribe a
+        mode or the global envelope between the check and the write.
+        """
+        with self._reserve_lock:
+            ledger = self.get_ledger(mode_id)
+            if not ledger.can_reserve(amount):
+                return False
+            if global_cap is not None:
+                projected = self.total_open_risk() + amount
+                if projected > global_cap:
+                    return False
+            self._ledgers[mode_id] = ledger.record_reservation(amount)
+            return True
 
     def release_reservation(self, mode_id: ModeId, amount: Money) -> None:
         ledger = self.get_ledger(mode_id)
         self._ledgers[mode_id] = ledger.release_reservation(amount)
+
+    def record_fill(self, mode_id: ModeId, *, margin: Money, premium: Money) -> None:
+        """Move a reservation into filled margin for an open position."""
+        ledger = self.get_ledger(mode_id)
+        self._ledgers[mode_id] = ledger.record_fill(margin, premium)
+
+    def release_open_risk(self, mode_id: ModeId, amount: Money) -> None:
+        """Release filled margin (or residual hold) when a position closes."""
+        ledger = self.get_ledger(mode_id)
+        zero = Money.zero(ledger.allocated_capital.currency)
+        from_margin = min(ledger.margin_used, amount)
+        remainder = amount - from_margin
+        updated = ledger.model_copy(
+            update={"margin_used": max(ledger.margin_used - from_margin, zero)}
+        )
+        if not remainder.is_zero and not remainder.is_negative:
+            updated = updated.release_reservation(remainder)
+        self._ledgers[mode_id] = updated
+
+    def total_open_risk(self) -> Money:
+        """Sum of open risk across all mode ledgers."""
+        currency = self._total_equity.currency
+        total = Money.zero(currency)
+        for ledger in self._ledgers.values():
+            total = total + ledger.open_risk
+        return total
 
     @classmethod
     def reconstruct_from_store(
@@ -320,8 +377,13 @@ def _accumulate_reservations(
     intent_to_mode: dict[str, ModeId],
     reserved_by_mode: dict[ModeId, Money],
 ) -> None:
+    """Load pending entry holds only.
+
+    ``COMMITTED`` capital is already represented as ``margin_used`` for open
+    positions. Counting it here would double-count open risk after restart.
+    """
     for res in store.list_reservations():
-        if not res.state.holds_capital:
+        if res.state is not ReservationState.RESERVED:
             continue
         m_id = res.mode_id or intent_to_mode.get(res.intent_id)
         if m_id is not None and m_id in reserved_by_mode:
@@ -365,9 +427,13 @@ def _accumulate_positions(
 
         pos_state = record.position.state
         if pos_state in open_states:
-            margin_req = record.risk_decision.margin_required
-            if margin_req is not None:
-                balances["margin"][m_id] = balances["margin"][m_id] + margin_req
+            # Same quantum try_reserve / note_mode_fill used: max loss, not SPAN.
+            open_risk = (
+                record.risk_decision.recalculated_max_loss
+                or record.risk_decision.margin_required
+            )
+            if open_risk is not None:
+                balances["margin"][m_id] = balances["margin"][m_id] + open_risk
         elif pos_state is TradeState.CLOSED:
             trade_gross = _calculate_closed_trade_gross_pnl(
                 record, orders_by_id, currency

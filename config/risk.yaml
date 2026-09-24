@@ -44,6 +44,10 @@ directional_agreement_max: "0.85"
 single_event_exposure_fraction: "0.25"
 # ADESK-A5 / PART 8 — freeze entries when stress worst-case exceeds this.
 tail_budget_fraction: "0.08"
+# Four-mode aggregate open-risk envelope. Enforced in Layer 2 at decision time.
+max_global_open_risk:
+  amount: "35000"
+  currency: INR
 decision_ttl_seconds: 300
 
 # PAPER-only SPAN substitute for live futures symbols. Not exchange SPAN.

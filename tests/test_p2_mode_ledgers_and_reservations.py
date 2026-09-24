@@ -335,6 +335,7 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
     open_decision = f.risk_decision(
         intent_id="INT-M3-OPEN",
         margin_required=_money("35000"),
+        recalculated_max_loss=_money("35000"),
     )
     open_pos = f.position_state(
         trade_id="TRD-M3",

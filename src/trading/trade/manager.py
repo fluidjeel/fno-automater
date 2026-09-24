@@ -330,6 +330,16 @@ class TradeManager:
     def is_pending(self, trade_id: str) -> bool:
         return trade_id in self._pending
 
+    def abort_pending_entry(self, trade_id: str) -> None:
+        """Drop an incomplete entry registration after reject/abort."""
+        self._pending.pop(trade_id, None)
+        position = self._positions.get(trade_id)
+        if position is not None and position.state in {
+            TradeState.PENDING_ENTRY,
+            TradeState.OPENING,
+        }:
+            del self._positions[trade_id]
+
     def list_positions(self) -> tuple[PositionState, ...]:
         return tuple(self._positions.values())
 

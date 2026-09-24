@@ -1306,7 +1306,9 @@ class PaperRunner:
                 and decision.recalculated_max_loss is not None
             ):
                 self._services.gateway.note_mode_close(
-                    intent.mode_id, decision.recalculated_max_loss
+                    intent.mode_id,
+                    decision.recalculated_max_loss,
+                    trade_id=position.trade_id,
                 )
             self._open_book.pop(position.trade_id, None)
         return submit.events
@@ -1340,6 +1342,15 @@ class PaperRunner:
         self._write_lifecycle(record.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(record.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
+            if (
+                record.intent.mode_id is not None
+                and decision.recalculated_max_loss is not None
+            ):
+                self._services.gateway.note_mode_close(
+                    record.intent.mode_id,
+                    decision.recalculated_max_loss,
+                    trade_id=record.trade_id,
+                )
             self._open_book.pop(record.trade_id, None)
         return tuple(events)
 
@@ -2251,7 +2262,16 @@ class PaperRunner:
             account_id=self._account.config.account_id,
         )
         filled = False
+        terminal_fail = False
         for event in submit.events:
+            if event.state in {
+                OrderState.REJECTED,
+                OrderState.CANCELLED,
+                OrderState.EXPIRED,
+                OrderState.UNKNOWN,
+            }:
+                terminal_fail = True
+                continue
             if event.state not in {OrderState.FILLED, OrderState.PARTIAL}:
                 continue
             position = self._services.trade_manager.apply_order_event(
@@ -2273,14 +2293,54 @@ class PaperRunner:
                     tuple(stub.stub_id for stub in plan.protective_orders),
                 )
             self._open_book[trade_id] = (intent, risk)
-        if filled:
+
+        position = self._services.trade_manager.get_position(trade_id)
+        entry_complete = (
+            position is not None
+            and position.state is TradeState.OPEN
+            and not self._services.trade_manager.is_pending(trade_id)
+        )
+        if entry_complete:
             if intent.mode_id is not None and risk.recalculated_max_loss is not None:
                 self._services.gateway.note_mode_fill(
                     intent.mode_id,
                     margin=risk.recalculated_max_loss,
+                    trade_id=trade_id,
                 )
             self._write_lifecycle(trade_id)
+        elif terminal_fail:
+            self._abort_incomplete_entry(intent, risk, trade_id=trade_id)
         return submit.events
+
+    def _abort_incomplete_entry(
+        self,
+        intent: TradeIntent,
+        risk: RiskDecision,
+        *,
+        trade_id: str,
+    ) -> None:
+        """Release holds after reject/abort/failed protected prefix; never submit."""
+        if risk.capital_reservation_id is not None:
+            try:
+                self._services.reservations.release(
+                    risk.capital_reservation_id,
+                    trigger=Trigger.LOCAL_COMMAND,
+                )
+            except Exception:
+                logger.exception(
+                    "failed to release durable reservation on entry abort "
+                    "trade_id=%s reservation=%s",
+                    trade_id,
+                    risk.capital_reservation_id,
+                )
+        if intent.mode_id is not None and risk.recalculated_max_loss is not None:
+            self._services.gateway.note_mode_release(
+                intent.mode_id,
+                risk.recalculated_max_loss,
+                trade_id=trade_id,
+            )
+        self._services.trade_manager.abort_pending_entry(trade_id)
+        self._open_book.pop(trade_id, None)
 
     def _publish_quotes(
         self, intent: TradeIntent, request: PaperStrategyRequest

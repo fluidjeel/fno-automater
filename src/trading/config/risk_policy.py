@@ -78,6 +78,8 @@ class RiskPolicyConfig(VersionedModel):
     single_event_exposure_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
     # ADESK-A5 PART 8 — max |worst_case|/equity before entry freeze.
     tail_budget_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
+    # Portfolio open-risk ceiling across all modes (absolute money).
+    max_global_open_risk: MoneyAmount | None = None
     decision_ttl_seconds: StrictInt = Field(gt=0)
     # Defaults to False so a policy that omits the key refuses stop-bounded
     # futures shorts: the fail-closed direction for a new risk class.

@@ -741,3 +741,301 @@ class TestP0EntryHoldKeepsExitsAvailable:
             assert runner.broker.list_orders() == ()
         finally:
             store.close()
+
+
+# Unresolved (fix 3 carry-forward): realized_pnl_today equals gross until broker
+# charges are persisted on fills. Product tests must not claim "complete net
+# accounting" while that placeholder remains.
+
+
+class TestP0OpenRiskCapsAndAtomicReservations:
+    """four_mode_20260925 P0: global/mode caps, try_reserve, restart open risk."""
+
+    def test_session_config_keeps_new_entries_frozen(self) -> None:
+        cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
+        assert cfg.new_entries_enabled is False
+
+    def test_global_and_mode_caps_are_enforced_in_layer2(self) -> None:
+        from trading.config.risk_policy import load_risk_policy
+        from trading.domain.contracts.mode_policy import load_modes_config
+        from trading.domain.primitives import Rounding
+        from trading.risk.mode_ledger import FourModeBook
+
+        limits_source = (ROOT / "src/trading/risk/limits.py").read_text(encoding="utf-8")
+        gateway_source = (ROOT / "src/trading/risk/gateway.py").read_text(
+            encoding="utf-8"
+        )
+        assert "max_open_loss_cap_fraction" in limits_source
+        assert "max_global_open_risk" in limits_source
+        assert "try_reserve" in gateway_source
+        policy = load_risk_policy(ROOT / "config" / "risk.yaml").config
+        modes = load_modes_config(ROOT / "config" / "modes.yaml")
+        assert policy.max_global_open_risk is not None
+        assert policy.max_global_open_risk.to_money().amount == Decimal("35000")
+        book = FourModeBook(modes_config=modes)
+        global_cap = policy.max_global_open_risk.to_money()
+        # Mode open-risk property is what Layer 2 compares against the mode cap.
+        m2 = book.get_ledger(ModeId.M2_DIRECTIONAL)
+        mode_cap = (
+            m2.reference_capital
+            * modes.modes[ModeId.M2_DIRECTIONAL].max_open_loss_cap_fraction
+        ).quantized(Rounding.FLOOR)
+        assert book.try_reserve(ModeId.M2_DIRECTIONAL, mode_cap)
+        assert book.get_ledger(ModeId.M2_DIRECTIONAL).open_risk == mode_cap
+        # Global envelope rejects a second hold that would breach ₹35,000.
+        remainder = global_cap - mode_cap
+        assert remainder.amount > 0
+        assert not book.try_reserve(
+            ModeId.M3_TACTICAL_POSITIONAL,
+            remainder + Money.of("1", Currency.INR),
+            global_cap=global_cap,
+        )
+        assert book.try_reserve(
+            ModeId.M3_TACTICAL_POSITIONAL,
+            remainder,
+            global_cap=global_cap,
+        )
+        assert book.total_open_risk() == global_cap
+
+    def test_try_reserve_failure_releases_durable_hold_and_blocks_submit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from tests.test_four_mode_session_integration import _runner
+        from tests.test_four_mode_trade_simulations import _macro, _option, _request
+        from trading.domain.enums import FamilyId, OptionType, RiskAction
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "try-reserve.sqlite", clock=clock)
+        try:
+            runner = _runner(store, clock)
+            book = runner._services.gateway.mode_book
+            assert book is not None
+            monkeypatch.setattr(book, "try_reserve", lambda *_a, **_k: False)
+            option = _option("24000", OptionType.CALL)
+            result = runner.run_cycle(
+                (
+                    _request(
+                        strategy_id="positional_long_option",
+                        candidates=(option,),
+                        mode_id=ModeId.M2_DIRECTIONAL,
+                        family_id=FamilyId.long_call,
+                        macro=_macro(MacroBias.BULLISH),
+                    ),
+                )
+            )
+            outcome = result.outcomes[0]
+            assert outcome.decisions
+            decision = outcome.decisions[0]
+            assert decision.action is RiskAction.REJECT
+            assert ReasonCode.CAPITAL_UNAVAILABLE in decision.reason_codes
+            assert outcome.order_events == ()
+            holding = [
+                res
+                for res in store.list_reservations()
+                if res.intent_id == decision.intent_id and res.state.holds_capital
+            ]
+            assert not holding
+        finally:
+            store.close()
+
+    def test_simultaneous_mode_proposals_respect_global_cap(
+        self, tmp_path: Path
+    ) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        from trading.domain.contracts.mode_policy import load_modes_config
+        from trading.risk.mode_ledger import FourModeBook
+
+        modes = load_modes_config(ROOT / "config" / "modes.yaml")
+        book = FourModeBook(modes_config=modes)
+        global_cap = Money.of("35000", Currency.INR)
+        chunk = Money.of("20000", Currency.INR)
+        modes_order = (
+            ModeId.M1_CAS,
+            ModeId.M2_DIRECTIONAL,
+            ModeId.M3_TACTICAL_POSITIONAL,
+            ModeId.M4_STRATEGIC_POSITIONAL,
+        )
+
+        def _attempt(mode_id: ModeId) -> bool:
+            return book.try_reserve(mode_id, chunk, global_cap=global_cap)
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(_attempt, modes_order))
+        assert sum(1 for ok in results if ok) == 1
+        assert book.total_open_risk() == chunk
+        # A fifth attempt after the winners still fails closed.
+        assert not book.try_reserve(ModeId.M2_DIRECTIONAL, chunk, global_cap=global_cap)
+
+    def test_fill_moves_reservation_to_margin_exactly_once(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "fill-once.sqlite", clock=clock)
+        try:
+            runner, position, _snapshots = open_bull_put_credit(store, clock)
+            book = runner._services.gateway.mode_book
+            assert book is not None
+            ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
+            intent, decision = runner._open_book[position.trade_id]
+            assert decision.recalculated_max_loss is not None
+            assert ledger.reserved_capital.amount == Decimal(0)
+            assert ledger.margin_used == decision.recalculated_max_loss
+            # Duplicate fill notification must not inflate margin.
+            before = ledger.margin_used
+            runner._services.gateway.note_mode_fill(
+                ModeId.M3_TACTICAL_POSITIONAL,
+                margin=decision.recalculated_max_loss,
+                trade_id=position.trade_id,
+            )
+            after = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL).margin_used
+            assert after == before
+            assert book.total_open_risk() == before
+        finally:
+            store.close()
+
+    def test_close_releases_open_risk(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_put_credit
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "close-release.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            book = runner._services.gateway.mode_book
+            assert book is not None
+            assert book.total_open_risk().amount > 0
+            _close_open_position(runner, position, snapshots)
+            assert book.total_open_risk().amount == Decimal(0)
+        finally:
+            store.close()
+
+    def test_failed_protected_prefix_releases_reservation(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.test_four_mode_session_integration import _runner
+        from tests.test_four_mode_trade_simulations import _spec
+        from tests.test_p10_iron_condor_binder_and_g2 import _macro as m4_macro
+        from tests.test_p11_m4_broad_basket import _call_butterfly_candidates
+        from trading.domain.enums import ExecutionMode, FamilyId, OptionType
+        from trading.runtime.paper_runner import PaperStrategyRequest
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "abort-prefix.sqlite", clock=clock)
+        try:
+            candidates = tuple(
+                item.model_copy(
+                    update={"market": item.market.model_copy(update={"last": None})}
+                )
+                for item in _call_butterfly_candidates()
+            )
+            runner = _runner(store, clock)
+            before = runner._services.gateway.mode_book.total_open_risk()  # type: ignore[union-attr]
+            runner.run_cycle(
+                (
+                    PaperStrategyRequest(
+                        strategy_id=FamilyId.long_call_butterfly.value,
+                        underlying=f.snapshot(
+                            snapshot_id="SNAP-UNDER",
+                            contract=f.index_contract(),
+                            market=f.quote(last=f.price("24500"), close=f.price("24500")),
+                        ),
+                        candidates=candidates,
+                        instruments={
+                            item.contract.symbol: _spec(
+                                item.contract.symbol,
+                                str(item.contract.strike or "0"),
+                                OptionType.CALL,
+                            )
+                            for item in candidates
+                        },
+                        event_risk_state=f.event_risk_state(),
+                        experiment_id="EXP-ABORT",
+                        execution_mode=ExecutionMode.PAPER,
+                        macro=m4_macro(),
+                        execute=True,
+                        forced_family_id=FamilyId.long_call_butterfly,
+                    ),
+                )
+            )
+            after = runner._services.gateway.mode_book.total_open_risk()  # type: ignore[union-attr]
+            assert after == before
+            assert runner.trade_manager.list_positions() == ()
+        finally:
+            store.close()
+
+    def test_restart_reconstructs_open_risk_without_double_counting(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from tests.test_four_mode_session_integration import _runner
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "restart-risk.sqlite", clock=clock)
+        try:
+            runner, position, _snapshots = open_bull_put_credit(store, clock)
+            _, decision = runner._open_book[position.trade_id]
+            live = runner._services.gateway.mode_book
+            assert live is not None
+            live_risk = live.total_open_risk()
+            live_ledger = live.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
+            assert live_ledger.reserved_capital.amount == Decimal(0)
+            assert live_ledger.margin_used == decision.recalculated_max_loss
+
+            restarted = _runner(store, clock)
+            restarted.recover_lifecycle()
+            book = restarted._services.gateway.mode_book
+            assert book is not None
+            ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
+            assert ledger.margin_used == decision.recalculated_max_loss
+            assert ledger.reserved_capital.amount == Decimal(0)
+            assert book.total_open_risk() == live_risk
+            # No double count: open_risk == margin when reserved is zero.
+            assert book.total_open_risk() == ledger.margin_used
+        finally:
+            store.close()
+
+    def test_restart_mid_entry_restores_reserved_not_margin(
+        self, tmp_path: Path
+    ) -> None:
+        from trading.domain.contracts.mode_policy import load_modes_config
+        from trading.domain.enums import ReservationState
+        from trading.domain.contracts.reservation import CapitalReservation
+        from trading.risk.mode_ledger import FourModeBook
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "mid-entry.sqlite", clock=clock)
+        try:
+            hold = CapitalReservation(
+                reservation_id="RES-MID",
+                intent_id="INT-MID",
+                strategy_id="positional_long_option",
+                mode_id=ModeId.M2_DIRECTIONAL,
+                idempotency_key="INT-MID",
+                state=ReservationState.RESERVED,
+                amount=Money.of("5000", Currency.INR),
+                created_at=clock.now_utc(),
+                updated_at=clock.now_utc(),
+            )
+            store.upsert_reservation(hold)
+            # A committed twin must not inflate reserved after restart.
+            committed = hold.model_copy(
+                update={
+                    "reservation_id": "RES-COMMITTED",
+                    "intent_id": "INT-OPEN",
+                    "idempotency_key": "INT-OPEN",
+                    "state": ReservationState.COMMITTED,
+                    "amount": Money.of("8000", Currency.INR),
+                }
+            )
+            store.upsert_reservation(committed)
+            book = FourModeBook.reconstruct_from_store(
+                store, clock.now_utc().date(), modes_config=load_modes_config(ROOT / "config" / "modes.yaml")
+            )
+            m2 = book.get_ledger(ModeId.M2_DIRECTIONAL)
+            assert m2.reserved_capital.amount == Decimal("5000")
+            assert m2.margin_used.amount == Decimal(0)
+            assert book.total_open_risk().amount == Decimal("5000")
+        finally:
+            store.close()

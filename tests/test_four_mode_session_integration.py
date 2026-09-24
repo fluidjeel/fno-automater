@@ -139,6 +139,13 @@ def _runner(store: TradingStore, clock: FrozenClock) -> PaperRunner:
     account = cast(LoadedConfig, _paper_config())
     risk = load_risk_policy(ROOT / "config" / "risk.yaml")
     reservations = CapitalReservationService(store, clock=clock, id_factory=ids)
+    from trading.risk.mode_ledger import FourModeBook
+    from zoneinfo import ZoneInfo
+
+    session_date = clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
+    mode_book = FourModeBook.reconstruct_from_store(
+        store, session_date, modes_config=MODES
+    )
     runner = PaperRunner(
         account_config=account,
         risk_policy=risk,
@@ -156,6 +163,7 @@ def _runner(store: TradingStore, clock: FrozenClock) -> PaperRunner:
         clock=clock,
         id_factory=ids,
         modes_config=MODES,
+        mode_book=mode_book,
     )
     return runner
 

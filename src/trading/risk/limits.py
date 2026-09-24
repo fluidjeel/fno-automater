@@ -15,7 +15,7 @@ from trading.domain.contracts.portfolio import PortfolioSnapshot, UnderlyingExpo
 from trading.domain.contracts.sizing import SizingLimits
 from trading.domain.enums import ModeId, ReasonCode, Side
 from trading.domain.primitives import Money, Rounding
-from trading.risk.mode_ledger import ModeLedger
+from trading.risk.mode_ledger import FourModeBook, ModeLedger
 
 __all__ = [
     "LimitEvaluation",
@@ -165,6 +165,9 @@ def evaluate_pre_trade_limits(
     *,
     recalculated_max_loss: Money,
     approved_lots: int,
+    mode_ledger: ModeLedger | None = None,
+    modes_config: ModesConfig | None = None,
+    mode_book: FourModeBook | None = None,
 ) -> LimitEvaluation:
     """Fail closed when a hard limit would be breached by the proposed trade."""
     if approved_lots <= 0:
@@ -210,6 +213,32 @@ def evaluate_pre_trade_limits(
     if current_notional + recalculated_max_loss > concentration_cap:
         reasons.append(ReasonCode.CONCENTRATION_LIMIT)
         applied.append("underlying_concentration")
+
+    if (
+        intent.mode_id is not None
+        and mode_ledger is not None
+        and modes_config is not None
+    ):
+        mode_policy = modes_config.modes[intent.mode_id]
+        mode_open_cap = (
+            mode_ledger.reference_capital * mode_policy.max_open_loss_cap_fraction
+        ).quantized(Rounding.FLOOR)
+        if mode_ledger.open_risk + recalculated_max_loss > mode_open_cap:
+            reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+            applied.append("max_open_loss_cap_fraction")
+
+    # The global envelope is the four-mode book's cap. Legacy strategies without
+    # a mode_id stay on account-level limits and are not charged against it.
+    if (
+        intent.mode_id is not None
+        and mode_book is not None
+        and policy.max_global_open_risk is not None
+    ):
+        global_cap = policy.max_global_open_risk.to_money()
+        if mode_book.total_open_risk() + recalculated_max_loss > global_cap:
+            reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+            applied.append("max_global_open_risk")
+
     if reasons:
         return LimitEvaluation(
             passed=False,
