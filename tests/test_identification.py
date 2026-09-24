@@ -26,6 +26,7 @@ from trading.domain.contracts.snapshot import DerivativesContext, Greeks
 from trading.domain.enums import (
     DataQuality,
     Exchange,
+    FamilyId,
     InstrumentKind,
     OptionType,
     ReasonCode,
@@ -35,6 +36,7 @@ from trading.identification import (
     IvBucket,
     SessionBucket,
     allowed_families_for,
+    bind_credit_spread,
     bind_debit_spread,
     bind_long_option,
     build_market_state,
@@ -252,6 +254,108 @@ def test_candidate_bag_binds_one_long_and_one_ordered_debit_spread() -> None:
     )
     assert len(long_option.candidates) == 1
     assert len(spread.candidates) == 2
+
+
+def test_bind_credit_spread_bull_put() -> None:
+    # Bull put spread: sell higher put (24000), buy lower put (23900)
+    candidates = (
+        _option(
+            "NIFTY-23900-PE",
+            strike="23900",
+            delta="0.20",
+            bid="50",
+            ask="51",
+            option_type=OptionType.PUT,
+        ),
+        _option(
+            "NIFTY-24000-PE",
+            strike="24000",
+            delta="0.35",
+            bid="80",
+            ask="81",
+            option_type=OptionType.PUT,
+        ),
+    )
+    market = _market(trend=TrendState.UP)
+    bound = bind_credit_spread(
+        candidates,
+        market=market,
+        policy=POLICY,
+        family_id=FamilyId.bull_put_credit,
+    )
+    assert bound.binding.eligible
+    assert bound.binding.strategy_id == "bull_put_credit"
+    # Long protection first!
+    assert bound.binding.selected_symbols == ("NIFTY-23900-PE", "NIFTY-24000-PE")
+    assert bound.candidates[0].contract.symbol == "NIFTY-23900-PE"
+    assert bound.candidates[1].contract.symbol == "NIFTY-24000-PE"
+    assert bound.setup_features is not None
+
+
+def test_bind_credit_spread_bear_call() -> None:
+    # Bear call spread: sell lower call (24000), buy higher call (24100)
+    candidates = (
+        _option(
+            "NIFTY-24000-CE",
+            strike="24000",
+            delta="0.35",
+            bid="80",
+            ask="81",
+            option_type=OptionType.CALL,
+        ),
+        _option(
+            "NIFTY-24100-CE",
+            strike="24100",
+            delta="0.20",
+            bid="50",
+            ask="51",
+            option_type=OptionType.CALL,
+        ),
+    )
+    market = _market(trend=TrendState.DOWN)
+    bound = bind_credit_spread(
+        candidates,
+        market=market,
+        policy=POLICY,
+        family_id=FamilyId.bear_call_credit,
+    )
+    assert bound.binding.eligible
+    assert bound.binding.strategy_id == "bear_call_credit"
+    # Long protection first!
+    assert bound.binding.selected_symbols == ("NIFTY-24100-CE", "NIFTY-24000-CE")
+    assert bound.candidates[0].contract.symbol == "NIFTY-24100-CE"
+    assert bound.candidates[1].contract.symbol == "NIFTY-24000-CE"
+    assert bound.setup_features is not None
+
+
+def test_bind_credit_spread_master_symbols_validation() -> None:
+    candidates = (
+        _option(
+            "NIFTY-23900-PE",
+            strike="23900",
+            delta="0.20",
+            bid="50",
+            ask="51",
+            option_type=OptionType.PUT,
+        ),
+        _option(
+            "NIFTY-24000-PE",
+            strike="24000",
+            delta="0.35",
+            bid="80",
+            ask="81",
+            option_type=OptionType.PUT,
+        ),
+    )
+    bound = bind_credit_spread(
+        candidates,
+        market=_market(trend=TrendState.UP),
+        policy=POLICY,
+        family_id=FamilyId.bull_put_credit,
+        master_symbols=frozenset(["OTHER_SYMBOL"]),
+    )
+    assert not bound.binding.eligible
+    assert bound.binding.reason_codes == (ReasonCode.INSTRUMENT_MASTER_ABSENT,)
 
 
 def test_synthetic_top_of_book_is_ineligible() -> None:

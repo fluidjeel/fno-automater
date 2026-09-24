@@ -45,9 +45,11 @@ NIFTY_SECTORS = {
     "ASIANPAINT": "Consumer Durables",
 }
 
+
 def classify_sector(symbol: str) -> str:
     """Classify a stock symbol into its sector."""
     return NIFTY_SECTORS.get(symbol, "Others")
+
 
 _MIN_POINTS = 2
 
@@ -67,5 +69,6 @@ def compute_sector_rs(
     sector_return = (sector_bars[-1][4] - sector_bars[0][4]) / sector_bars[0][4]
 
     return stock_return - sector_return
+
 
 __all__ = ["NIFTY_SECTORS", "classify_sector", "compute_sector_rs"]

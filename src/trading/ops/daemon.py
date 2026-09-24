@@ -95,11 +95,13 @@ class DaemonSupervisor:
         schedule: DaemonSchedule | None = None,
         heartbeat_path: Path | None = None,
         on_phase_change: Callable[[DaemonPhase, DaemonPhase], None] | None = None,
+        on_tick: Callable[[DaemonPhase], None] | None = None,
     ) -> None:
         self._clock = clock or WallClock()
         self._schedule = schedule or DaemonSchedule()
         self._heartbeat_path = heartbeat_path or Path("data/daemon_heartbeat.json")
         self._on_phase_change = on_phase_change
+        self._on_tick = on_tick
         self._current_phase = DaemonPhase.IDLE
         self._running = False
         self._stop_event = threading.Event()
@@ -144,6 +146,11 @@ class DaemonSupervisor:
             self._current_phase = next_phase
 
         self.record_heartbeat(self._current_phase)
+        if self._on_tick is not None:
+            try:
+                self._on_tick(self._current_phase)
+            except Exception:
+                logger.exception("Error in daemon tick callback")
         return self._current_phase
 
     def stop(self) -> None:

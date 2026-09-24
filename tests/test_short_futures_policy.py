@@ -174,6 +174,7 @@ def _gateway(
         margin_preview=broker,
         clock=clock,
         id_factory=ids,
+        nifty_only_execution=False,
     )
 
 

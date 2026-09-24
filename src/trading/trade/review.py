@@ -207,7 +207,7 @@ class ReviewEngine:
         return ReviewEvaluation(
             action=ReviewAction.HOLD,
             reason_code=ReasonCode.OK,
-            detail="frozen policy unchanged; no review action",
+            detail="frozen policy unchanged; positional review holds",
         )
 
 
@@ -263,9 +263,25 @@ def _proposed_tighten(
     )
 
 
-def _stop_is_tighter(previous: ExitPolicy, candidate: ExitPolicy, side: Side) -> bool:
-    if candidate.current_stop_distance_ticks > previous.current_stop_distance_ticks:
+def _pnl_stop_is_tighter(previous: ExitPolicy, candidate: ExitPolicy) -> bool:
+    if candidate.pnl_stop is not None and previous.pnl_stop is not None:
+        if candidate.pnl_stop.amount > previous.pnl_stop.amount:
+            return True
+        if candidate.pnl_stop.amount < previous.pnl_stop.amount:
+            return False
+        return (
+            candidate.current_stop_distance_ticks < previous.current_stop_distance_ticks
+        )
+    if previous.pnl_stop is None and candidate.pnl_stop is not None:
+        return True
+    if candidate.pnl_stop is None and previous.pnl_stop is not None:
         return False
+    return candidate.current_stop_distance_ticks < previous.current_stop_distance_ticks
+
+
+def _leg_price_stop_is_tighter(
+    previous: ExitPolicy, candidate: ExitPolicy, side: Side
+) -> bool:
     if previous.stop_price is None:
         return candidate.stop_price is not None
     if candidate.stop_price is None:
@@ -273,6 +289,17 @@ def _stop_is_tighter(previous: ExitPolicy, candidate: ExitPolicy, side: Side) ->
     if side is Side.BUY:
         return candidate.stop_price.value > previous.stop_price.value
     return candidate.stop_price.value < previous.stop_price.value
+
+
+def _stop_is_tighter(previous: ExitPolicy, candidate: ExitPolicy, side: Side) -> bool:
+    if candidate.current_stop_distance_ticks > previous.current_stop_distance_ticks:
+        return False
+    if previous.scope in {
+        ExitScope.STRATEGY_PNL,
+        ExitScope.SPREAD_VALUE,
+    } or candidate.scope in {ExitScope.STRATEGY_PNL, ExitScope.SPREAD_VALUE}:
+        return _pnl_stop_is_tighter(previous, candidate)
+    return _leg_price_stop_is_tighter(previous, candidate, side)
 
 
 def _same_stop(previous: ExitPolicy, candidate: ExitPolicy) -> bool:

@@ -26,7 +26,14 @@ from trading.domain.contracts import (
     IntentLeg,
     TradeIntent,
 )
-from trading.domain.enums import InstrumentKind, OptionType, ReasonCode, Side
+from trading.domain.enums import (
+    FamilyId,
+    InstrumentKind,
+    ModeId,
+    OptionType,
+    ReasonCode,
+    Side,
+)
 from trading.domain.primitives import Currency, Money, Percent
 from trading.strategies._common import DEFAULT_MACRO_MIN_CONFIDENCE, resolve_direction
 from trading.strategies.base import (
@@ -267,6 +274,12 @@ class DebitSpreadStrategy:
             promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
+            mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+            family_id=(
+                FamilyId.bull_call_debit
+                if option_type is OptionType.CALL
+                else FamilyId.bear_put_debit
+            ),
             underlying=ctx.underlying.contract.underlying,
             asset_class=ctx.underlying.contract.asset_class,
             legs=(long_leg, short_leg),

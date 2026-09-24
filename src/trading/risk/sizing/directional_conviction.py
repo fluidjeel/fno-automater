@@ -174,9 +174,7 @@ class DirectionalConvictionSizingEngine:
         # Apply regime and conviction multipliers to the risk term only
         conviction_mult = _conviction_to_multiplier(conviction_score)
         combined_multiplier = regime_multiplier * conviction_mult
-        adjusted_risk_lots = max(
-            0, int(Decimal(base_risk_lots) * combined_multiplier)
-        )
+        adjusted_risk_lots = max(0, int(Decimal(base_risk_lots) * combined_multiplier))
 
         # Hard caps — never overridden by multipliers
         capital_budget = min(

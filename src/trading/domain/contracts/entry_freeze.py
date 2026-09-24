@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import model_validator
 
 from trading.domain.contracts.base import StrictBool, UtcDatetime, VersionedModel
-from trading.domain.enums import ReasonCode
+from trading.domain.enums import ModeId, ReasonCode
 
 __all__ = ["EntryFreezeRecord"]
 
@@ -17,6 +17,7 @@ class EntryFreezeRecord(VersionedModel):
     reason_code: ReasonCode | None = None
     detail: str | None = None
     updated_at: UtcDatetime
+    mode_id: ModeId | None = None
 
     @model_validator(mode="after")
     def _blocked_state_has_a_reason(self) -> EntryFreezeRecord:

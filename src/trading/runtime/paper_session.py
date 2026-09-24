@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, timedelta
@@ -19,6 +20,7 @@ from trading.broker.paper import PaperBroker
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
 from trading.config.paper_data import load_paper_data_requirements
+from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import Environment
 from trading.data.config import DataPipelineConfig, load_data_pipeline_config
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
@@ -33,12 +35,14 @@ from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.data.storage.snapshot_store import SnapshotStore
 from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec
+from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     Exchange,
     ExecutionMode,
     InstrumentKind,
+    ModeId,
     ReviewSlotId,
     TradeState,
 )
@@ -55,15 +59,30 @@ from trading.identification import (
     route_nifty_options,
     top_book_size,
 )
+from trading.identification.calendar import get_calendar_port
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
+from trading.portfolio.risk_journal import (
+    PortfolioRiskJournal,
+    build_portfolio_risk_record,
+)
 from trading.runtime.candidates import (
     build_future_snapshot,
     build_option_candidates,
     front_month_future,
 )
+from trading.runtime.cas_event_path import (
+    CasEventDrivenConfig,
+    cas_event_paper_permitted,
+    measure_cas_entry_latency,
+)
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.event_risk import collect_event_risk
+from trading.runtime.four_mode_producers import (
+    build_four_mode_requests,
+    produce_family_requests,
+)
+from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.notify import (
     format_eod_report,
@@ -76,8 +95,15 @@ from trading.runtime.paper_runner import (
     PaperRunner,
     PaperStrategyRequest,
 )
-from trading.runtime.protection import ProtectionConfig
+from trading.runtime.protection import (
+    ProtectionConfig,
+    ProtectionCoordinator,
+    build_protection_coordinator,
+)
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
+from trading.runtime.session_heartbeat import write_session_heartbeat
+from trading.runtime.session_routing import ProducedFamilyRequest, SessionRoutingProfile
+from trading.runtime.startup_validation import validate_startup_configuration
 from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment
 from trading.trade.exits import ExitEvaluation
@@ -114,22 +140,28 @@ class PositionalReviewConfig(BaseModel):
 class PaperSessionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    routing_profile: SessionRoutingProfile = SessionRoutingProfile.LEGACY
     poll_interval_seconds: int = Field(ge=1)
     eod_local: str
     option_strikes_each_side: int = Field(ge=0, le=10)
     experiment_prefix: str
-    strategy_ids: tuple[str, ...]
-    strategy_stances: dict[str, ExecutionMode]
+    strategy_ids: tuple[str, ...] = ()
+    strategy_stances: dict[str, ExecutionMode] = Field(default_factory=dict)
+    mode_stances: dict[str, ExecutionMode] = Field(default_factory=dict)
+    family_stances: dict[str, ExecutionMode] = Field(default_factory=dict)
     commodity_underlying: str
     commodity_exchange: str
     commodity_segment: str
     cohort_dir: str
     store_path: str
     broker_state_path: str
+    portfolio_risk_dir: str = "data/paper/portfolio_risk"
+    session_heartbeat_path: str = "data/paper/session_heartbeat.json"
     positional_review: PositionalReviewConfig = Field(
         default_factory=PositionalReviewConfig
     )
     protection: ProtectionConfig = Field(default_factory=ProtectionConfig)
+    cas_event_driven: CasEventDrivenConfig = Field(default_factory=CasEventDrivenConfig)
 
 
 class SessionNotifier(Protocol):
@@ -188,6 +220,11 @@ class PaperSession:
         charges_verified: bool,
         cohort_dir: Path,
         broker_state_path: Path | None = None,
+        risk_journal: PortfolioRiskJournal | None = None,
+        risk_policy: RiskPolicyConfig | None = None,
+        account_id: str = "",
+        protection: ProtectionCoordinator | None = None,
+        session_heartbeat_path: Path | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self._runner = runner
@@ -205,8 +242,14 @@ class PaperSession:
         self._charges_verified = charges_verified
         self._cohort_dir = cohort_dir
         self._broker_state_path = broker_state_path
+        self._risk_journal = risk_journal
+        self._risk_policy = risk_policy
+        self._account_id = account_id
+        self._protection = protection
+        self._session_heartbeat_path = session_heartbeat_path
         self._sleeper = sleeper
         self._results: list[PaperCycleResult] = []
+        self._cycle_count = 0
         self._eod_sent = False
         self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
 
@@ -225,7 +268,9 @@ class PaperSession:
         self._runner.trade_manager.apply_exit_evaluation(trade_id, evaluation)
         self._runner.flush_lifecycle()
         self._notifier.send(
-            f"[SENTINEL] Trade {trade_id} {evaluation.kind} exit fired at {trigger_price}"[:_NOTIFY_MAX]
+            f"[SENTINEL] Trade {trade_id} {evaluation.kind} exit fired at {trigger_price}"[
+                :_NOTIFY_MAX
+            ]
         )
 
     def sync_sentinel(self) -> int:
@@ -246,6 +291,16 @@ class PaperSession:
         for alert in recovery.alerts:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
         self.sync_sentinel()
+        if self._protection is not None:
+            self._protection.refresh_subscriptions()
+            self._protection.start()
+        try:
+            return self._run_loop(once=once)
+        finally:
+            if self._protection is not None:
+                self._protection.stop()
+
+    def _run_loop(self, *, once: bool) -> int:
         while True:
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
@@ -258,6 +313,9 @@ class PaperSession:
             if in_window or self._has_open_positions():
                 self.tick()
                 self.sync_sentinel()
+            if self._protection is not None:
+                self._protection.refresh_subscriptions()
+                self._protection.tick()
             self._persist_broker()
             if once:
                 return 0
@@ -271,6 +329,7 @@ class PaperSession:
         if requests:
             result = self._runner.run_cycle(requests)
             self._results.append(result)
+            self._runner.persist_cycle_evidence(result, as_of=now)
             for outcome in result.outcomes:
                 experiment_id = next(
                     (
@@ -284,8 +343,59 @@ class PaperSession:
                     self._notifier.send(text[:_NOTIFY_MAX])
         if snapshots:
             self._runner.manage_exits(snapshots)
+        self._record_portfolio_risk(snapshots)
         self._run_due_reviews(snapshots)
+        self._run_due_m2_carry_gate(snapshots, now)
+        self._cycle_count += 1
+        self._write_session_heartbeat(
+            now=now, result=result, had_requests=bool(requests)
+        )
         return result
+
+    def _write_session_heartbeat(
+        self,
+        *,
+        now: datetime,
+        result: PaperCycleResult | None,
+        had_requests: bool,
+    ) -> None:
+        if self._session_heartbeat_path is None:
+            return
+        local = now.astimezone(self._zone)
+        route = result.route_decision if result is not None else None
+        write_session_heartbeat(
+            self._session_heartbeat_path,
+            {
+                "timestamp": now.isoformat(),
+                "local_time": local.isoformat(),
+                "cycle_count": self._cycle_count,
+                "had_requests": had_requests,
+                "system_state": result.system_state.value if result else None,
+                "entries_blocked": result.entries_blocked if result else None,
+                "route_winner": route.paper_winner if route is not None else None,
+                "route_reasons": [code.value for code in route.reason_codes]
+                if route is not None
+                else [],
+                "open_positions": self._runner.open_position_count(),
+                "outcome_count": len(result.outcomes) if result else 0,
+            },
+        )
+
+    def _record_portfolio_risk(self, snapshots: dict[str, FeatureSnapshot]) -> None:
+        if self._risk_journal is None or self._risk_policy is None:
+            return
+        now = self._clock.now_utc()
+        record = build_portfolio_risk_record(
+            broker=self._runner.broker,
+            account_id=self._account_id,
+            positions=self._runner.trade_manager.list_positions(),
+            open_book=self._runner.open_book,
+            snapshots=snapshots,
+            risk_policy=self._risk_policy,
+            id_factory=self._runner.id_factory,
+            as_of=now,
+        )
+        self._risk_journal.append(record)
 
     def _has_open_positions(self) -> bool:
         return any(
@@ -300,7 +410,7 @@ class PaperSession:
         eod = _parse_hhmm(self._config.eod_local)
         slots = _configured_slots(self._config.positional_review)
         recorded = self._runner.recorded_review_slots(local.date())
-        for slot in due_review_slots(
+        for work in due_review_slots(
             now_local=local,
             session_open=self._open,
             eod=eod,
@@ -308,10 +418,38 @@ class PaperSession:
             recorded=recorded,
         ):
             result = self._runner.run_review_slot(
-                slot, snapshots, session_date=local.date()
+                work.slot,
+                snapshots,
+                session_date=local.date(),
+                missed_slot_ids=work.missed_slot_ids,
+                configured_slots=slots,
             )
             for decision in result.decisions:
                 self._notifier.send(format_review_decision(decision)[:_NOTIFY_MAX])
+
+    def _run_due_m2_carry_gate(
+        self, snapshots: dict[str, FeatureSnapshot], now: datetime
+    ) -> None:
+        """Run the Mode 2 carry gate once per session after entry cutoff."""
+        local = now.astimezone(self._zone)
+        calendar = get_calendar_port()
+        if local.time() < calendar.entry_cutoff:
+            return
+        modes = load_modes_config()
+        m2_policy = modes.modes[ModeId.M2_DIRECTIONAL]
+        reference_amount = (
+            self._capital_limit.amount * m2_policy.capital_share
+        ).quantize(Decimal("0.01"))
+        reference_capital = Money(reference_amount, Currency.INR)
+        self._runner.run_m2_carry_gate(
+            snapshots,
+            session_date=local.date(),
+            market=None,
+            mode_reference_capital=reference_capital,
+            event_blackout=False,
+            portfolio_entries_blocked=False,
+            mode_daily_loss_breached=False,
+        )
 
     def _past_eod(self, local_time: dt_time) -> bool:
         hour, minute = (int(part) for part in self._config.eod_local.split(":", 1))
@@ -384,6 +522,13 @@ def run_paper_session(
     evaluation = load_evaluation_config(repo_root / "config" / "evaluation.yaml")
     risk = load_risk_policy(repo_root / "config" / "risk.yaml")
     session_cfg = load_paper_session_config(repo_root / "config" / "paper_session.yaml")
+    modes_path = repo_root / "config" / "modes.yaml"
+    modes_config = load_modes_config(modes_path) if modes_path.is_file() else None
+    session_cfg, startup_warnings = validate_startup_configuration(
+        session_cfg, modes_config, enforce_g3_shadow=True
+    )
+    for warning in startup_warnings:
+        logging.getLogger(__name__).warning("Startup validation warning: %s", warning)
     pipeline_cfg = load_data_pipeline_config(
         repo_root / "config" / "data_pipeline.yaml"
     )
@@ -432,15 +577,45 @@ def run_paper_session(
         notifier = _TelegramNotifier(
             settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
         )
+    for warning in startup_warnings:
+        notifier.send(f"STARTUP WARNING: {warning}")
     if request_builder is None:
-        request_builder = _live_request_builder(
-            repo_root,
+        if session_cfg.routing_profile is SessionRoutingProfile.FOUR_MODE:
+            if modes_config is None:
+                logging.getLogger(__name__).error(
+                    "Four-mode routing requires config/modes.yaml"
+                )
+                return 1
+            request_builder = _four_mode_request_builder(
+                repo_root,
+                clock=clock,
+                session_cfg=session_cfg,
+                modes_config=modes_config,
+                pipeline_cfg=pipeline_cfg,
+                settings=settings,
+                paper_data=paper_data,
+            )
+        else:
+            request_builder = _live_request_builder(
+                repo_root,
+                clock=clock,
+                session_cfg=session_cfg,
+                pipeline_cfg=pipeline_cfg,
+                settings=settings,
+                broker=broker,
+                paper_data=paper_data,
+            )
+    protection: ProtectionCoordinator | None = None
+    if session_cfg.protection.enabled:
+        ws_monitor = None
+        if session_cfg.protection.ws_enabled:
+            ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
+        protection = build_protection_coordinator(
+            runner=runner,
             clock=clock,
-            session_cfg=session_cfg,
-            pipeline_cfg=pipeline_cfg,
-            settings=settings,
-            broker=broker,
-            paper_data=paper_data,
+            config=session_cfg.protection,
+            repo_root=repo_root,
+            ws=ws_monitor,
         )
     session = PaperSession(
         runner=runner,
@@ -461,6 +636,11 @@ def run_paper_session(
         charges_verified=evaluation.config.fill_model.charges_per_lot.is_verified,
         cohort_dir=repo_root / session_cfg.cohort_dir,
         broker_state_path=state_path,
+        risk_journal=PortfolioRiskJournal(repo_root / session_cfg.portfolio_risk_dir),
+        risk_policy=risk.config,
+        account_id=account.config.account_id,
+        protection=protection,
+        session_heartbeat_path=repo_root / session_cfg.session_heartbeat_path,
         sleeper=sleeper or time.sleep,
     )
     return session.run(once=once)
@@ -605,7 +785,7 @@ def _quotes_for_symbols(
     return quotes
 
 
-def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
+def _live_request_builder(
     repo_root: Path,
     *,
     clock: Clock,
@@ -640,7 +820,7 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
     last_winner_at: datetime | None = None
     last_winner_regime: str | None = None
 
-    def build(  # noqa: PLR0912, PLR0915 - fail-closed orchestration branches
+    def build(
         now: datetime,
     ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
         nonlocal last_winner_at, last_winner_regime
@@ -811,11 +991,8 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
                     if opportunity is None
                     else opportunity.bound.candidates
                 )
-                execute = (
-                    configured_stance is ExecutionMode.PAPER
-                    and opportunity is not None
-                    and opportunity.execution
-                )
+                is_eligible = binding.binding.eligible and strategy_id in allowed
+                execute = configured_stance is ExecutionMode.PAPER and is_eligible
                 setup = None if opportunity is None else opportunity.setup_features
                 mode = ExecutionMode.PAPER if execute else ExecutionMode.SHADOW
             elif strategy_id == "commodity_futures_trend":
@@ -854,6 +1031,196 @@ def _live_request_builder(  # noqa: PLR0915 - point-in-time episode composition
                 )
             )
         return tuple(requests), snapshots
+
+    return build
+
+
+def _four_mode_request_builder(
+    repo_root: Path,
+    *,
+    clock: Clock,
+    session_cfg: PaperSessionConfig,
+    modes_config: ModesConfig,
+    pipeline_cfg: DataPipelineConfig,
+    settings: FyersSettings,
+    paper_data: PaperDataRequirements | None = None,
+) -> Callable[
+    [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
+]:
+    """Four-mode producers: independent family bindings, no legacy one-winner router."""
+    pipeline = build_pipeline(repo_root)
+    catalog = InstrumentSpecStore(
+        repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
+    )
+    news_config = load_news_config(repo_root / "config" / "news.yaml")
+    identification = load_identification_policy(
+        repo_root / "config" / "identification.yaml"
+    )
+    snapshot_store = SnapshotStore(
+        repo_root / pipeline_cfg.storage.root / pipeline_cfg.storage.snapshot_subdir
+    )
+    collector = NewsCollector(news_config)
+    zone = ZoneInfo(pipeline_cfg.session.timezone)
+    feed = FyersMarketFeed(
+        settings,
+        clock,
+        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
+        chain_greeks=pipeline_cfg.fyers.chain_greeks,
+        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
+    )
+    cas_latency_samples: list[int] = []
+    cas_attempts_today = 0
+    cas_session_date: date | None = None
+
+    def build(
+        now: datetime,
+    ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
+        nonlocal cas_attempts_today, cas_session_date
+        session_day = now.astimezone(_IST).date()
+        if cas_session_date != session_day:
+            cas_session_date = session_day
+            cas_attempts_today = 0
+        event_risk = collect_event_risk(collector, news_config, as_of=now)
+        snapshots: dict[str, FeatureSnapshot] = {}
+        instruments: dict[str, InstrumentSpec] = {}
+        index_underlying: FeatureSnapshot | None = None
+        option_candidates: tuple[FeatureSnapshot, ...] = ()
+        bar_event: CanonicalMarketEvent | None = None
+        macro: MacroAssessment | None = None
+        for underlying_cfg in pipeline_cfg.underlyings:
+            if underlying_cfg.instrument_kind is InstrumentKind.FUTURE:
+                continue
+            if underlying_cfg.symbol == identification.vix_symbol:
+                continue
+            result = pipeline.run_once(underlying_cfg, now=now)
+            if result.snapshot is None:
+                continue
+            index_underlying = result.snapshot
+            macro = publish_macro_assessment(result.macro_news_factor)
+            snapshots[index_underlying.contract.symbol] = index_underlying
+            chain = next(
+                (
+                    event
+                    for event in result.events
+                    if event.event_type == "OPTION_CHAIN_SNAPSHOT"
+                ),
+                None,
+            )
+            if chain is None:
+                continue
+            bar_event = next(
+                (
+                    event
+                    for event in result.events
+                    if event.event_type == "BAR_SNAPSHOT"
+                    and event.payload.get("resolution") == "5"
+                ),
+                None,
+            )
+            option_candidates, option_specs = build_option_candidates(
+                chain,
+                catalog,
+                underlying=index_underlying,
+                as_of=now,
+                zone=zone,
+                strikes_each_side=session_cfg.option_strikes_each_side,
+            )
+            if option_specs:
+                quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
+                observed_quotes = _quotes_from_capture(quote_capture, option_specs)
+                option_candidates, option_specs = build_option_candidates(
+                    chain,
+                    catalog,
+                    underlying=index_underlying,
+                    as_of=now,
+                    zone=zone,
+                    strikes_each_side=session_cfg.option_strikes_each_side,
+                    quotes=observed_quotes,
+                )
+            if paper_data is not None:
+                option_candidates = _with_option_depth(
+                    option_candidates, feed, paper_data
+                )
+            instruments.update(option_specs)
+            for candidate in option_candidates:
+                snapshots[candidate.contract.symbol] = candidate
+        if index_underlying is None:
+            return (), snapshots
+        vix_history = _vix_history(
+            snapshot_store,
+            symbol=identification.vix_symbol,
+            now=now,
+        )
+        market_state = build_market_state(
+            bar_event,
+            underlying=index_underlying,
+            option_candidates=option_candidates,
+            event_risk=event_risk,
+            macro=macro,
+            as_of=now,
+            policy=identification,
+            vix_history=vix_history,
+        )
+        p1 = (
+            None
+            if paper_data is None
+            else observe_p1_features(
+                option_candidates, requirements=paper_data, market=market_state
+            )
+        )
+        master_symbols = frozenset(instruments)
+        produced = produce_family_requests(
+            modes_config=modes_config,
+            mode_stances=session_cfg.mode_stances,
+            family_stances=session_cfg.family_stances,
+            candidates=option_candidates,
+            market=market_state,
+            policy=identification,
+            p1=p1,
+            master_symbols=master_symbols,
+        )
+        latency_report = measure_cas_entry_latency(
+            tuple(cas_latency_samples),
+            config=session_cfg.cas_event_driven,
+        )
+        adjusted: list[ProducedFamilyRequest] = []
+        for item in produced:
+            if item.spec.mode_id is not ModeId.M1_CAS:
+                adjusted.append(item)
+                continue
+            m1_stance = session_cfg.mode_stances.get(
+                ModeId.M1_CAS.value, ExecutionMode.SHADOW
+            )
+            permitted, mode = cas_event_paper_permitted(
+                config=session_cfg.cas_event_driven,
+                latency_report=latency_report,
+                stance=m1_stance,
+                attempts_today=cas_attempts_today,
+            )
+            execute = permitted and item.bound.binding.eligible
+            if execute:
+                cas_attempts_today += 1
+                cas_latency_samples.append(
+                    session_cfg.cas_event_driven.quote_max_age_ms
+                )
+            adjusted.append(
+                item.__class__(
+                    spec=item.spec,
+                    bound=item.bound,
+                    execute=execute,
+                    execution_mode=mode if execute else ExecutionMode.SHADOW,
+                )
+            )
+        requests = build_four_mode_requests(
+            adjusted,
+            index_underlying=index_underlying,
+            instruments=instruments,
+            event_risk=event_risk,
+            macro=macro,
+            experiment_prefix=session_cfg.experiment_prefix,
+            now=now,
+        )
+        return requests, snapshots
 
     return build
 

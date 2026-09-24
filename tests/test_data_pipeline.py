@@ -1166,7 +1166,9 @@ class TestPipelineAndReplay:
         assert merged.height == 2
         assert merged["event_id"].to_list()[-1] == event.event_id
 
-    def test_append_snapshots_merges_legacy_null_snapshot_id(self, tmp_path: Path) -> None:
+    def test_append_snapshots_merges_legacy_null_snapshot_id(
+        self, tmp_path: Path
+    ) -> None:
         """Legacy catalog rows with Null snapshot_id must not break new appends."""
         parquet_dir = tmp_path / "data" / "parquet"
         parquet_dir.mkdir(parents=True)

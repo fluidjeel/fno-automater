@@ -49,9 +49,7 @@ def test_deterministic_strategy_evaluations() -> None:
     cases_dir = generate_breakout_cases(
         BreakoutScenarioKind.DIRECTIONAL, count=5, seed=2
     )
-    cases_cas = generate_breakout_cases(
-        BreakoutScenarioKind.CAS, count=5, seed=3
-    )
+    cases_cas = generate_breakout_cases(BreakoutScenarioKind.CAS, count=5, seed=3)
 
     for case in cases_pos:
         out = evaluate_deterministic(case)

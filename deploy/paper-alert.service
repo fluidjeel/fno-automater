@@ -1,0 +1,11 @@
+[Unit]
+Description=FNO automated trading — notify operator on PAPER unit failure
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading ops alert-unit-failure fno-paper-session.service
+User=ubuntu
+Group=ubuntu

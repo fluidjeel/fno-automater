@@ -72,9 +72,7 @@ class ExposureReport(VersionedModel):
     event_overlaps: tuple[EventOverlap, ...] = ()
     # Fraction of open risk pointing the same way: |sum signed| / sum |signed|.
     # Empty book is 0.
-    directional_agreement_ratio: ExactDecimal = Field(
-        ge=Decimal(0), le=Decimal(1)
-    )
+    directional_agreement_ratio: ExactDecimal = Field(ge=Decimal(0), le=Decimal(1))
 
     @model_validator(mode="after")
     def _one_currency(self) -> ExposureReport:

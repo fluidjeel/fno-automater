@@ -58,4 +58,5 @@ class UniverseScannerConfig(StrictModel):
             raise ValueError(f"Scoring weights must sum to 1.00, got {total}")
         return self
 
+
 __all__ = ["UniverseScannerConfig"]

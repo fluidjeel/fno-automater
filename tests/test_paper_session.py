@@ -246,15 +246,16 @@ class TestTelegramAndCohort:
 
 
 class TestCasPaperStance:
-    def test_shipped_session_enables_cas_paper_only(self) -> None:
+    def test_shipped_session_enables_m3_m4_paper_only(self) -> None:
         cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
-        assert cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-        assert cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
-        assert cfg.strategy_stances["debit_spread"] is ExecutionMode.PAPER
-        assert cfg.strategy_stances["defined_risk_multileg"] is ExecutionMode.SHADOW
-        assert cfg.strategy_stances["commodity_futures_trend"] is ExecutionMode.SHADOW
+        assert cfg.routing_profile.value == "four_mode"
+        assert cfg.mode_stances["M1_CAS"] is ExecutionMode.SHADOW
+        assert cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.SHADOW
+        assert cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
+        assert cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
+        assert cfg.cas_event_driven.enabled is False
         assert not any(
-            mode.touches_real_capital for mode in cfg.strategy_stances.values()
+            mode.touches_real_capital for mode in cfg.mode_stances.values()
         )
 
     def test_cas_execute_fails_closed_without_depth_allow_or_candidate(self) -> None:

@@ -27,7 +27,9 @@ def _money(v: str) -> Money:
     return Money.of(v, INR)
 
 
-def _debit(*, max_loss: str = "25000", delta: str = "0", vega: str = "0") -> PositionStressInput:
+def _debit(
+    *, max_loss: str = "25000", delta: str = "0", vega: str = "0"
+) -> PositionStressInput:
     return PositionStressInput(
         trade_id="debit-1",
         defined_risk_max_loss=_money(max_loss),

@@ -10,10 +10,12 @@ from trading.config.schema import RiskLimits
 from trading.domain.contracts.common import ExposureSnapshot
 from trading.domain.contracts.exposure import ExposureReport
 from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.portfolio import PortfolioSnapshot, UnderlyingExposure
 from trading.domain.contracts.sizing import SizingLimits
-from trading.domain.enums import ReasonCode, Side
+from trading.domain.enums import ModeId, ReasonCode, Side
 from trading.domain.primitives import Money, Rounding
+from trading.risk.mode_ledger import ModeLedger
 
 __all__ = [
     "LimitEvaluation",
@@ -53,8 +55,47 @@ def build_sizing_limits(
     strategy_id: str,
     *,
     config_version: str,
+    mode_id: ModeId | None = None,
+    modes_config: ModesConfig | None = None,
+    mode_ledger: ModeLedger | None = None,
 ) -> SizingLimits:
     """Derive the limit snapshot used by the sizing engine."""
+    if mode_id is not None or mode_ledger is not None:
+        effective_mode_id = mode_id or (
+            mode_ledger.mode_id if mode_ledger is not None else None
+        )
+        if effective_mode_id is None:
+            raise ValueError("mode_id or mode_ledger must be provided")
+        cfg = modes_config or load_modes_config()
+        mode_policy = cfg.modes[effective_mode_id]
+        if mode_ledger is None:
+            share = mode_policy.capital_share
+            alloc = (portfolio.exposure.equity * share).quantized(Rounding.FLOOR)
+            mode_ledger = ModeLedger(
+                mode_id=effective_mode_id,
+                allocated_capital=alloc,
+                reserved_capital=portfolio.reserved_capital,
+                realized_pnl_today=portfolio.exposure.realized_pnl_today,
+                unrealized_pnl=portfolio.exposure.unrealized_pnl,
+                margin_used=portfolio.exposure.margin_used,
+            )
+        max_loss_per_trade = (
+            mode_ledger.reference_capital * mode_policy.per_trade_loss_cap_fraction
+        ).quantized(Rounding.FLOOR)
+        daily_loss_remaining = mode_ledger.daily_loss_remaining(
+            mode_policy.daily_budget_cap_fraction
+        )
+        strategy_allocation_remaining = mode_ledger.available_capital
+        margin_available = mode_ledger.available_capital
+        return SizingLimits(
+            policy_version=policy.policy_version,
+            config_version=config_version,
+            max_loss_per_trade=max_loss_per_trade,
+            daily_loss_remaining=daily_loss_remaining,
+            strategy_allocation_remaining=strategy_allocation_remaining,
+            margin_available=margin_available,
+        )
+
     allocation = policy.allocation_for(strategy_id)
     equity = portfolio.exposure.equity
     currency = equity.currency
@@ -135,7 +176,12 @@ def evaluate_pre_trade_limits(
     reasons: list[ReasonCode] = []
     applied: list[str] = []
     if recalculated_max_loss > limits.max_loss_per_trade:
-        reasons.append(ReasonCode.RISK_LIMIT_TRADE)
+        trade_loss_code = (
+            ReasonCode.MIN_LOT_EXCEEDS_BUDGET
+            if intent.mode_id is not None
+            else ReasonCode.RISK_LIMIT_TRADE
+        )
+        reasons.append(trade_loss_code)
         applied.append("max_loss_per_trade")
     if recalculated_max_loss > limits.daily_loss_remaining:
         reasons.append(ReasonCode.RISK_LIMIT_DAILY_LOSS)
@@ -198,6 +244,7 @@ def project_post_trade_exposure(
         unrealized_pnl=exposure.unrealized_pnl,
     )
 
+
 def evaluate_exposure_limits(
     report: ExposureReport,
     policy: RiskPolicyConfig,
@@ -258,4 +305,3 @@ def evaluate_exposure_limits(
         reason_codes=(ReasonCode.OK,),
         applied_limits=(),
     )
-

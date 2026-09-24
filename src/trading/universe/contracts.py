@@ -104,6 +104,7 @@ class CarryForwardDecision(VersionedModel):
     decided_at: UtcDatetime
     reason: NonEmptyStr
 
+
 __all__ = [
     "CarryForwardAction",
     "CarryForwardDecision",

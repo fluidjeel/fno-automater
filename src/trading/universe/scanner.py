@@ -13,6 +13,7 @@ OiRecord = tuple[datetime, int, Decimal]
 
 _MIN_BARS = 20
 
+
 def scan_universe(
     *,
     stock_bars: dict[str, list[Bar]],
@@ -63,5 +64,6 @@ def scan_universe(
         short_candidates=tuple(shorts),
         scan_version=config.scan_version,
     )
+
 
 __all__ = ["Bar", "OiRecord", "scan_universe"]

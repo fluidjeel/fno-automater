@@ -1,0 +1,23 @@
+[Unit]
+Description=FNO automated trading — supervised PAPER session
+After=network-online.target fno-data-tick.service
+Wants=network-online.target
+OnFailure=fno-paper-alert.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading paper session --config config/paper.yaml
+Restart=on-failure
+RestartSec=30
+User=ubuntu
+Group=ubuntu
+StandardOutput=append:/home/ubuntu/fno-automated/data/paper/session.log
+StandardError=append:/home/ubuntu/fno-automated/data/paper/session_error.log
+KillMode=process
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

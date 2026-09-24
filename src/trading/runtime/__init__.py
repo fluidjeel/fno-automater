@@ -16,6 +16,10 @@ from trading.runtime.paper_session import (
     load_paper_session_config,
     run_paper_session,
 )
+from trading.runtime.startup_validation import (
+    StartupValidationError,
+    validate_startup_configuration,
+)
 
 __all__ = [
     "LifecycleAlert",
@@ -28,7 +32,9 @@ __all__ = [
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
     "PositionRecoveryResult",
+    "StartupValidationError",
     "assert_paper_isolation",
     "load_paper_session_config",
     "run_paper_session",
+    "validate_startup_configuration",
 ]

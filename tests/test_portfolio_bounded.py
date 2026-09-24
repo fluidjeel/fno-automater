@@ -57,9 +57,7 @@ def test_bounded_actions_alias_is_config_promotion() -> None:
 
 
 def test_portfolio_bounded_actions_helper() -> None:
-    assert portfolio_bounded_actions_allowed(
-        (AgentAction.PROPOSE_FAMILY_HALT,)
-    )
+    assert portfolio_bounded_actions_allowed((AgentAction.PROPOSE_FAMILY_HALT,))
     assert not portfolio_bounded_actions_allowed((AgentAction.VETO_ENTRY,))
     assert not portfolio_bounded_actions_allowed(())
 

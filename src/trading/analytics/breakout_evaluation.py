@@ -268,9 +268,7 @@ def evaluate_agentic(
         pnl_r = Decimal("0.0")
         pnl_inr = Decimal("0.0")
         saved_loss = abs(case.baseline_outcome_r)
-        narrative = (
-            f"VETO_ENTRY: {case.invalidation_narrative} (saved {saved_loss}R)."
-        )
+        narrative = f"VETO_ENTRY: {case.invalidation_narrative} (saved {saved_loss}R)."
         return AgenticOutcome(
             case_id=case.case_id,
             action=action,

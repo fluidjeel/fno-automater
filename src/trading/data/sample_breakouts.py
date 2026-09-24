@@ -627,9 +627,7 @@ def _build_cas_case(
     """Close-Auction Microstructure (CAS) scenario: 15:00-15:30 IST window."""
     # 09:45 UTC = 15:15 IST (within CAS 15:00-15:30 window on a weekday)
     day_offset = index % 5
-    as_of = (
-        base_date.replace(hour=9, minute=45, second=0) + timedelta(days=day_offset)
-    )
+    as_of = base_date.replace(hour=9, minute=45, second=0) + timedelta(days=day_offset)
     expiry = (as_of + timedelta(days=3)).date()
     is_fake = breakout_type in (
         BreakoutType.FAKE_BULL_TRAP,

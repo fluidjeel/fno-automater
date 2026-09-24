@@ -9,7 +9,7 @@ from trading.domain.contracts.base import (
     UtcDatetime,
     VersionedModel,
 )
-from trading.domain.enums import ReasonCode, ReservationState
+from trading.domain.enums import ModeId, ReasonCode, ReservationState
 from trading.domain.primitives import Money
 
 __all__ = ["CapitalReservation"]
@@ -22,6 +22,8 @@ class CapitalReservation(VersionedModel):
     intent_id: NonEmptyStr
     strategy_id: NonEmptyStr
     risk_decision_id: NonEmptyStr | None = None
+    mode_id: ModeId | None = None
+    idempotency_key: NonEmptyStr | None = None
     state: ReservationState
     amount: Money
     reason_codes: tuple[ReasonCode, ...] = ()

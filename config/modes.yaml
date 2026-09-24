@@ -1,0 +1,88 @@
+# Four-mode operating policy and capital configuration (Phase P1 / spec §4, §10.1).
+# Denominator for risk fractions is each mode's own reference capital.
+
+schema_version: "1"
+
+modes:
+  M1_CAS:
+    mode_id: M1_CAS
+    mandate: "Small overall capital allocation; highest allowable percentage risk; frequent qualifying attempts; asymmetric upside from moderately OTM long options."
+    capital_share: "0.10"
+    per_trade_loss_cap_fraction: "0.05"
+    max_open_loss_cap_fraction: "0.10"
+    daily_budget_cap_fraction: "0.15"
+    allowed_families:
+      - long_call
+      - long_put
+    holding_style: "INTRADAY"
+    window_start_ist: "09:15"
+    window_end_ist: "15:30"
+    expiry_rule: "current_or_later_exclude_0dte"
+    review_cadence:
+      - "event_driven"
+
+  M2_DIRECTIONAL:
+    mode_id: M2_DIRECTIONAL
+    mandate: "Highest directional-and-timing conviction single-leg buying with active evaluation every trading day."
+    capital_share: "0.20"
+    per_trade_loss_cap_fraction: "0.03"
+    max_open_loss_cap_fraction: "0.06"
+    daily_budget_cap_fraction: "0.08"
+    allowed_families:
+      - long_call
+      - long_put
+    holding_style: "INTRADAY"
+    window_start_ist: "09:15"
+    window_end_ist: "15:30"
+    expiry_rule: "following_calendar_week_exclude_0_1_dte"
+    review_cadence:
+      - "10:30"
+      - "14:30"
+
+  M3_TACTICAL_POSITIONAL:
+    mode_id: M3_TACTICAL_POSITIONAL
+    mandate: "Tactical positional vertical spreads with defined invalidation and expected resolution over days/weeks."
+    capital_share: "0.30"
+    per_trade_loss_cap_fraction: "0.02"
+    max_open_loss_cap_fraction: "0.04"
+    daily_budget_cap_fraction: "0.05"
+    allowed_families:
+      - bull_call_debit
+      - bear_put_debit
+      - bull_put_credit
+      - bear_call_credit
+    holding_style: "POSITIONAL"
+    window_start_ist: "09:15"
+    window_end_ist: "15:30"
+    expiry_rule: "same_expiry_vertical"
+    review_cadence:
+      - "10:30"
+      - "14:30"
+
+  M4_STRATEGIC_POSITIONAL:
+    mode_id: M4_STRATEGIC_POSITIONAL
+    mandate: "Strategic positional portfolio maintaining qualified longer-running market exposure across vertical spreads and multi-leg structures."
+    capital_share: "0.40"
+    per_trade_loss_cap_fraction: "0.01"
+    max_open_loss_cap_fraction: "0.03"
+    daily_budget_cap_fraction: "0.04"
+    allowed_families:
+      - bull_call_debit
+      - bear_put_debit
+      - bull_put_credit
+      - bear_call_credit
+      - short_iron_condor_defined
+      - short_iron_butterfly_defined
+      - long_call_butterfly
+      - long_put_butterfly
+      - long_straddle
+      - long_strangle
+      - long_call_calendar
+      - long_put_calendar
+    holding_style: "POSITIONAL"
+    window_start_ist: "09:15"
+    window_end_ist: "15:30"
+    expiry_rule: "defined_risk_basket_multi_expiry"
+    review_cadence:
+      - "10:30"
+      - "14:30"

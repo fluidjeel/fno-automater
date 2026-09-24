@@ -31,7 +31,7 @@ from trading.domain.contracts.base import (
 )
 from trading.domain.contracts.common import ContractRef
 from trading.domain.contracts.identification import SetupFeatures
-from trading.domain.enums import AssetClass, ExecutionMode, Side
+from trading.domain.enums import AssetClass, ExecutionMode, ModeId, Side
 from trading.domain.primitives import Money, Percent
 
 __all__ = [
@@ -142,6 +142,8 @@ class TradeIntent(VersionedModel):
     promoted_config_version: NonEmptyStr
     promoted_proposal_id: NonEmptyStr | None = None
     supersedes_intent_id: NonEmptyStr | None = None
+    mode_id: ModeId | None = None
+    family_id: NonEmptyStr | None = None
     underlying: NonEmptyStr
     asset_class: AssetClass
     legs: tuple[IntentLeg, ...]

@@ -22,6 +22,8 @@ from trading.domain.ids import IdFactory
 from trading.domain.primitives import Price
 from trading.domain.state import TRADE_MACHINE, IllegalTransitionError
 from trading.risk.reservation import CapitalReservationService
+from trading.risk.sizing.credit_spread import is_credit_spread
+from trading.risk.sizing.debit_spread import is_debit_spread
 from trading.risk.sizing.iron_condor import is_iron_condor
 from trading.trade.exits import (
     ExitEngine,
@@ -343,6 +345,11 @@ class TradeManager:
         pending = self._pending.get(trade_id)
         entry_price = _planned_entry_price(pending, intent)
         watched = monitor_leg(intent)
+        opening_qty = (
+            pending.plan.orders[0].command.quantity_contracts
+            if pending is not None and len(pending.plan.orders) > 0
+            else 1
+        )
         return PositionState(
             trade_id=trade_id,
             intent_id=intent.intent_id,
@@ -366,8 +373,10 @@ class TradeManager:
                 policy_id=self._ids.new_id("EXIT-POL"),
                 entry_price=entry_price,
                 initialized_at=now,
+                quantity_contracts=opening_qty,
             ),
             protective_order_ids=(),
+            mode_id=intent.mode_id,
             as_of=now,
         )
 
@@ -398,6 +407,7 @@ class TradeManager:
             policy_id=self._ids.new_id("EXIT-POL"),
             entry_price=entry_price,
             initialized_at=now,
+            quantity_contracts=event.filled_quantity,
         )
         base = position or self._create_opening(trade_id, intent, now=now)
         updated = base.model_copy(
@@ -522,7 +532,12 @@ def _planned_entry_price(
 
 
 def _exit_scope(intent: TradeIntent) -> ExitScope:
-    if is_iron_condor(intent):
+    if (
+        is_iron_condor(intent)
+        or is_debit_spread(intent)
+        or is_credit_spread(intent)
+        or len(intent.legs) > 1
+    ):
         return ExitScope.STRATEGY_PNL
     return ExitScope.LEG_PRICE
 

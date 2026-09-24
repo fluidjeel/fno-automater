@@ -85,9 +85,7 @@ def evaluate_condition(
     return ConditionEvaluation(
         condition_id=condition.condition_id,
         metric=condition.metric,
-        status=(
-            InvalidationStatus.TRIGGERED if fired else InvalidationStatus.HOLDING
-        ),
+        status=(InvalidationStatus.TRIGGERED if fired else InvalidationStatus.HOLDING),
         triggered=fired,
     )
 

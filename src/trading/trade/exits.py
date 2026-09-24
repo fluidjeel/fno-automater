@@ -71,10 +71,11 @@ class ExitEngine:
         if position.state is not TradeState.OPEN:
             return _no_exit(position.exit_policy)
         scope = position.exit_policy.scope
-        if scope is ExitScope.STRATEGY_PNL:
+        if scope in {ExitScope.STRATEGY_PNL, ExitScope.SPREAD_VALUE}:
             return self._evaluate_strategy_pnl(
                 position,
                 intent,
+                feature=feature,
                 leg_snapshots=leg_snapshots,
                 now=now,
             )
@@ -132,21 +133,64 @@ class ExitEngine:
             )
         return _no_exit(position.exit_policy)
 
+    def _evaluate_missing_snapshots(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        feature: FeatureSnapshot | None,
+    ) -> ExitEvaluation:
+        policy = position.exit_policy
+        if policy.stop_price is not None and feature is not None:
+            leg = _price_exit_leg(position, intent)
+            monitor = None if leg is None else _monitor_price(feature, leg.side)
+            if (
+                leg is not None
+                and monitor is not None
+                and _stop_hit(leg.side, monitor, policy.stop_price)
+            ):
+                return ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.OK,
+                    detail="auxiliary leg stop price breached",
+                    updated_policy=policy,
+                )
+        return ExitEvaluation(
+            kind=ExitKind.NONE,
+            reason_code=ReasonCode.PRICE_UNAVAILABLE,
+            detail="strategy P&L exit requires leg snapshots",
+        )
+
+    @staticmethod
+    def _determine_strategy_exit(
+        position: PositionState,
+        intent: TradeIntent,
+        pnl: Money,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+        now: datetime,
+    ) -> tuple[ExitKind, str]:
+        policy = position.exit_policy
+        if policy.time_exit is not None and now >= policy.time_exit:
+            return ExitKind.TIME, "scheduled time exit reached"
+        if policy.pnl_stop is not None and pnl <= policy.pnl_stop:
+            return ExitKind.STOP, "strategy P&L stop breached"
+        if policy.pnl_target is not None and pnl >= policy.pnl_target:
+            return ExitKind.TARGET, "strategy P&L target reached"
+        if ExitEngine._auxiliary_stop_breached(position, intent, policy, leg_snapshots):
+            return ExitKind.STOP, "auxiliary leg stop price breached"
+        return ExitKind.NONE, "no exit condition met"
+
     def _evaluate_strategy_pnl(
         self,
         position: PositionState,
         intent: TradeIntent,
         *,
+        feature: FeatureSnapshot | None = None,
         leg_snapshots: Mapping[str, FeatureSnapshot] | None,
         now: datetime,
     ) -> ExitEvaluation:
         policy = position.exit_policy
         if leg_snapshots is None:
-            return ExitEvaluation(
-                kind=ExitKind.NONE,
-                reason_code=ReasonCode.PRICE_UNAVAILABLE,
-                detail="strategy P&L exit requires leg snapshots",
-            )
+            return self._evaluate_missing_snapshots(position, intent, feature)
         pnl = strategy_unrealized_pnl(position, intent, leg_snapshots)
         if pnl is None:
             return ExitEvaluation(
@@ -154,25 +198,40 @@ class ExitEngine:
                 reason_code=ReasonCode.PRICE_UNAVAILABLE,
                 detail="strategy P&L mark unavailable",
             )
-        exit_kind = ExitKind.NONE
-        detail = "no exit condition met"
-        if policy.time_exit is not None and now >= policy.time_exit:
-            exit_kind = ExitKind.TIME
-            detail = "scheduled time exit reached"
-        elif policy.pnl_stop is not None and pnl <= policy.pnl_stop:
-            exit_kind = ExitKind.STOP
-            detail = "strategy P&L stop breached"
-        elif policy.pnl_target is not None and pnl >= policy.pnl_target:
-            exit_kind = ExitKind.TARGET
-            detail = "strategy P&L target reached"
-        if exit_kind is not ExitKind.NONE:
+        kind, detail = self._determine_strategy_exit(
+            position, intent, pnl, leg_snapshots, now
+        )
+        if kind is not ExitKind.NONE:
             return ExitEvaluation(
-                kind=exit_kind,
+                kind=kind,
                 reason_code=ReasonCode.OK,
                 detail=detail,
                 updated_policy=policy,
             )
         return _no_exit(policy)
+
+    @staticmethod
+    def _auxiliary_stop_breached(
+        position: PositionState,
+        intent: TradeIntent,
+        policy: ExitPolicy,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+    ) -> bool:
+        if policy.stop_price is None:
+            return False
+        leg = _price_exit_leg(position, intent)
+        if leg is None:
+            return False
+        intent_leg = next(
+            (item for item in intent.legs if item.leg_id == leg.leg_id), None
+        )
+        if intent_leg is None:
+            return False
+        leg_snap = _snapshot_for_leg(intent_leg, leg_snapshots)
+        if leg_snap is None:
+            return False
+        monitor = _monitor_price(leg_snap, leg.side)
+        return monitor is not None and _stop_hit(leg.side, monitor, policy.stop_price)
 
 
 def build_exit_policy(
@@ -211,7 +270,7 @@ def build_exit_policy(
         target_price = Price.snap(target_value, tick)
     pnl_stop: Money | None = None
     pnl_target: Money | None = None
-    if scope is ExitScope.STRATEGY_PNL:
+    if scope in {ExitScope.STRATEGY_PNL, ExitScope.SPREAD_VALUE}:
         currency = (
             entry_strategy_pnl.currency
             if entry_strategy_pnl is not None
@@ -227,8 +286,6 @@ def build_exit_policy(
                 * quantity_contracts
             ).quantize(Decimal("0.01"))
             pnl_target = Money(target_amount, currency)
-        stop_price = None
-        target_price = None
     return ExitPolicy(
         policy_id=policy_id,
         trade_id=trade_id,
@@ -288,6 +345,22 @@ def _price_exit_leg(
     return None
 
 
+def _snapshot_for_leg(
+    intent_leg: IntentLeg,
+    leg_snapshots: Mapping[str, FeatureSnapshot],
+) -> FeatureSnapshot | None:
+    """Find a feature snapshot for a leg by leg_id, symbol, or contract symbol."""
+    if intent_leg.leg_id in leg_snapshots:
+        return leg_snapshots[intent_leg.leg_id]
+    symbol = intent_leg.contract.symbol
+    if symbol in leg_snapshots:
+        return leg_snapshots[symbol]
+    for snap in leg_snapshots.values():
+        if snap.contract.symbol == symbol:
+            return snap
+    return None
+
+
 def strategy_unrealized_pnl(
     position: PositionState,
     intent: TradeIntent,
@@ -300,7 +373,7 @@ def strategy_unrealized_pnl(
     total = Decimal(0)
     for intent_leg in intent.legs:
         position_leg = leg_by_id.get(intent_leg.leg_id)
-        snapshot = leg_snapshots.get(intent_leg.leg_id)
+        snapshot = _snapshot_for_leg(intent_leg, leg_snapshots)
         if position_leg is None or snapshot is None:
             return None
         leg_pnl = _leg_unrealized_pnl(

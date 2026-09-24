@@ -83,9 +83,9 @@ def _request(**overrides: object) -> PaperStrategyRequest:
         snapshot_id="SNAP-OPT",
         contract=f.option_contract(),
         market=f.quote(
-            bid=f.price("91.95"),
-            ask=f.price("92.00"),
-            last=f.price("92.00"),
+            bid=f.price("49.95"),
+            ask=f.price("50.00"),
+            last=f.price("50.00"),
             bid_size=300,
             ask_size=300,
         ),
@@ -287,7 +287,22 @@ class TestPaperCycle:
             receive_time=cas_now - timedelta(milliseconds=500),
             calculation_time=cas_now - timedelta(milliseconds=200),
         )
-        option = _request().candidates[0].model_copy(update={"times": times})
+        option = (
+            _request()
+            .candidates[0]
+            .model_copy(
+                update={
+                    "times": times,
+                    "market": f.quote(
+                        bid=f.price("29.95"),
+                        ask=f.price("30.00"),
+                        last=f.price("30.00"),
+                        bid_size=300,
+                        ask_size=300,
+                    ),
+                }
+            )
+        )
         underlying = f.snapshot(
             snapshot_id="SNAP-CAS",
             contract=f.index_contract(),

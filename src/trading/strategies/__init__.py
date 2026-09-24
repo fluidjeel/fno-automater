@@ -19,19 +19,37 @@ from trading.strategies.commodity_futures import CommodityFuturesStrategy
 from trading.strategies.debit_spread import DebitSpreadStrategy
 from trading.strategies.iron_condor import IronCondorStrategy
 from trading.strategies.long_option import LongOptionStrategy
+from trading.strategies.m4_broad_basket import (
+    LongCallButterflyStrategy,
+    LongPutButterflyStrategy,
+    LongStraddleStrategy,
+    LongStrangleStrategy,
+    ShortIronButterflyStrategy,
+)
 from trading.strategies.macro import MacroAssessment, MacroBias
-from trading.strategies.multileg_options import MultiLegOptionsStrategy
+from trading.strategies.multileg_options import (
+    BearCallCreditStrategy,
+    BullPutCreditStrategy,
+    MultiLegOptionsStrategy,
+)
 
 __all__ = [
+    "BearCallCreditStrategy",
+    "BullPutCreditStrategy",
     "CasMicrostructureStrategy",
     "CommodityFuturesStrategy",
     "DebitSpreadStrategy",
     "IronCondorStrategy",
+    "LongCallButterflyStrategy",
     "LongOptionStrategy",
+    "LongPutButterflyStrategy",
+    "LongStraddleStrategy",
+    "LongStrangleStrategy",
     "MacroAssessment",
     "MacroBias",
     "MultiLegOptionsStrategy",
     "Rejection",
+    "ShortIronButterflyStrategy",
     "Strategy",
     "StrategyContext",
     "StrategyDecision",

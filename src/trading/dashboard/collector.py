@@ -1,4 +1,4 @@
-# ruff: noqa: E501
+# ruff: noqa: E501, PLR0917
 """Build a disposable, read-only operations view from durable evidence.
 
 The dashboard never imports a broker adapter and never mutates trading state.
@@ -22,18 +22,27 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
+from trading.portfolio.risk_journal import PortfolioRiskJournal
+from trading.runtime.family_status import (
+    build_family_operator_view,
+    build_four_mode_allocations,
+)
+from trading.runtime.paper_session import load_paper_session_config
+
 _IST = ZoneInfo("Asia/Kolkata")
 _SATURDAY = 5
 _FRESH_SECONDS = 120
 _DEGRADED_SECONDS = 300
 _SENSITIVE_FRAGMENTS = ("token", "secret", "password", "credential", "auth_code")
 _UNITS = (
+    "fno-automated.service",
     "fno-data-pipeline.timer",
     "fno-data-pipeline.service",
     "fno-data-tick.service",
     "fno-fyers-refresh.timer",
     "fno-fyers-refresh.service",
     "fno-paper-session.service",
+    "fno-paper-watchdog.timer",
 )
 
 
@@ -175,6 +184,8 @@ def _db_snapshot(path: Path) -> dict[str, Any]:
         "last_reconciliation_ref": None,
         "entry_freeze": None,
         "idempotency_key_count": 0,
+        "agent_decisions": [],
+        "latest_cycle": None,
     }
     if not path.is_file():
         return empty
@@ -200,11 +211,17 @@ def _db_snapshot(path: Path) -> dict[str, Any]:
                 payload = _redact(json.loads(str(row["payload"])))
             except json.JSONDecodeError:
                 payload = {"parse_error": True}
+            event_type = str(row["event_type"])
+            action = _first(payload, "action", "state", "status", "system_state")
+            if event_type == "cycle_evidence":
+                route = payload.get("route_decision") or {}
+                if isinstance(route, dict):
+                    action = route.get("paper_winner") or action
             events.append(
                 {
                     "sequence": int(row["sequence"]),
                     "event_id": str(row["event_id"]),
-                    "type": str(row["event_type"]),
+                    "type": event_type,
                     "recorded_at": str(row["recorded_at"]),
                     "idempotency_key": row["idempotency_key"],
                     "trace_id": _first(
@@ -214,8 +231,9 @@ def _db_snapshot(path: Path) -> dict[str, Any]:
                         "decision_id",
                         "order_id",
                         "reservation_id",
+                        "cycle_id",
                     ),
-                    "action": _first(payload, "action", "state", "status"),
+                    "action": action,
                     "reasons": payload.get("reason_codes", []),
                     "payload": payload,
                 }
@@ -253,11 +271,41 @@ def _db_snapshot(path: Path) -> dict[str, Any]:
             "SELECT COUNT(*) count FROM idempotency_keys"
         ).fetchone()
         empty["idempotency_key_count"] = int(key_row["count"]) if key_row else 0
+        empty["agent_decisions"] = _agent_decisions(connection)
+        empty["latest_cycle"] = _latest_cycle_evidence(events)
     except (sqlite3.Error, json.JSONDecodeError):
         empty["read_error"] = "Trading evidence store could not be read"
     finally:
         connection.close()
     return empty
+
+
+def _agent_decisions(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    try:
+        rows = connection.execute(
+            "SELECT payload FROM agent_decisions ORDER BY created_at DESC LIMIT 50"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    decisions: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = _redact(json.loads(str(row["payload"])))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            decisions.append(payload)
+    return decisions
+
+
+def _latest_cycle_evidence(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in events:
+        if event.get("type") != "cycle_evidence":
+            continue
+        payload = event.get("payload", {})
+        if isinstance(payload, dict):
+            return payload
+    return None
 
 
 def _json_rows(connection: sqlite3.Connection, sql: str) -> list[dict[str, Any]]:
@@ -312,6 +360,116 @@ def _systemd(root: Path) -> list[dict[str, Any]]:
             {"name": unit, "status": status, "detail": f"{active}/{sub}", **values}
         )
     return result
+
+
+def _daemon_heartbeat(root: Path) -> dict[str, Any]:
+    return _read_json(root / "data" / "daemon_heartbeat.json")
+
+
+def _session_heartbeat(root: Path, session: dict[str, Any]) -> dict[str, Any]:
+    path = root / str(
+        session.get("session_heartbeat_path", "data/paper/session_heartbeat.json")
+    )
+    return _read_json(path)
+
+
+def _supervision_view(
+    *,
+    services: list[dict[str, Any]],
+    daemon: dict[str, Any],
+    session_hb: dict[str, Any],
+    now: datetime,
+) -> dict[str, Any]:
+    service_map = {item["name"]: item for item in services}
+    daemon_service = service_map.get("fno-automated.service", {})
+    paper_service = service_map.get("fno-paper-session.service", {})
+    watchdog = service_map.get("fno-paper-watchdog.timer", {})
+    daemon_age = _heartbeat_age_seconds(daemon.get("timestamp"), now)
+    session_age = _heartbeat_age_seconds(session_hb.get("timestamp"), now)
+    return {
+        "daemon": {
+            "phase": daemon.get("phase"),
+            "timestamp": daemon.get("timestamp"),
+            "local_time": daemon.get("local_time"),
+            "age_seconds": daemon_age,
+            "state": _heartbeat_state(daemon_age, stale_after=180),
+            "service_status": daemon_service.get("status", "UNOBSERVED"),
+        },
+        "paper_session": {
+            "timestamp": session_hb.get("timestamp"),
+            "local_time": session_hb.get("local_time"),
+            "age_seconds": session_age,
+            "state": _heartbeat_state(session_age, stale_after=180),
+            "service_status": paper_service.get("status", "UNOBSERVED"),
+            "cycle_count": session_hb.get("cycle_count"),
+            "route_winner": session_hb.get("route_winner"),
+            "open_positions": session_hb.get("open_positions"),
+            "system_state": session_hb.get("system_state"),
+            "entries_blocked": session_hb.get("entries_blocked"),
+        },
+        "watchdog": {
+            "service_status": watchdog.get("status", "UNOBSERVED"),
+            "detail": watchdog.get("detail"),
+        },
+    }
+
+
+def _heartbeat_age_seconds(timestamp: str | None, now: datetime) -> int | None:
+    if not timestamp:
+        return None
+    try:
+        observed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=UTC)
+    return max(0, int((now.astimezone(UTC) - observed.astimezone(UTC)).total_seconds()))
+
+
+def _heartbeat_state(age_seconds: int | None, *, stale_after: int) -> str:
+    if age_seconds is None:
+        return "NO_EVIDENCE"
+    if age_seconds <= stale_after:
+        return "FRESH"
+    if age_seconds <= stale_after * 3:
+        return "STALE"
+    return "MISSING"
+
+
+def _cohort_packages(root: Path, session: dict[str, Any]) -> list[dict[str, Any]]:
+    cohort_dir = root / str(session.get("cohort_dir", "data/paper/cohorts"))
+    if not cohort_dir.is_dir():
+        return []
+    packages: list[dict[str, Any]] = []
+    for path in sorted(cohort_dir.glob("*.json"), reverse=True)[:10]:
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(loaded, dict):
+            continue
+        experiment = loaded.get("experiment", {})
+        signals = loaded.get("signals", [])
+        packages.append(
+            {
+                "file": path.name,
+                "experiment_id": experiment.get("experiment_id"),
+                "strategy_id": experiment.get("strategy_id"),
+                "execution_mode": experiment.get("execution_mode"),
+                "observation_start": loaded.get("observation_start"),
+                "observation_end": loaded.get("observation_end"),
+                "signal_count": len(signals) if isinstance(signals, list) else 0,
+                "declined_count": sum(
+                    1
+                    for item in signals
+                    if isinstance(item, dict) and item.get("declined")
+                )
+                if isinstance(signals, list)
+                else 0,
+                "package": _redact(loaded),
+            }
+        )
+    return packages
 
 
 def _agent_runs(root: Path) -> list[dict[str, Any]]:
@@ -414,6 +572,40 @@ def _strategy_rows(session: dict[str, Any], db: dict[str, Any]) -> list[dict[str
     ]
 
 
+def _portfolio_risk_view(root: Path, session: dict[str, Any]) -> dict[str, Any]:
+    journal_root = root / str(
+        session.get("portfolio_risk_dir", "data/paper/portfolio_risk")
+    )
+    if not journal_root.is_dir():
+        return {"state": "MISSING", "latest_at": None}
+    latest = PortfolioRiskJournal(journal_root).read_latest()
+    if latest is None:
+        return {"state": "NO_EVIDENCE", "latest_at": None}
+    exposure = latest.exposure
+    stress = latest.stress
+    dumped = latest.model_dump(mode="json")
+    return {
+        "state": "OBSERVED",
+        "latest_at": _iso(latest.as_of),
+        "portfolio_snapshot_id": latest.portfolio_snapshot_id,
+        "open_position_count": latest.open_position_count,
+        "margin_used": dumped["margin_used"],
+        "margin_available": dumped["margin_available"],
+        "margin_utilisation_fraction": str(latest.margin_utilisation_fraction),
+        "net_delta": exposure.get("net_delta"),
+        "net_vega": exposure.get("net_vega"),
+        "net_theta": exposure.get("net_theta"),
+        "net_gamma": exposure.get("net_gamma"),
+        "worst_case": stress.get("worst_case"),
+        "worst_case_pct_equity": stress.get("worst_case_pct_equity"),
+        "tail_budget_fraction": stress.get("tail_budget_fraction"),
+        "breached_budget": stress.get("breached_budget"),
+        "scenario_count": len(
+            results if isinstance(results := stress.get("results"), list) else []
+        ),
+    }
+
+
 def _risk_view(
     base: dict[str, Any], policy: dict[str, Any], db: dict[str, Any]
 ) -> dict[str, Any]:
@@ -468,10 +660,44 @@ def _components(
     agent_runs: list[dict[str, Any]],
     heartbeat: dict[str, Any],
     news: dict[str, Any],
+    supervision: dict[str, Any],
 ) -> list[dict[str, Any]]:
     service_map = {item["name"]: item for item in services}
     event_counts = db["event_counts"]
+    daemon = supervision.get("daemon", {})
+    session_hb = supervision.get("paper_session", {})
     layers = [
+        {
+            "id": "L0",
+            "name": "Supervision & autopilot",
+            "owner": "operator unattended",
+            "components": [
+                _component(
+                    "Supervisor daemon",
+                    daemon.get("state", "NO_EVIDENCE"),
+                    "daemon heartbeat + systemd",
+                    daemon.get("phase") or daemon.get("service_status"),
+                ),
+                _component(
+                    "Paper session loop",
+                    session_hb.get("state", "NO_EVIDENCE"),
+                    "session heartbeat + systemd",
+                    session_hb.get("system_state") or session_hb.get("service_status"),
+                ),
+                _component(
+                    "Paper watchdog timer",
+                    _service_status(service_map.get("fno-paper-watchdog.timer")),
+                    "systemd timer",
+                    supervision.get("watchdog", {}).get("detail"),
+                ),
+                _component(
+                    "Cycle evidence journal",
+                    "OBSERVED" if event_counts.get("cycle_evidence") else "NO_EVIDENCE",
+                    "cycle_evidence events",
+                    str(event_counts.get("cycle_evidence", 0)),
+                ),
+            ],
+        },
         {
             "id": "L1",
             "name": "Data & foundations",
@@ -625,6 +851,37 @@ def _heartbeat_status(heartbeat: dict[str, Any]) -> str:
     return "OBSERVED" if heartbeat.get("monitor_active") else "INACTIVE"
 
 
+def _protection_ws_finding(
+    heartbeat: dict[str, Any],
+    *,
+    market_phase: str,
+) -> dict[str, str] | None:
+    if not heartbeat or heartbeat.get("ws_connected"):
+        return None
+    open_positions = int(heartbeat.get("open_positions", 0))
+    if open_positions > 0:
+        severity = "HIGH"
+        detail = "Exposure exists while the real-time protection channel is down."
+    elif market_phase == "LIVE":
+        severity = "MEDIUM"
+        detail = (
+            "Market is live but the protection WebSocket is disconnected; "
+            "reconnect before taking exposure."
+        )
+    else:
+        severity = "INFO"
+        detail = (
+            "No open position is reported and the market is closed; verify "
+            "reconnection before the next live session."
+        )
+    return {
+        "severity": severity,
+        "area": "Protection",
+        "title": "Protection heartbeat reports WebSocket disconnected",
+        "detail": detail,
+    }
+
+
 def _findings(
     *,
     files: dict[str, Any],
@@ -633,19 +890,52 @@ def _findings(
     agent: dict[str, Any],
     evaluation: dict[str, Any],
     heartbeat: dict[str, Any],
+    portfolio_risk: dict[str, Any],
+    supervision: dict[str, Any],
     market_phase: str,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     paper_service = next(
         (item for item in services if item["name"] == "fno-paper-session.service"), {}
     )
-    if paper_service.get("status") in {"NOT_INSTALLED", "UNOBSERVED"}:
+    session_hb = supervision.get("paper_session", {})
+    if (
+        paper_service.get("status") in {"NOT_INSTALLED", "UNOBSERVED"}
+        and session_hb.get("state") == "NO_EVIDENCE"
+    ):
         findings.append(
             {
                 "severity": "HIGH",
                 "area": "Runtime",
                 "title": "Paper session is not independently supervised",
-                "detail": "No fno-paper-session.service evidence exists. A terminal disconnect or process crash can stop strategy, protection and journaling loops.",
+                "detail": "No fno-paper-session.service or session heartbeat evidence exists. A terminal disconnect or process crash can stop strategy, protection and journaling loops.",
+            }
+        )
+    daemon_hb = supervision.get("daemon", {})
+    if daemon_hb.get("state") in {"STALE", "MISSING", "NO_EVIDENCE"}:
+        findings.append(
+            {
+                "severity": "HIGH"
+                if market_phase in {"LIVE", "READINESS"}
+                else "MEDIUM",
+                "area": "Runtime",
+                "title": "Supervisor daemon heartbeat is stale or missing",
+                "detail": (
+                    f"Latest daemon evidence: {daemon_hb.get('timestamp') or 'none'}. "
+                    "fno-automated.service may be down or not writing heartbeats."
+                ),
+            }
+        )
+    if session_hb.get("state") in {"STALE", "MISSING"} and market_phase == "LIVE":
+        findings.append(
+            {
+                "severity": "HIGH",
+                "area": "Runtime",
+                "title": "Paper session heartbeat is stale during the live session",
+                "detail": (
+                    f"Latest session tick: {session_hb.get('timestamp') or 'none'}. "
+                    "Strategy, protection and journaling loops may have stopped."
+                ),
             }
         )
     for service in services:
@@ -662,20 +952,9 @@ def _findings(
                 ),
             }
         )
-    if heartbeat and not heartbeat.get("ws_connected"):
-        exposed = market_phase == "LIVE" or int(heartbeat.get("open_positions", 0)) > 0
-        findings.append(
-            {
-                "severity": "HIGH" if exposed else "INFO",
-                "area": "Protection",
-                "title": "Protection heartbeat reports WebSocket disconnected",
-                "detail": (
-                    "Exposure exists while the real-time protection channel is down."
-                    if exposed
-                    else "No open position is reported and the market is closed; verify reconnection before the next live session."
-                ),
-            }
-        )
+    ws_finding = _protection_ws_finding(heartbeat, market_phase=market_phase)
+    if ws_finding is not None:
+        findings.append(ws_finding)
     if not db["events"]:
         findings.append(
             {
@@ -703,14 +982,18 @@ def _findings(
                 "detail": f"Latest observed artifact: {files.get('latest_at') or 'none'}. New entries should remain blocked.",
             }
         )
-    findings.extend(
-        [
+    backlog: list[dict[str, str]] = []
+    if portfolio_risk.get("state") not in {"OBSERVED"}:
+        backlog.append(
             {
                 "severity": "HIGH",
                 "area": "Risk",
                 "title": "Portfolio Greeks and scenario P&L are not durably journaled",
                 "detail": "The code checks per-trade structures, but the evidence store does not persist a portfolio Greek surface, correlated shock grid, or margin headroom time series.",
-            },
+            }
+        )
+    backlog.extend(
+        [
             {
                 "severity": "MEDIUM",
                 "area": "Execution",
@@ -731,6 +1014,7 @@ def _findings(
             },
         ]
     )
+    findings.extend(backlog)
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "INFO": 3}
     return sorted(findings, key=lambda item: order[item["severity"]])
 
@@ -785,7 +1069,17 @@ def build_dashboard_snapshot(
     )
     services = _systemd(root)
     heartbeat = _read_json(root / "data" / "paper" / "protection_heartbeat.json")
+    daemon_hb = _daemon_heartbeat(root)
+    session_hb = _session_heartbeat(root, session)
+    supervision = _supervision_view(
+        services=services,
+        daemon=daemon_hb,
+        session_hb=session_hb,
+        now=now,
+    )
+    portfolio_risk = _portfolio_risk_view(root, session)
     agent_runs = _agent_runs(root)
+    cohorts = _cohort_packages(root, session)
     strategies = _strategy_rows(session, db)
     journal = _journal(db["positions"])
     git_revision = _run(["git", "rev-parse", "--short", "HEAD"], cwd=root)
@@ -799,6 +1093,8 @@ def build_dashboard_snapshot(
         agent=agent,
         evaluation=evaluation,
         heartbeat=heartbeat,
+        portfolio_risk=portfolio_risk,
+        supervision=supervision,
         market_phase=phase["phase"],
     )
     if not git_revision:
@@ -818,6 +1114,15 @@ def build_dashboard_snapshot(
         for item in journal
         if item.get("state") not in {"CLOSED", "CANCELLED", "REJECTED"}
     )
+    family_rows: list[dict[str, Any]] = []
+    try:
+        session_cfg = load_paper_session_config(root / "config" / "paper_session.yaml")
+        family_rows = [
+            row.model_dump(mode="json")
+            for row in build_family_operator_view(session_cfg)
+        ]
+    except (ValueError, OSError):
+        family_rows = []
     return {
         "schema_version": "1",
         "generated_at": _iso(now),
@@ -849,7 +1154,9 @@ def build_dashboard_snapshot(
             agent_runs=agent_runs,
             heartbeat=heartbeat,
             news=news,
+            supervision=supervision,
         ),
+        "supervision": supervision,
         "services": services,
         "data_pipeline": {
             **files,
@@ -870,6 +1177,7 @@ def build_dashboard_snapshot(
             "positions": db["positions"],
             "protections": db["protections"],
             "heartbeat": heartbeat,
+            "risk": portfolio_risk,
         },
         "execution": {
             "event_counts": db["event_counts"],
@@ -899,12 +1207,28 @@ def build_dashboard_snapshot(
             "max_iterations": agent.get("max_iterations"),
             "monthly_budget_inr": agent.get("monthly_budget_inr"),
             "runs": agent_runs,
+            "decisions": db["agent_decisions"],
             "authority": "ADVISORY_ONLY",
         },
+        "cohorts": cohorts,
         "journal": journal,
         "trace": db["events"],
+        "latest_cycle": db["latest_cycle"],
+        "four_mode": {
+            "allocations": list(build_four_mode_allocations()),
+            "families": family_rows,
+            "funnel": (db["latest_cycle"] or {}).get("funnel"),
+        },
         "findings": findings,
-        "coverage": _coverage(files, db, services, heartbeat, agent),
+        "coverage": _coverage(
+            files,
+            db,
+            services,
+            heartbeat,
+            agent,
+            portfolio_risk,
+            supervision,
+        ),
     }
 
 
@@ -914,9 +1238,20 @@ def _coverage(
     services: list[dict[str, Any]],
     heartbeat: dict[str, Any],
     agent: dict[str, Any],
+    portfolio_risk: dict[str, Any],
+    supervision: dict[str, Any],
 ) -> list[dict[str, str]]:
     service_map = {item["name"]: item for item in services}
+    session_hb = supervision.get("paper_session", {})
+    daemon_hb = supervision.get("daemon", {})
     return [
+        {
+            "area": "Supervisor daemon",
+            "state": "COVERED"
+            if daemon_hb.get("state") == "FRESH"
+            else daemon_hb.get("state", "MISSING"),
+            "evidence": daemon_hb.get("timestamp") or "No daemon heartbeat",
+        },
         {
             "area": "Host/process health",
             "state": "PARTIAL",
@@ -929,11 +1264,23 @@ def _coverage(
         },
         {
             "area": "Paper session liveness",
-            "state": "MISSING"
-            if service_map.get("fno-paper-session.service", {}).get("status")
-            in {"NOT_INSTALLED", "UNOBSERVED"}
-            else "COVERED",
-            "evidence": "No dedicated supervised unit",
+            "state": "COVERED"
+            if session_hb.get("state") == "FRESH"
+            else (
+                "PARTIAL"
+                if service_map.get("fno-paper-session.service", {}).get("status")
+                not in {"NOT_INSTALLED", "UNOBSERVED"}
+                else session_hb.get("state", "MISSING")
+            ),
+            "evidence": session_hb.get("timestamp")
+            or service_map.get("fno-paper-session.service", {}).get("status", "none"),
+        },
+        {
+            "area": "Identification cycle trace",
+            "state": "COVERED"
+            if db["event_counts"].get("cycle_evidence")
+            else "NO_EVIDENCE",
+            "evidence": f"{db['event_counts'].get('cycle_evidence', 0)} cycle events",
         },
         {
             "area": "Risk decision lineage",
@@ -961,8 +1308,11 @@ def _coverage(
         },
         {
             "area": "Portfolio Greeks/scenarios",
-            "state": "MISSING",
-            "evidence": "No durable aggregate Greek or shock snapshots",
+            "state": "COVERED"
+            if portfolio_risk.get("state") == "OBSERVED"
+            else portfolio_risk.get("state", "MISSING"),
+            "evidence": portfolio_risk.get("latest_at")
+            or "No durable aggregate Greek or shock snapshots",
         },
         {
             "area": "Execution latency",

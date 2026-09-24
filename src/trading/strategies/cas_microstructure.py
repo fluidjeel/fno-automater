@@ -30,7 +30,14 @@ from trading.domain.contracts import (
     IntentLeg,
     TradeIntent,
 )
-from trading.domain.enums import InstrumentKind, OptionType, ReasonCode, Side
+from trading.domain.enums import (
+    FamilyId,
+    InstrumentKind,
+    ModeId,
+    OptionType,
+    ReasonCode,
+    Side,
+)
 from trading.domain.primitives import Currency, Money, Percent
 from trading.strategies._common import DEFAULT_MACRO_MIN_CONFIDENCE, resolve_direction
 from trading.strategies.base import (
@@ -101,6 +108,35 @@ class CasMicrostructureStrategy:
 
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
+
+    def __init__(
+        self,
+        *,
+        stop_ticks: int = STOP_TICKS,
+        target_ticks: int | None = TARGET_TICKS,
+        trailing_activation_ticks: int | None = None,
+        trailing_distance_ticks: int | None = None,
+    ) -> None:
+        self._stop_ticks = stop_ticks
+        self._target_ticks = target_ticks
+        self._trailing_activation_ticks = trailing_activation_ticks
+        self._trailing_distance_ticks = trailing_distance_ticks
+
+    @property
+    def stop_ticks(self) -> int:
+        return self._stop_ticks
+
+    @property
+    def target_ticks(self) -> int | None:
+        return self._target_ticks
+
+    @property
+    def trailing_activation_ticks(self) -> int | None:
+        return self._trailing_activation_ticks
+
+    @property
+    def trailing_distance_ticks(self) -> int | None:
+        return self._trailing_distance_ticks
 
     def evaluate(self, ctx: StrategyContext) -> StrategyDecision:
         decision = StrategyDecision(
@@ -293,6 +329,12 @@ class CasMicrostructureStrategy:
             promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
+            mode_id=ModeId.M1_CAS,
+            family_id=(
+                FamilyId.long_call.value
+                if option_type is OptionType.CALL
+                else FamilyId.long_put.value
+            ),
             underlying=ctx.underlying.contract.underlying,
             asset_class=ctx.underlying.contract.asset_class,
             legs=(
@@ -312,11 +354,11 @@ class CasMicrostructureStrategy:
                 allow_market_fallback=False,
             ),
             exit_template=ExitTemplate(
-                stop_distance_ticks=STOP_TICKS,
-                target_distance_ticks=TARGET_TICKS,
+                stop_distance_ticks=self._stop_ticks,
+                target_distance_ticks=self._target_ticks,
                 break_even_trigger_ticks=None,
-                trailing_activation_ticks=None,
-                trailing_distance_ticks=None,
+                trailing_activation_ticks=self._trailing_activation_ticks,
+                trailing_distance_ticks=self._trailing_distance_ticks,
                 time_exit=now + timedelta(seconds=CAS_HOLDING_SECONDS),
                 exit_before_expiry_days=EXIT_BEFORE_EXPIRY_DAYS,
                 invalidation_note=INVALIDATION_NOTE,

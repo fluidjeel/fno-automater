@@ -80,9 +80,16 @@ of metric labels and in structured logs/traces.
 ## Monday PAPER session
 
 Human steps that cannot be coded: put Fyers and Telegram credentials in `.env`,
-run `trading data backfill instruments` on Sunday, then start
-`trading paper session` (tmux/systemd) before the open. The process sends the
-Fyers login URL on Telegram; after you paste the redirect it runs unattended.
+run `trading data backfill instruments` on Sunday. `fno-automated.service`
+supervises the PAPER stack: at PRE_MARKET it verifies Fyers auth (Telegram OAuth
+when the token is stale) and starts `fno-data-tick` and `fno-paper-session`.
+After you paste the redirect URL once, the session runs unattended.
+
+Operator Telegram alerts (`A2A_TELEGRAM_BOT_TOKEN`, `A2A_TELEGRAM_CHAT_ID` in
+`.env`) fire when autopilot cannot keep PAPER services running, Fyers auth fails
+at PRE_MARKET, the protection watchdog is stale with open positions, or
+`fno-paper-session.service` exits (`OnFailure` → `fno-paper-alert.service`).
+Repeats for the same fault are suppressed for 15 minutes.
 
 - Config: `--config config/paper.yaml` (default). Do not point this process at
   LIVE `base.yaml`.
@@ -96,4 +103,19 @@ Fyers login URL on Telegram; after you paste the redirect it runs unattended.
 - Net expectancy on the EOD card stays unknown until
   `charges_per_lot.verified_at` is set. That is not required for paper fills.
 
+## Four-mode PAPER routing (2026-09-25)
+
+- Active session config: `config/paper_session.yaml` with `routing_profile: four_mode`.
+- Rollback to legacy one-winner router:
+  `cp config/paper_session_legacy.yaml config/paper_session.yaml` then
+  `sudo systemctl restart fno-paper-session.service`.
+- Four-mode file (reference): `config/paper_session_four_mode.yaml`.
+- Mode policy: `config/modes.yaml`. Per-mode and per-family stances are independent;
+  a broken family can be set `SHADOW` without disabling the whole mode.
+- M1 CAS: `cas_event_driven.enabled` must be `true` and latency gate must pass
+  before `M1_CAS: PAPER`. Polled-loop CAS remains G3-blocked.
+- Pre-open checks on Oracle:
+  `systemctl is-active fno-automated.service fno-data-tick.service`;
+  `uv run pytest tests/test_four_mode_session_integration.py -q`;
+  entry freeze query on `data/paper/trading.sqlite` (no row or `entries_blocked=0`).
 

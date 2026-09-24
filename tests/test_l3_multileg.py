@@ -21,8 +21,10 @@ from trading.domain.contracts import (
     IntentLeg,
     TradeIntent,
 )
-from trading.domain.enums import OptionType, ReasonCode, Side
+from trading.domain.enums import FamilyId, ModeId, OptionType, ReasonCode, Side
 from trading.strategies import (
+    BearCallCreditStrategy,
+    BullPutCreditStrategy,
     MacroAssessment,
     MacroBias,
     MultiLegOptionsStrategy,
@@ -100,23 +102,28 @@ def test_bullish_emits_bull_put_spread() -> None:
     assert intent.setup_code == "BULL_PUT_SPREAD"
     assert [leg.side for leg in intent.legs] == [Side.BUY, Side.SELL]
     assert all(leg.contract.option_type is OptionType.PUT for leg in intent.legs)
+    assert intent.mode_id is ModeId.M3_TACTICAL_POSITIONAL
+    assert intent.family_id == FamilyId.bull_put_credit
 
 
 def test_bearish_emits_bear_call_spread() -> None:
     ctx = _ctx(_bear_call(), underlying=_underlying("23900", "24000"))
     intent = _intent(ctx)
     assert intent.setup_code == "BEAR_CALL_SPREAD"
-    assert [leg.side for leg in intent.legs] == [Side.SELL, Side.BUY]
+    assert [leg.side for leg in intent.legs] == [Side.BUY, Side.SELL]
     assert all(leg.contract.option_type is OptionType.CALL for leg in intent.legs)
+    assert intent.mode_id is ModeId.M3_TACTICAL_POSITIONAL
+    assert intent.family_id == FamilyId.bear_call_credit
 
 
-def test_legs_are_ordered_by_strike() -> None:
+def test_legs_are_ordered_long_protection_first() -> None:
     for ctx in (
         _ctx(_bull_put()),
         _ctx(_bear_call(), underlying=_underlying("23900", "24000")),
     ):
         legs = _intent(ctx).legs
-        assert _strike_of(legs[0]) < _strike_of(legs[1])
+        assert legs[0].side is Side.BUY
+        assert legs[1].side is Side.SELL
 
 
 def test_short_leg_is_never_naked() -> None:
@@ -293,3 +300,49 @@ def test_macro_never_bypasses_a_rejection() -> None:
     decision = MultiLegOptionsStrategy().evaluate(ctx)
     assert not decision.emits_intent
     assert decision.rejections[0].reason is ReasonCode.DATA_STALE
+
+
+def test_bull_put_credit_strategy() -> None:
+    strat = BullPutCreditStrategy()
+    assert strat.strategy_id == "bull_put_credit"
+
+    # Bullish read + puts -> emits intent
+    bull_ctx = _ctx(_bull_put())
+    decision = strat.evaluate(bull_ctx)
+    assert decision.emits_intent
+    assert decision.strategy_id == "bull_put_credit"
+    intent = decision.intents[0]
+    assert intent.strategy_id == "bull_put_credit"
+    assert intent.mode_id is ModeId.M3_TACTICAL_POSITIONAL
+    assert intent.family_id == FamilyId.bull_put_credit
+
+    # Bearish read + puts -> does not emit
+    bear_ctx = _ctx(_bull_put(), underlying=_underlying("23900", "24000"))
+    assert not strat.evaluate(bear_ctx).emits_intent
+
+    # Bullish read + calls -> does not emit
+    call_ctx = _ctx(_bear_call())
+    assert not strat.evaluate(call_ctx).emits_intent
+
+
+def test_bear_call_credit_strategy() -> None:
+    strat = BearCallCreditStrategy()
+    assert strat.strategy_id == "bear_call_credit"
+
+    # Bearish read + calls -> emits intent
+    bear_ctx = _ctx(_bear_call(), underlying=_underlying("23900", "24000"))
+    decision = strat.evaluate(bear_ctx)
+    assert decision.emits_intent
+    assert decision.strategy_id == "bear_call_credit"
+    intent = decision.intents[0]
+    assert intent.strategy_id == "bear_call_credit"
+    assert intent.mode_id is ModeId.M3_TACTICAL_POSITIONAL
+    assert intent.family_id == FamilyId.bear_call_credit
+
+    # Bullish read + calls -> does not emit
+    bull_ctx = _ctx(_bear_call())
+    assert not strat.evaluate(bull_ctx).emits_intent
+
+    # Bearish read + puts -> does not emit
+    put_ctx = _ctx(_bull_put(), underlying=_underlying("23900", "24000"))
+    assert not strat.evaluate(put_ctx).emits_intent

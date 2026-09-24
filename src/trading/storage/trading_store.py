@@ -28,6 +28,7 @@ from trading.domain.contracts import (
     HallucinationEvent,
     ImprovementRecord,
     OrderEvent,
+    PaperCycleEvidence,
     PositionLifecycleRecord,
     ProtectionStateRecord,
     ReconciliationEvent,
@@ -41,6 +42,7 @@ from trading.domain.enums import (
     Exchange,
     ImprovementArea,
     ImprovementStatus,
+    ModeId,
     ReasonCode,
     ReservationState,
     ReviewSlotId,
@@ -72,6 +74,7 @@ class TradingEventType(StrEnum):
     CAPITAL_RESERVATION = "capital_reservation"
     POSITION_LIFECYCLE = "position_lifecycle"
     ENTRY_FREEZE = "entry_freeze"
+    CYCLE_EVIDENCE = "cycle_evidence"
 
 
 _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
@@ -81,6 +84,7 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
     TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
     TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
+    TradingEventType.CYCLE_EVIDENCE: PaperCycleEvidence,
 }
 
 
@@ -270,11 +274,24 @@ class TradingStore:
             )
         stamp = _utc_iso(recorded_at or reservation.updated_at)
         with self._transaction():
+            if reservation.idempotency_key is not None:
+                idem_row = self._conn.execute(
+                    "SELECT payload FROM reservations WHERE idempotency_key = ?",
+                    (reservation.idempotency_key,),
+                ).fetchone()
+                if idem_row is not None:
+                    payload = json.loads(idem_row["payload"])
+                    return CapitalReservation.model_validate(payload)
             existing = self._get_reservation_row(reservation.reservation_id)
             if existing is not None:
                 payload = json.loads(existing["payload"])
                 return CapitalReservation.model_validate(payload)
-            held = self._sum_active_reservation_amount(margin_available.currency)
+            held = self._sum_active_reservation_amount(
+                margin_available.currency,
+                mode_id=reservation.mode_id.value
+                if reservation.mode_id is not None
+                else None,
+            )
             affordable = held + reservation.amount <= margin_available
             if affordable:
                 final = reservation.model_copy(
@@ -406,15 +423,21 @@ class TradingStore:
         with self._transaction():
             self._conn.execute(
                 "INSERT INTO position_lifecycle "
-                "(trade_id, state, payload, updated_at) "
-                "VALUES (?, ?, ?, ?) "
+                "(trade_id, state, mode_id, campaign_id, policy_version, payload, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(trade_id) DO UPDATE SET "
                 "state = excluded.state, "
+                "mode_id = excluded.mode_id, "
+                "campaign_id = excluded.campaign_id, "
+                "policy_version = excluded.policy_version, "
                 "payload = excluded.payload, "
                 "updated_at = excluded.updated_at",
                 (
                     record.trade_id,
                     record.position.state.value,
+                    record.mode_id.value if record.mode_id is not None else None,
+                    record.campaign_id,
+                    record.policy_version,
                     record.model_dump_json(),
                     stamp,
                 ),
@@ -782,8 +805,6 @@ class TradingStore:
             AgentDecision.model_validate(json.loads(row["payload"])) for row in rows
         )
 
-
-
     def insert_hallucination_event(self, event: HallucinationEvent) -> None:
         """Persist a grounding failure. Duplicate event_id fails closed."""
         verified = HallucinationEvent.model_validate(event.model_dump(mode="json"))
@@ -829,7 +850,8 @@ class TradingStore:
         with self._lock:
             rows = self._conn.execute(sql, params).fetchall()
         return tuple(
-            HallucinationEvent.model_validate(json.loads(row["payload"])) for row in rows
+            HallucinationEvent.model_validate(json.loads(row["payload"]))
+            for row in rows
         )
 
     def upsert_improvement_record(self, record: ImprovementRecord) -> ImprovementRecord:
@@ -906,12 +928,24 @@ class TradingStore:
             ImprovementRecord.model_validate(json.loads(row["payload"])) for row in rows
         )
 
-    def get_entry_freeze(self) -> EntryFreezeRecord | None:
-        """Load the persisted entry-freeze latch, if any."""
+    def get_entry_freeze(
+        self, mode_id: ModeId | None = None
+    ) -> EntryFreezeRecord | None:
+        """Load the persisted entry-freeze latch, if any.
+
+        When mode_id is provided, queries mode_entry_freeze for that mode.
+        Otherwise returns the singleton global freeze record.
+        """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT payload FROM entry_freeze WHERE singleton = 1"
-            ).fetchone()
+            if mode_id is not None:
+                row = self._conn.execute(
+                    "SELECT payload FROM mode_entry_freeze WHERE mode_id = ?",
+                    (mode_id.value,),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT payload FROM entry_freeze WHERE singleton = 1"
+                ).fetchone()
         if row is None:
             return None
         return EntryFreezeRecord.model_validate(json.loads(row["payload"]))
@@ -922,13 +956,18 @@ class TradingStore:
         *,
         event_id: str,
         recorded_at: datetime | None = None,
+        mode_id: ModeId | None = None,
     ) -> bool:
         """Persist the freeze latch. Returns True when an audit event was written.
+
+        When mode_id is provided (or record.mode_id is set), upserts into
+        mode_entry_freeze keyed by mode_id instead of the singleton entry_freeze.
 
         Unchanged blocked/reason/detail combinations skip the audit append so
         restart recovery and duplicate freeze calls stay idempotent.
         """
-        existing = self.get_entry_freeze()
+        effective_mode_id = mode_id or record.mode_id
+        existing = self.get_entry_freeze(effective_mode_id)
         unchanged = (
             existing is not None
             and existing.entries_blocked == record.entries_blocked
@@ -937,25 +976,51 @@ class TradingStore:
         )
         stamp = _utc_iso(recorded_at or record.updated_at)
         with self._transaction():
-            self._conn.execute(
-                "INSERT INTO entry_freeze "
-                "(singleton, entries_blocked, reason_code, detail, payload, "
-                "updated_at) "
-                "VALUES (1, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(singleton) DO UPDATE SET "
-                "entries_blocked = excluded.entries_blocked, "
-                "reason_code = excluded.reason_code, "
-                "detail = excluded.detail, "
-                "payload = excluded.payload, "
-                "updated_at = excluded.updated_at",
-                (
-                    1 if record.entries_blocked else 0,
-                    None if record.reason_code is None else record.reason_code.value,
-                    record.detail,
-                    record.model_dump_json(),
-                    stamp,
-                ),
-            )
+            if effective_mode_id is not None:
+                self._conn.execute(
+                    "INSERT INTO mode_entry_freeze "
+                    "(mode_id, entries_blocked, reason_code, detail, payload, "
+                    "updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(mode_id) DO UPDATE SET "
+                    "entries_blocked = excluded.entries_blocked, "
+                    "reason_code = excluded.reason_code, "
+                    "detail = excluded.detail, "
+                    "payload = excluded.payload, "
+                    "updated_at = excluded.updated_at",
+                    (
+                        effective_mode_id.value,
+                        1 if record.entries_blocked else 0,
+                        None
+                        if record.reason_code is None
+                        else record.reason_code.value,
+                        record.detail,
+                        record.model_dump_json(),
+                        stamp,
+                    ),
+                )
+            else:
+                self._conn.execute(
+                    "INSERT INTO entry_freeze "
+                    "(singleton, entries_blocked, reason_code, detail, payload, "
+                    "updated_at) "
+                    "VALUES (1, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(singleton) DO UPDATE SET "
+                    "entries_blocked = excluded.entries_blocked, "
+                    "reason_code = excluded.reason_code, "
+                    "detail = excluded.detail, "
+                    "payload = excluded.payload, "
+                    "updated_at = excluded.updated_at",
+                    (
+                        1 if record.entries_blocked else 0,
+                        None
+                        if record.reason_code is None
+                        else record.reason_code.value,
+                        record.detail,
+                        record.model_dump_json(),
+                        stamp,
+                    ),
+                )
             if unchanged:
                 return False
             self._insert_event(
@@ -968,9 +1033,48 @@ class TradingStore:
             )
             return True
 
+    def list_mode_entry_freezes(self) -> tuple[EntryFreezeRecord, ...]:
+        """Return all per-mode entry-freeze records."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM mode_entry_freeze ORDER BY mode_id ASC"
+            ).fetchall()
+        return tuple(
+            EntryFreezeRecord.model_validate(json.loads(row["payload"])) for row in rows
+        )
+
     def _initialize(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Apply idempotent schema migrations for P2."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._add_column_if_missing("reservations", "mode_id", "TEXT")
+                self._add_column_if_missing("reservations", "idempotency_key", "TEXT")
+                self._add_column_if_missing("position_lifecycle", "mode_id", "TEXT")
+                self._add_column_if_missing("position_lifecycle", "campaign_id", "TEXT")
+                self._add_column_if_missing(
+                    "position_lifecycle", "policy_version", "TEXT"
+                )
+                # ensure index for idempotency key lookup
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_reservations_idem "
+                    "ON reservations (idempotency_key)"
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+
+    def _add_column_if_missing(self, table: str, column: str, col_type: str) -> None:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {row["name"] for row in rows}
+        if column not in existing:
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -990,9 +1094,16 @@ class TradingStore:
         ).fetchone()
         return row
 
-    def _sum_active_reservation_amount(self, currency: Currency) -> Money:
+    def _sum_active_reservation_amount(
+        self, currency: Currency, mode_id: str | None = None
+    ) -> Money:
         total = Money.zero(currency)
-        rows = self._conn.execute("SELECT payload FROM reservations").fetchall()
+        if mode_id is not None:
+            rows = self._conn.execute(
+                "SELECT payload FROM reservations WHERE mode_id = ?", (mode_id,)
+            ).fetchall()
+        else:
+            rows = self._conn.execute("SELECT payload FROM reservations").fetchall()
         for row in rows:
             reservation = CapitalReservation.model_validate(json.loads(row["payload"]))
             if reservation.state.holds_capital:
@@ -1005,15 +1116,20 @@ class TradingStore:
         updated_at: str,
     ) -> None:
         self._conn.execute(
-            "INSERT INTO reservations (reservation_id, state, payload, updated_at) "
-            "VALUES (?, ?, ?, ?) "
+            "INSERT INTO reservations "
+            "(reservation_id, state, mode_id, idempotency_key, payload, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(reservation_id) DO UPDATE SET "
             "state = excluded.state, "
+            "mode_id = excluded.mode_id, "
+            "idempotency_key = excluded.idempotency_key, "
             "payload = excluded.payload, "
             "updated_at = excluded.updated_at",
             (
                 reservation.reservation_id,
                 reservation.state.value,
+                reservation.mode_id.value if reservation.mode_id is not None else None,
+                reservation.idempotency_key,
                 reservation.model_dump_json(),
                 updated_at,
             ),

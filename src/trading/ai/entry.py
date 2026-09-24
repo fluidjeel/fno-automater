@@ -246,9 +246,7 @@ def maybe_log_entry_shadow(
         shortlist, as_of=as_of, trade_id=trade_id or "SHADOW-TRADE"
     )
     if advice is None:
-        return EntryShadowResult(
-            status="PASS", advice=None, decision=None, mode=mode
-        )
+        return EntryShadowResult(status="PASS", advice=None, decision=None, mode=mode)
     if refuse_bounded_entry_live_path(mode, advice.action):
         return EntryShadowResult(
             status="REJECTED_BOUNDED",
@@ -309,9 +307,7 @@ def maybe_log_entry_config_promotion(
         policy_version=ENTRY_CONFIG_POLICY_VERSION,
     )
     if mode is not AuthorityMode.BOUNDED or grant is None:
-        return EntryConfigPromotionResult(
-            status="OBSERVE", decision=None, mode=mode
-        )
+        return EntryConfigPromotionResult(status="OBSERVE", decision=None, mode=mode)
     if (
         action not in grant.allowed_actions
         or strategy_family not in grant.strategy_families

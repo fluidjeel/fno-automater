@@ -27,7 +27,9 @@ from trading.domain.contracts import (
 )
 from trading.domain.enums import (
     Exchange,
+    FamilyId,
     InstrumentKind,
+    ModeId,
     OptionType,
     ReasonCode,
     ReservationState,
@@ -35,7 +37,9 @@ from trading.domain.enums import (
     Side,
 )
 from trading.domain.ids import SequentialIdFactory
+from trading.domain.primitives import Lots, LotSize
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
+from trading.risk.gateway import _approved_credit_spread_legs
 from trading.storage import TradingStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -360,3 +364,223 @@ class TestRiskGateway:
         assert decision.action is RiskAction.RESIZE
         assert decision.recalculated_max_loss is not None
         assert decision.recalculated_max_loss < f.money("20000")
+
+    def test_nifty_only_execution_rejects_non_nifty_underlying(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        crude_spec = instrument_spec(underlying="CRUDEOIL")
+        req = _gateway_request(instrument=crude_spec)
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.NON_NIFTY_EXECUTION_REJECTED,)
+
+    def test_nifty_only_execution_rejects_non_option_kind(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        future_spec = instrument_spec(
+            underlying="NIFTY",
+            instrument_kind=InstrumentKind.FUTURE,
+            strike=None,
+            option_type=None,
+        )
+        req = _gateway_request(instrument=future_spec)
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.NON_NIFTY_EXECUTION_REJECTED,)
+
+    def test_nifty_only_execution_disabled_allows_non_nifty(
+        self,
+        store: TradingStore,
+        broker: PaperBroker,
+        clock: FrozenClock,
+        id_factory: SequentialIdFactory,
+    ) -> None:
+        gw = RiskGateway(
+            account_config=ACCOUNT_CONFIG,
+            risk_policy=RISK_POLICY,
+            reservation_service=CapitalReservationService(
+                store,
+                clock=clock,
+                id_factory=id_factory,
+            ),
+            margin_preview=broker,
+            clock=clock,
+            id_factory=id_factory,
+            nifty_only_execution=False,
+        )
+        crude_spec = instrument_spec(underlying="CRUDEOIL")
+        req = _gateway_request(instrument=crude_spec)
+        decision = gw.evaluate(req)
+        assert ReasonCode.NON_NIFTY_EXECUTION_REJECTED not in decision.reason_codes
+
+    def test_mode_id_with_missing_family_id_rejected(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M2_DIRECTIONAL,
+                family_id=None,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.MODE_FAMILY_NOT_PERMITTED,)
+
+    def test_mode_id_with_disallowed_family_id_rejected(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M2_DIRECTIONAL,
+                family_id=FamilyId.bull_call_debit,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.MODE_FAMILY_NOT_PERMITTED,)
+
+    def test_mode_m3_rejects_single_leg_or_long_option(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                family_id=FamilyId.bull_call_debit,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.MODE_FAMILY_NOT_PERMITTED,)
+
+    def test_mode_m2_permits_allowed_family(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot(
+            market=f.quote(
+                bid=f.price("39.95"),
+                ask=f.price("40.00"),
+                bid_size=300,
+                ask_size=300,
+            )
+        )
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M2_DIRECTIONAL,
+                family_id=FamilyId.long_call,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action in (RiskAction.APPROVE, RiskAction.RESIZE)
+        assert ReasonCode.MODE_FAMILY_NOT_PERMITTED not in decision.reason_codes
+
+    def test_mode_m3_rejects_long_call_or_long_put_family(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                family_id=FamilyId.long_call,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.MODE_FAMILY_NOT_PERMITTED,)
+
+    def test_mode_m1_permits_long_call(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot(
+            market=f.quote(
+                bid=f.price("19.95"),
+                ask=f.price("20.00"),
+                bid_size=300,
+                ask_size=300,
+            )
+        )
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M1_CAS,
+                family_id=FamilyId.long_call,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action in (RiskAction.APPROVE, RiskAction.RESIZE)
+        assert ReasonCode.MODE_FAMILY_NOT_PERMITTED not in decision.reason_codes
+
+    def test_mode_m1_rejects_bull_call_debit(
+        self,
+        gateway: RiskGateway,
+    ) -> None:
+        snap = option_snapshot()
+        req = _gateway_request(
+            feature_snapshot=snap,
+            intent=f.intent(
+                snapshot_id=snap.snapshot_id,
+                mode_id=ModeId.M1_CAS,
+                family_id=FamilyId.bull_call_debit,
+            ),
+        )
+        decision = gateway.evaluate(req)
+        assert decision.action is RiskAction.REJECT
+        assert decision.reason_codes == (ReasonCode.MODE_FAMILY_NOT_PERMITTED,)
+
+
+def test_credit_spread_approved_legs_order_long_protection_first() -> None:
+    long_contract = f.option_contract(
+        symbol="NIFTY26SEP23900PE",
+        option_type=OptionType.PUT,
+        strike=Decimal("23900"),
+    )
+    short_contract = f.option_contract(
+        symbol="NIFTY26SEP24000PE",
+        option_type=OptionType.PUT,
+        strike=Decimal("24000"),
+    )
+    intent = f.intent(
+        legs=(
+            IntentLeg(
+                leg_id="leg-short",
+                contract=short_contract,
+                side=Side.SELL,
+                ratio=1,
+            ),
+            IntentLeg(
+                leg_id="leg-long",
+                contract=long_contract,
+                side=Side.BUY,
+                ratio=1,
+            ),
+        ),
+    )
+    approved = _approved_credit_spread_legs(
+        intent, approved_lots=2, lot_size=LotSize(75)
+    )
+    assert len(approved) == 2
+    assert approved[0].leg_id == "leg-long"
+    assert approved[1].leg_id == "leg-short"
+    assert approved[0].lots == Lots(2)
+    assert approved[1].lots == Lots(2)

@@ -84,7 +84,6 @@ class BiasBatteryBands:
     cost_blindness_max: Decimal | None = Decimal("0.35")
 
 
-
 def build_bias_report(
     *,
     as_of: datetime,
@@ -197,8 +196,7 @@ def _revenge(
     for i in range(1, len(ordered)):
         gap = Decimal(
             str(
-                (ordered[i].closed_at - ordered[i - 1].closed_at).total_seconds()
-                / 60.0
+                (ordered[i].closed_at - ordered[i - 1].closed_at).total_seconds() / 60.0
             )
         )
         if ordered[i - 1].is_winner:
@@ -294,9 +292,7 @@ def _anchoring(
         metric_id=BiasMetricId.ANCHORING,
         value=value.quantize(Decimal("0.0001")),
         sample_size=len(pairs),
-        band_breached=(
-            bands.anchoring_max is not None and value > bands.anchoring_max
-        ),
+        band_breached=(bands.anchoring_max is not None and value > bands.anchoring_max),
     )
 
 
@@ -430,6 +426,4 @@ def _pearson(xs: Sequence[Decimal], ys: Sequence[Decimal]) -> Decimal:
     den_y = sum(((y - mean_y) ** 2 for y in ys), Decimal(0))
     if den_x == 0 or den_y == 0:
         return Decimal(0)
-    return num / (
-        Decimal(str(sqrt(float(den_x)))) * Decimal(str(sqrt(float(den_y))))
-    )
+    return num / (Decimal(str(sqrt(float(den_x)))) * Decimal(str(sqrt(float(den_y)))))

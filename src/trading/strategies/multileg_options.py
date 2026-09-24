@@ -27,7 +27,14 @@ from trading.domain.contracts import (
     IntentLeg,
     TradeIntent,
 )
-from trading.domain.enums import InstrumentKind, OptionType, ReasonCode, Side
+from trading.domain.enums import (
+    FamilyId,
+    InstrumentKind,
+    ModeId,
+    OptionType,
+    ReasonCode,
+    Side,
+)
 from trading.domain.primitives import Currency, Money, Percent
 from trading.strategies._common import DEFAULT_MACRO_MIN_CONFIDENCE, resolve_direction
 from trading.strategies.base import (
@@ -38,7 +45,11 @@ from trading.strategies.base import (
 )
 from trading.strategies.macro import MacroBias
 
-__all__ = ["MultiLegOptionsStrategy"]
+__all__ = [
+    "BearCallCreditStrategy",
+    "BullPutCreditStrategy",
+    "MultiLegOptionsStrategy",
+]
 
 STRATEGY_ID = "defined_risk_multileg"
 STRATEGY_VERSION = "defined-risk-multileg-v1"
@@ -87,19 +98,21 @@ def _leg(option: FeatureSnapshot, side: Side) -> IntentLeg:
 def _ordered_legs(
     candidates: tuple[FeatureSnapshot, ...], option_type: OptionType
 ) -> tuple[IntentLeg, IntentLeg]:
-    """Strike-ascending legs with explicit credit-spread roles.
+    """Strike-ordered legs with long protection leg first (Invariant §1.4 / §2.1).
 
-    This mirrors ``debit_spread._ordered_legs`` in how it picks by strike, but
-    the roles invert: the short leg is the nearer-money strike and the long leg
-    is the protective wing. The long wing is therefore always further out of the
-    money than the short strike, so a short leg can never be naked.
+    The long wing is the protective wing and Side.BUY is always first.
+    - For OptionType.PUT (bull put spread: sell higher put, buy lower put):
+      _leg(low, Side.BUY), _leg(high, Side.SELL) (low is protection, high short).
+    - For OptionType.CALL (bear call spread: sell lower call, buy higher call):
+      _leg(high, Side.BUY), _leg(low, Side.SELL) (high protection, low short).
+    Both return (long_leg, short_leg) with Side.BUY first!
     """
     low, high = sorted(candidates, key=_strike)
     if _strike(low) >= _strike(high):
         raise ValueError("spread strikes must be distinct")
     if option_type is OptionType.PUT:
         return _leg(low, Side.BUY), _leg(high, Side.SELL)
-    return _leg(low, Side.SELL), _leg(high, Side.BUY)
+    return _leg(high, Side.BUY), _leg(low, Side.SELL)
 
 
 @register_strategy
@@ -108,6 +121,8 @@ class MultiLegOptionsStrategy:
 
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
+    ALLOWED_BIAS: MacroBias | None = None
+    ALLOWED_OPTION_TYPE: OptionType | None = None
 
     def evaluate(self, ctx: StrategyContext) -> StrategyDecision:
         decision = StrategyDecision(
@@ -141,15 +156,23 @@ class MultiLegOptionsStrategy:
             ctx.now,
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
-        if bias is MacroBias.NEUTRAL:
-            return decision  # no directional signal: no trade, not an error
-
         option_type = _option_type_for(bias)
-        mismatched = any(
-            option.contract.option_type is not option_type for option in ctx.candidates
-        )
-        if mismatched:
-            return decision  # candidates do not match the read; skip, do not reject
+        if (
+            (
+                self.ALLOWED_OPTION_TYPE is not None
+                and any(
+                    option.contract.option_type is not self.ALLOWED_OPTION_TYPE
+                    for option in ctx.candidates
+                )
+            )
+            or bias is MacroBias.NEUTRAL
+            or (self.ALLOWED_BIAS is not None and bias is not self.ALLOWED_BIAS)
+            or any(
+                option.contract.option_type is not option_type
+                for option in ctx.candidates
+            )
+        ):
+            return decision  # directional read mismatch or neutral; skip, do not reject
 
         legs = _ordered_legs(ctx.candidates, option_type)
         intent = self._build_intent(ctx, legs, option_type, confidence)
@@ -280,6 +303,12 @@ class MultiLegOptionsStrategy:
             promoted_config_version=ctx.underlying.lineage.versions.config_version,
             promoted_proposal_id=None,
             supersedes_intent_id=None,
+            mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+            family_id=(
+                FamilyId.bull_put_credit
+                if option_type is OptionType.PUT
+                else FamilyId.bear_call_credit
+            ),
             underlying=ctx.underlying.contract.underlying,
             asset_class=ctx.underlying.contract.asset_class,
             legs=legs,
@@ -316,6 +345,24 @@ class MultiLegOptionsStrategy:
             created_at=now,
             expires_at=now + timedelta(seconds=INTENT_TTL_SECONDS),
         )
+
+
+@register_strategy
+class BullPutCreditStrategy(MultiLegOptionsStrategy):
+    """Bull put credit spread: sell higher put, buy lower put on bullish read."""
+
+    strategy_id = "bull_put_credit"
+    ALLOWED_BIAS = MacroBias.BULLISH
+    ALLOWED_OPTION_TYPE = OptionType.PUT
+
+
+@register_strategy
+class BearCallCreditStrategy(MultiLegOptionsStrategy):
+    """Bear call credit spread: sell lower call, buy higher call on bearish read."""
+
+    strategy_id = "bear_call_credit"
+    ALLOWED_BIAS = MacroBias.BEARISH
+    ALLOWED_OPTION_TYPE = OptionType.CALL
 
 
 def _derive_id(*parts: str) -> str:

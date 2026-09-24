@@ -1,0 +1,11 @@
+[Unit]
+Description=Start FNO PAPER session before NSE open (IST)
+
+# 08:58 IST = 03:28 UTC, before PRE_MARKET and the 09:15 open.
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03:28:00
+Unit=fno-paper-session.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

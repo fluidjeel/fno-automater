@@ -89,9 +89,7 @@ def test_thesis_requires_two_invalidations() -> None:
             horizon_days=2,
             primary_driver=DriverCode.MEAN_REVERSION,
             contradicting_reason_codes=("X",),
-            invalidation=(
-                _cond("only", InvalidationMetric.DTE, Comparator.LTE, "1"),
-            ),
+            invalidation=(_cond("only", InvalidationMetric.DTE, Comparator.LTE, "1"),),
             confidence=Decimal("0.5"),
             confidence_kind=ConfidenceKind.RAW_SCORE,
             thesis_hash="h",
@@ -164,9 +162,7 @@ def test_every_invalidation_metric_triggers(
 
 
 def test_missing_observation_is_not_triggered() -> None:
-    condition = _cond(
-        "m", InvalidationMetric.INDIA_VIX, Comparator.GTE, "20"
-    )
+    condition = _cond("m", InvalidationMetric.INDIA_VIX, Comparator.GTE, "20")
     result = evaluate_condition(condition, observations={})
     assert result.status is InvalidationStatus.MISSING_OBSERVATION
     assert result.triggered is False

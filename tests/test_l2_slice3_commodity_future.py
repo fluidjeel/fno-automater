@@ -176,6 +176,7 @@ def run_slice3(
         margin_preview=broker,
         clock=clock,
         id_factory=id_factory,
+        nifty_only_execution=False,
     )
     planner = OrderPlanPlanner(clock=clock, id_factory=id_factory)
     oms = OmsEngine(

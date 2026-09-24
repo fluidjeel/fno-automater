@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from trading.domain.clock import Clock
 from trading.domain.contracts.reservation import CapitalReservation
-from trading.domain.enums import ReservationState, Trigger
+from trading.domain.enums import ModeId, ReservationState, Trigger
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Money
 from trading.domain.state import RESERVATION_MACHINE, IllegalTransitionError
@@ -51,6 +51,8 @@ class CapitalReservationService:
         amount: Money,
         margin_available: Money,
         risk_decision_id: str,
+        mode_id: ModeId | None = None,
+        idempotency_key: str | None = None,
     ) -> CapitalReservation:
         """Atomically reserve capital or reject when the budget is exhausted."""
         now = self._clock.now_utc()
@@ -59,6 +61,8 @@ class CapitalReservationService:
             intent_id=intent_id,
             strategy_id=strategy_id,
             risk_decision_id=risk_decision_id,
+            mode_id=mode_id,
+            idempotency_key=idempotency_key,
             state=ReservationState.REQUESTED,
             amount=amount,
             created_at=now,

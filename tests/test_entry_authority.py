@@ -68,17 +68,13 @@ def test_bounded_reduce_size_rejected_at_validate() -> None:
 
 def test_shadow_and_advisory_may_list_veto() -> None:
     shadow = _grant(mode=AuthorityMode.SHADOW, actions=(AgentAction.VETO_ENTRY,))
-    advisory = _grant(
-        mode=AuthorityMode.ADVISORY, actions=(AgentAction.VETO_ENTRY,)
-    )
+    advisory = _grant(mode=AuthorityMode.ADVISORY, actions=(AgentAction.VETO_ENTRY,))
     assert shadow.mode is AuthorityMode.SHADOW
     assert advisory.mode is AuthorityMode.ADVISORY
 
 
 def test_refuse_bounded_helper() -> None:
-    assert refuse_bounded_entry_live_path(
-        AuthorityMode.BOUNDED, AgentAction.VETO_ENTRY
-    )
+    assert refuse_bounded_entry_live_path(AuthorityMode.BOUNDED, AgentAction.VETO_ENTRY)
     assert refuse_bounded_entry_live_path(
         AuthorityMode.BOUNDED, AgentAction.REDUCE_SIZE
     )

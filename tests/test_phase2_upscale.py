@@ -84,12 +84,8 @@ def test_calibrated_upscale_via_deterministic_path() -> None:
     assert gate.unlocked
     env = Phase2UpscaleEnvelope(gate=gate, m_ceiling=PHASE2_M_CEILING_DEFAULT)
     assert env.unlocked
-    assert apply_deterministic_upscale(Decimal("1.25"), envelope=env) == Decimal(
-        "1.25"
-    )
-    assert apply_deterministic_upscale(Decimal("1.40"), envelope=env) == Decimal(
-        "1.25"
-    )
+    assert apply_deterministic_upscale(Decimal("1.25"), envelope=env) == Decimal("1.25")
+    assert apply_deterministic_upscale(Decimal("1.40"), envelope=env) == Decimal("1.25")
 
 
 def test_hard_cap_enforced_on_envelope() -> None:

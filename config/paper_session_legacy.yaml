@@ -1,0 +1,34 @@
+# Verified legacy one-winner PAPER rollback configuration.
+schema_version: "1"
+routing_profile: legacy
+poll_interval_seconds: 60
+eod_local: "15:40"
+option_strikes_each_side: 2
+experiment_prefix: "EXP-PAPER-LEGACY"
+strategy_ids:
+  - positional_long_option
+  - debit_spread
+  - defined_risk_multileg
+  - cas_microstructure
+  - commodity_futures_trend
+strategy_stances:
+  positional_long_option: PAPER
+  debit_spread: PAPER
+  defined_risk_multileg: SHADOW
+  cas_microstructure: SHADOW
+  commodity_futures_trend: SHADOW
+commodity_underlying: CRUDEOIL
+commodity_exchange: MCX
+commodity_segment: MCX_COM
+cohort_dir: data/paper/cohorts
+store_path: data/paper/trading.sqlite
+broker_state_path: data/paper/broker_state.json
+portfolio_risk_dir: data/paper/portfolio_risk
+session_heartbeat_path: data/paper/session_heartbeat.json
+positional_review:
+  nse_slots:
+    - id: NSE_MORNING
+      local: "10:30"
+    - id: NSE_AFTERNOON
+      local: "14:30"
+  mcx_slots: []

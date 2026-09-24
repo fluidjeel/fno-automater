@@ -1,15 +1,61 @@
 """Layer 2 portfolio truth and reconciliation."""
 
+from trading.portfolio.arbitration import (
+    ArbitrationResult,
+    ArbitrationSuppression,
+    CounterfactualLogEntry,
+    PortfolioArbiter,
+    extract_leg_signature,
+)
+from trading.portfolio.campaign_drawdown import (
+    CampaignDrawdownLedger,
+    CampaignDrawdownRecord,
+)
+from trading.portfolio.counterfactual_book import (
+    CounterfactualModeBook,
+    CounterfactualModeBookEntry,
+    build_mode_books,
+)
+from trading.portfolio.economic_overlap import (
+    MAX_M4_OPEN_POSITIONS,
+    EconomicExposureKey,
+    ThesisDirection,
+    extract_economic_exposure,
+)
 from trading.portfolio.exposure import PositionExposureInput, build_exposure_report
 from trading.portfolio.reconciliation import PortfolioReconciler, ReconcileOutcome
+from trading.portfolio.risk_journal import (
+    PortfolioRiskJournal,
+    PortfolioRiskRecord,
+    build_portfolio_risk_record,
+    read_latest_portfolio_risk,
+)
 from trading.portfolio.snapshot import build_broker_snapshot
 from trading.portfolio.view import build_portfolio_view
 
 __all__ = [
+    "MAX_M4_OPEN_POSITIONS",
+    "ArbitrationResult",
+    "ArbitrationSuppression",
+    "CampaignDrawdownLedger",
+    "CampaignDrawdownRecord",
+    "CounterfactualLogEntry",
+    "CounterfactualModeBook",
+    "CounterfactualModeBookEntry",
+    "EconomicExposureKey",
+    "PortfolioArbiter",
     "PortfolioReconciler",
+    "PortfolioRiskJournal",
+    "PortfolioRiskRecord",
     "PositionExposureInput",
     "ReconcileOutcome",
+    "ThesisDirection",
     "build_broker_snapshot",
     "build_exposure_report",
+    "build_mode_books",
+    "build_portfolio_risk_record",
     "build_portfolio_view",
+    "extract_economic_exposure",
+    "extract_leg_signature",
+    "read_latest_portfolio_risk",
 ]

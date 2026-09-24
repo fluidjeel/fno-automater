@@ -1,0 +1,6 @@
+# Mode 2 overnight carry gate thresholds (Phase P9 / spec §4.2).
+# Overnight budget fraction applies to the mode reference capital denominator.
+
+schema_version: "1"
+min_remaining_dte: 2
+overnight_loss_budget_fraction: "0.03"

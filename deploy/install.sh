@@ -42,14 +42,36 @@ sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/fno-automated.service \
   | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
   > /etc/systemd/system/fno-automated.service
 
+# PAPER session (enabled only; start after credentials are confirmed)
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-session.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-paper-session.service
+
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-alert.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-paper-alert.service
+
+install -m 0440 deploy/fno-systemctl.sudoers /etc/sudoers.d/fno-systemctl
+visudo -cf /etc/sudoers.d/fno-systemctl
+
+cp deploy/paper-session.timer /etc/systemd/system/fno-paper-session.timer
+
 systemctl daemon-reload
 systemctl enable --now fno-data-pipeline.timer
 systemctl enable --now fno-fyers-refresh.timer
 systemctl enable --now fno-agent-weekly.timer
 systemctl enable --now fno-agent-advise.timer
 systemctl enable --now fno-agent-research.timer
-systemctl enable fno-data-tick.service
-systemctl enable fno-automated.service
+systemctl enable --now fno-data-tick.service
+systemctl enable --now fno-automated.service
+systemctl enable fno-paper-session.service
+systemctl enable --now fno-paper-session.timer
+
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-watchdog.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-paper-watchdog.service
+cp deploy/paper-watchdog.timer /etc/systemd/system/fno-paper-watchdog.timer
+systemctl enable --now fno-paper-watchdog.timer
 
 echo "Installed."
 echo "Data pipeline timer:     systemctl status fno-data-pipeline.timer"
@@ -58,3 +80,6 @@ echo "Weekly agent timer:      systemctl status fno-agent-weekly.timer"
 echo "Advise desk timer:       systemctl status fno-agent-advise.timer"
 echo "Research runner timer:   systemctl status fno-agent-research.timer"
 echo "Supervisor daemon:       systemctl status fno-automated.service"
+echo "Paper session:           systemctl status fno-paper-session.service"
+echo "Paper session timer:     systemctl status fno-paper-session.timer"
+echo "Paper watchdog timer:    systemctl status fno-paper-watchdog.timer"

@@ -98,10 +98,7 @@ def test_build_ranks_clusters_and_proposes_playbook() -> None:
     )
     assert report.week_id == "2026-W38"
     assert report.cluster_count == 2
-    assert (
-        report.ranked_clusters[0].rank_score
-        >= report.ranked_clusters[1].rank_score
-    )
+    assert report.ranked_clusters[0].rank_score >= report.ranked_clusters[1].rank_score
     assert report.bias_report is not None
     assert len(report.bias_report.metrics) == 11
     assert any(p.area is ImprovementArea.RISK_LIMIT for p in report.playbook_proposals)

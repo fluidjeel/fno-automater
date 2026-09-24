@@ -3,17 +3,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import cast
 
 from trading.domain.contracts import CandidateBinding, FeatureSnapshot, MarketState
-from trading.domain.contracts.identification import SetupFeatures, StructureKind
+from trading.domain.contracts.identification import (
+    SetupFeatures,
+    StructureKind,
+    TrendState,
+    VolatilityState,
+)
 from trading.domain.contracts.paper_data import PaperDataField
-from trading.domain.enums import InstrumentKind, OptionType, ReasonCode
+from trading.domain.enums import FamilyId, InstrumentKind, OptionType, ReasonCode
+from trading.identification.calendar import (
+    M2ExpirySelection,
+    TradingCalendarPort,
+    get_calendar_port,
+)
 from trading.identification.config import IdentificationPolicy
 from trading.identification.p1_features import ObservedP1Features, top_book_size
 
-__all__ = ["BoundCandidates", "bind_debit_spread", "bind_long_option"]
+__all__ = [
+    "BoundCandidates",
+    "bind_credit_spread",
+    "bind_debit_spread",
+    "bind_iron_condor",
+    "bind_long_call_butterfly",
+    "bind_long_call_calendar",
+    "bind_long_option",
+    "bind_long_put_butterfly",
+    "bind_long_put_calendar",
+    "bind_long_straddle",
+    "bind_long_strangle",
+    "bind_m1_cas_option",
+    "bind_m2_long_option",
+    "bind_short_iron_butterfly",
+]
 
 _ZERO = Decimal(0)
 _ONE = Decimal(1)
@@ -31,8 +57,33 @@ def bind_long_option(
     *,
     market: MarketState,
     policy: IdentificationPolicy,
+    calendar: TradingCalendarPort | None = None,
+    master_symbols: frozenset[str] | None = None,
     p1: ObservedP1Features | None = None,
 ) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return BoundCandidates(
+                binding=CandidateBinding(
+                    strategy_id="positional_long_option",
+                    binding_version=policy.binding_version,
+                    selected_symbols=(),
+                    score=_ZERO,
+                    eligible=False,
+                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+                    rejected_symbols=tuple(
+                        sorted(c.contract.symbol for c in all_candidates)
+                    ),
+                ),
+                candidates=(),
+                setup_features=None,
+            )
+        candidates = in_master
+
     option_type = _direction_type(market)
     eligible = [
         item
@@ -51,7 +102,7 @@ def bind_long_option(
         key=lambda pair: (-pair[0], pair[1].contract.symbol),
     )
     rejected = tuple(
-        sorted(item.contract.symbol for item in candidates if item not in eligible)
+        sorted(item.contract.symbol for item in all_candidates if item not in eligible)
     )
     if not ranked:
         return BoundCandidates(
@@ -197,6 +248,1334 @@ def bind_debit_spread(
     )
 
 
+def _credit_option_type(
+    family_id: FamilyId | None,
+    market: MarketState,
+) -> OptionType | None:
+    if family_id == FamilyId.bull_put_credit:
+        return OptionType.PUT
+    if family_id == FamilyId.bear_call_credit:
+        return OptionType.CALL
+    trend = market.trend.value if hasattr(market.trend, "value") else str(market.trend)
+    if trend == "UP":
+        return OptionType.PUT
+    if trend == "DOWN":
+        return OptionType.CALL
+    return None
+
+
+def _order_credit_pair(
+    first: FeatureSnapshot,
+    second: FeatureSnapshot,
+    option_type: OptionType,
+) -> tuple[FeatureSnapshot, FeatureSnapshot] | None:
+    if first.contract.expiry != second.contract.expiry:
+        return None
+    s1, s2 = first.contract.strike, second.contract.strike
+    if s1 is None or s2 is None or s1 == s2:
+        return None
+    if option_type is OptionType.PUT:
+        return (first, second) if s1 < s2 else (second, first)
+    return (first, second) if s1 > s2 else (second, first)
+
+
+def bind_credit_spread(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    family_id: FamilyId | None = None,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+    max_risk_ratio: Decimal | None = None,
+) -> BoundCandidates:
+    strategy_id = family_id.value if family_id else "credit_spread"
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return BoundCandidates(
+                binding=CandidateBinding(
+                    strategy_id=strategy_id,
+                    binding_version=policy.binding_version,
+                    selected_symbols=(),
+                    score=_ZERO,
+                    eligible=False,
+                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+                    rejected_symbols=tuple(
+                        sorted(c.contract.symbol for c in all_candidates)
+                    ),
+                ),
+                candidates=(),
+                setup_features=None,
+            )
+        candidates = in_master
+
+    option_type = _credit_option_type(family_id, market)
+    if option_type is None:
+        rejected = tuple(sorted(item.contract.symbol for item in all_candidates))
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id=strategy_id,
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(_dominant_reason(candidates, policy),),
+                rejected_symbols=rejected,
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    legs = [
+        item
+        for item in candidates
+        if item.contract.option_type is option_type
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+
+    pairs: list[tuple[Decimal, FeatureSnapshot, FeatureSnapshot]] = []
+    for i in range(len(legs)):
+        for j in range(i + 1, len(legs)):
+            ordered = _order_credit_pair(legs[i], legs[j], option_type)
+            if ordered is None:
+                continue
+            long_leg, short_leg = ordered
+            if not _valid_credit_pair(
+                long_leg,
+                short_leg,
+                option_type,
+                policy,
+                max_risk_ratio=max_risk_ratio,
+            ):
+                continue
+
+            long_score = _candidate_score(
+                long_leg,
+                candidates,
+                policy,
+                delta_range=(
+                    Decimal("0.05"),
+                    policy.contracts.short_delta_max,
+                ),
+                p1=p1,
+                role="long",
+            )
+            short_score = _candidate_score(
+                short_leg,
+                candidates,
+                policy,
+                delta_range=(
+                    policy.contracts.short_delta_min,
+                    policy.contracts.short_delta_max,
+                ),
+                p1=p1,
+                role="short",
+            )
+            score = (long_score + short_score) / 2
+            pairs.append((_q(score), long_leg, short_leg))
+
+    pairs.sort(
+        key=lambda row: (
+            -row[0],
+            row[1].contract.symbol,
+            row[2].contract.symbol,
+        )
+    )
+
+    if not pairs:
+        rejected = tuple(sorted(item.contract.symbol for item in all_candidates))
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id=strategy_id,
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(_dominant_reason(candidates, policy),),
+                rejected_symbols=rejected,
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    score, long_leg, short_leg = pairs[0]
+    selected_symbols = {long_leg.contract.symbol, short_leg.contract.symbol}
+    rejected = tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol not in selected_symbols
+        )
+    )
+    binding = CandidateBinding(
+        strategy_id=strategy_id,
+        binding_version=policy.binding_version,
+        selected_symbols=(long_leg.contract.symbol, short_leg.contract.symbol),
+        score=score,
+        eligible=True,
+        rejected_symbols=rejected,
+    )
+    return BoundCandidates(
+        binding=binding,
+        candidates=(long_leg, short_leg),
+        setup_features=_setup(
+            market,
+            long_leg,
+            structure=StructureKind.CREDIT_SPREAD,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def bind_iron_condor(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a four-leg short iron condor for range-bound M4 candidates."""
+    strategy_id = FamilyId.short_iron_condor_defined.value
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return BoundCandidates(
+                binding=CandidateBinding(
+                    strategy_id=strategy_id,
+                    binding_version=policy.binding_version,
+                    selected_symbols=(),
+                    score=_ZERO,
+                    eligible=False,
+                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+                    rejected_symbols=tuple(
+                        sorted(c.contract.symbol for c in all_candidates)
+                    ),
+                ),
+                candidates=(),
+                setup_features=None,
+            )
+        candidates = in_master
+
+    if market.trend is not TrendState.RANGE:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id=strategy_id,
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(ReasonCode.DATA_INVALID,),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    puts = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.PUT
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    calls = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.CALL
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+
+    combos: list[
+        tuple[
+            Decimal, FeatureSnapshot, FeatureSnapshot, FeatureSnapshot, FeatureSnapshot
+        ]
+    ] = []
+    for i in range(len(puts)):
+        for j in range(i + 1, len(puts)):
+            lp, sp = sorted(
+                (puts[i], puts[j]), key=lambda item: item.contract.strike or _ZERO
+            )
+            if lp.contract.strike is None or sp.contract.strike is None:
+                continue
+            if lp.contract.strike >= sp.contract.strike:
+                continue
+            for k in range(len(calls)):
+                for m in range(k + 1, len(calls)):
+                    sc, lc = sorted(
+                        (calls[k], calls[m]),
+                        key=lambda item: item.contract.strike or _ZERO,
+                    )
+                    if sc.contract.strike is None or lc.contract.strike is None:
+                        continue
+                    if sc.contract.strike >= lc.contract.strike:
+                        continue
+                    if not (
+                        lp.contract.strike
+                        < sp.contract.strike
+                        < sc.contract.strike
+                        < lc.contract.strike
+                    ):
+                        continue
+                    put_width = sp.contract.strike - lp.contract.strike
+                    call_width = lc.contract.strike - sc.contract.strike
+                    width_penalty = abs(put_width - call_width)
+                    score = (
+                        _candidate_score(
+                            lp,
+                            candidates,
+                            policy,
+                            delta_range=(Decimal("0.05"), Decimal("0.25")),
+                            p1=p1,
+                            role="long",
+                        )
+                        + _candidate_score(
+                            sp,
+                            candidates,
+                            policy,
+                            delta_range=(
+                                policy.contracts.short_delta_min,
+                                policy.contracts.short_delta_max,
+                            ),
+                            p1=p1,
+                            role="short",
+                        )
+                        + _candidate_score(
+                            sc,
+                            candidates,
+                            policy,
+                            delta_range=(
+                                policy.contracts.short_delta_min,
+                                policy.contracts.short_delta_max,
+                            ),
+                            p1=p1,
+                            role="short",
+                        )
+                        + _candidate_score(
+                            lc,
+                            candidates,
+                            policy,
+                            delta_range=(Decimal("0.05"), Decimal("0.25")),
+                            p1=p1,
+                            role="long",
+                        )
+                    ) / Decimal(4)
+                    score -= width_penalty / Decimal("1000")
+                    combos.append((_q(score), lp, sp, sc, lc))
+
+    combos.sort(
+        key=lambda row: (
+            -row[0],
+            row[1].contract.symbol,
+            row[2].contract.symbol,
+            row[3].contract.symbol,
+            row[4].contract.symbol,
+        )
+    )
+
+    if not combos:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id=strategy_id,
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(_dominant_reason(candidates, policy),),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    score, long_put, short_put, short_call, long_call = combos[0]
+    selected_symbols = (
+        long_put.contract.symbol,
+        short_put.contract.symbol,
+        short_call.contract.symbol,
+        long_call.contract.symbol,
+    )
+    rejected = tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol not in selected_symbols
+        )
+    )
+    return BoundCandidates(
+        binding=CandidateBinding(
+            strategy_id=strategy_id,
+            binding_version=policy.binding_version,
+            selected_symbols=selected_symbols,
+            score=score,
+            eligible=True,
+            rejected_symbols=rejected,
+        ),
+        candidates=(long_put, short_put, short_call, long_call),
+        setup_features=_setup(
+            market,
+            long_put,
+            structure=StructureKind.CREDIT_SPREAD,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def bind_long_call_butterfly(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a symmetric long call butterfly for range-bound M4."""
+    return _bind_long_butterfly(
+        candidates,
+        market=market,
+        policy=policy,
+        option_type=OptionType.CALL,
+        family_id=FamilyId.long_call_butterfly.value,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def bind_long_put_butterfly(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a symmetric long put butterfly for range-bound M4."""
+    return _bind_long_butterfly(
+        candidates,
+        market=market,
+        policy=policy,
+        option_type=OptionType.PUT,
+        family_id=FamilyId.long_put_butterfly.value,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def bind_short_iron_butterfly(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a short iron butterfly for range-bound M4."""
+    strategy_id = FamilyId.short_iron_butterfly_defined.value
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return _ineligible_binding(
+                strategy_id=strategy_id,
+                policy=policy,
+                all_candidates=all_candidates,
+                reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+            )
+        candidates = in_master
+    if market.trend is not TrendState.RANGE:
+        return _ineligible_binding(
+            strategy_id=strategy_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.DATA_INVALID,),
+        )
+
+    puts = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.PUT
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    calls = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.CALL
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    combos: list[
+        tuple[
+            Decimal, FeatureSnapshot, FeatureSnapshot, FeatureSnapshot, FeatureSnapshot
+        ]
+    ] = []
+    for i in range(len(puts)):
+        for j in range(i + 1, len(puts)):
+            lp, sp = sorted(
+                (puts[i], puts[j]), key=lambda item: item.contract.strike or _ZERO
+            )
+            if lp.contract.strike is None or sp.contract.strike is None:
+                continue
+            for k in range(len(calls)):
+                for m in range(k + 1, len(calls)):
+                    sc, lc = sorted(
+                        (calls[k], calls[m]),
+                        key=lambda item: item.contract.strike or _ZERO,
+                    )
+                    if sc.contract.strike is None or lc.contract.strike is None:
+                        continue
+                    if sp.contract.strike != sc.contract.strike:
+                        continue
+                    if not (
+                        lp.contract.strike < sp.contract.strike < lc.contract.strike
+                    ):
+                        continue
+                    score = (
+                        _candidate_score(lp, candidates, policy, p1=p1, role="long")
+                        + _candidate_score(sp, candidates, policy, p1=p1, role="short")
+                        + _candidate_score(sc, candidates, policy, p1=p1, role="short")
+                        + _candidate_score(lc, candidates, policy, p1=p1, role="long")
+                    ) / Decimal(4)
+                    combos.append((_q(score), lp, sp, sc, lc))
+
+    combos.sort(
+        key=lambda row: (
+            -row[0],
+            row[1].contract.symbol,
+            row[2].contract.symbol,
+            row[3].contract.symbol,
+            row[4].contract.symbol,
+        )
+    )
+    if not combos:
+        return _ineligible_binding(
+            strategy_id=strategy_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(_dominant_reason(candidates, policy),),
+        )
+
+    score, long_put, short_put, short_call, long_call = combos[0]
+    selected_symbols = (
+        long_put.contract.symbol,
+        long_call.contract.symbol,
+        short_put.contract.symbol,
+        short_call.contract.symbol,
+    )
+    rejected = _rejected_symbols(all_candidates, selected_symbols)
+    return BoundCandidates(
+        binding=CandidateBinding(
+            strategy_id=strategy_id,
+            binding_version=policy.binding_version,
+            selected_symbols=selected_symbols,
+            score=score,
+            eligible=True,
+            rejected_symbols=rejected,
+        ),
+        candidates=(long_put, long_call, short_put, short_call),
+        setup_features=_setup(
+            market,
+            long_put,
+            structure=StructureKind.CREDIT_SPREAD,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def bind_long_straddle(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind an ATM long straddle when volatility is not compressed."""
+    return _bind_long_volatility_pair(
+        candidates,
+        market=market,
+        policy=policy,
+        family_id=FamilyId.long_straddle.value,
+        same_strike=True,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def bind_long_strangle(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind an OTM long strangle when volatility is not compressed."""
+    return _bind_long_volatility_pair(
+        candidates,
+        market=market,
+        policy=policy,
+        family_id=FamilyId.long_strangle.value,
+        same_strike=False,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def bind_long_call_calendar(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a research long call calendar (short near / long far, same strike)."""
+    return _bind_calendar_pair(
+        candidates,
+        market=market,
+        policy=policy,
+        option_type=OptionType.CALL,
+        family_id=FamilyId.long_call_calendar.value,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def bind_long_put_calendar(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+) -> BoundCandidates:
+    """Bind a research long put calendar (short near / long far, same strike)."""
+    return _bind_calendar_pair(
+        candidates,
+        market=market,
+        policy=policy,
+        option_type=OptionType.PUT,
+        family_id=FamilyId.long_put_calendar.value,
+        master_symbols=master_symbols,
+        p1=p1,
+    )
+
+
+def _bind_calendar_pair(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    option_type: OptionType,
+    family_id: str,
+    master_symbols: frozenset[str] | None,
+    p1: ObservedP1Features | None,
+) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return _ineligible_binding(
+                strategy_id=family_id,
+                policy=policy,
+                all_candidates=all_candidates,
+                reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+            )
+        candidates = in_master
+    if market.trend is not TrendState.RANGE:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.DATA_INVALID,),
+        )
+    options = [
+        item
+        for item in candidates
+        if item.contract.option_type is option_type
+        and item.contract.strike is not None
+        and item.contract.expiry is not None
+        and item.derivatives is not None
+    ]
+    if len(options) < 2:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
+        )
+    by_strike: dict[Decimal, list[FeatureSnapshot]] = {}
+    for item in options:
+        strike = item.contract.strike
+        if strike is None:
+            continue
+        by_strike.setdefault(strike, []).append(item)
+    pairs: list[tuple[Decimal, FeatureSnapshot, FeatureSnapshot]] = []
+    for group in by_strike.values():
+        ordered = sorted(
+            group,
+            key=lambda snap: (
+                snap.derivatives.days_to_expiry if snap.derivatives else 999,
+                snap.contract.expiry or date.max,
+            ),
+        )
+        if len(ordered) < 2:
+            continue
+        near, far = ordered[0], ordered[-1]
+        if near.contract.expiry == far.contract.expiry:
+            continue
+        near_dte = near.derivatives.days_to_expiry if near.derivatives else 0
+        far_dte = far.derivatives.days_to_expiry if far.derivatives else 0
+        if near_dte < 2 or far_dte <= near_dte:
+            continue
+        near_ask = near.market.ask.value if near.market.ask else None
+        far_bid = far.market.bid.value if far.market.bid else None
+        if near_ask is None or far_bid is None:
+            continue
+        debit = far_bid - near_ask
+        if debit <= 0:
+            continue
+        atm_distance = _atm_distance_from_snapshot(near, near.contract.strike)
+        score = _ONE - atm_distance
+        pairs.append((score, near, far))
+    if not pairs:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
+        )
+    pairs.sort(key=lambda item: item[0], reverse=True)
+    _, near, far = pairs[0]
+    selected = {near.contract.symbol, far.contract.symbol}
+    rejected = tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol not in selected
+        )
+    )
+    binding = CandidateBinding(
+        strategy_id=family_id,
+        binding_version=policy.binding_version,
+        selected_symbols=(near.contract.symbol, far.contract.symbol),
+        score=pairs[0][0],
+        eligible=True,
+        rejected_symbols=rejected,
+    )
+    return BoundCandidates(
+        binding=binding,
+        candidates=(near, far),
+        setup_features=_setup(
+            market,
+            near,
+            structure=StructureKind.DEBIT_SPREAD,
+            score=pairs[0][0],
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def _atm_distance_from_snapshot(
+    snapshot: FeatureSnapshot, strike: Decimal | None
+) -> Decimal:
+    if (
+        strike is None
+        or snapshot.derivatives is None
+        or snapshot.derivatives.underlying_price is None
+    ):
+        return _ONE
+    underlying = snapshot.derivatives.underlying_price.value
+    if underlying <= 0:
+        return _ONE
+    distance = abs(strike - underlying) / underlying
+    return min(_ONE, distance)
+
+
+def _bind_long_butterfly(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    option_type: OptionType,
+    family_id: str,
+    master_symbols: frozenset[str] | None,
+    p1: ObservedP1Features | None,
+) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return _ineligible_binding(
+                strategy_id=family_id,
+                policy=policy,
+                all_candidates=all_candidates,
+                reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+            )
+        candidates = in_master
+    if market.trend is not TrendState.RANGE:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.DATA_INVALID,),
+        )
+
+    options = [
+        item
+        for item in candidates
+        if item.contract.option_type is option_type
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    combos: list[tuple[Decimal, FeatureSnapshot, FeatureSnapshot, FeatureSnapshot]] = []
+    for i in range(len(options)):
+        for j in range(i + 1, len(options)):
+            for k in range(j + 1, len(options)):
+                low, mid, high = sorted(
+                    (options[i], options[j], options[k]),
+                    key=lambda item: item.contract.strike or _ZERO,
+                )
+                if (
+                    low.contract.strike is None
+                    or mid.contract.strike is None
+                    or high.contract.strike is None
+                ):
+                    continue
+                if (
+                    high.contract.strike - mid.contract.strike
+                    != mid.contract.strike - low.contract.strike
+                ):
+                    continue
+                score = (
+                    _candidate_score(low, candidates, policy, p1=p1, role="long")
+                    + _candidate_score(mid, candidates, policy, p1=p1, role="short")
+                    + _candidate_score(high, candidates, policy, p1=p1, role="long")
+                ) / Decimal(3)
+                combos.append((_q(score), low, mid, high))
+
+    combos.sort(
+        key=lambda row: (
+            -row[0],
+            row[1].contract.symbol,
+            row[2].contract.symbol,
+            row[3].contract.symbol,
+        )
+    )
+    if not combos:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(_dominant_reason(candidates, policy),),
+        )
+
+    score, low, mid, high = combos[0]
+    selected_symbols = (low.contract.symbol, mid.contract.symbol, high.contract.symbol)
+    rejected = _rejected_symbols(all_candidates, selected_symbols)
+    return BoundCandidates(
+        binding=CandidateBinding(
+            strategy_id=family_id,
+            binding_version=policy.binding_version,
+            selected_symbols=selected_symbols,
+            score=score,
+            eligible=True,
+            rejected_symbols=rejected,
+        ),
+        candidates=(low, mid, high),
+        setup_features=_setup(
+            market,
+            low,
+            structure=StructureKind.DEBIT_SPREAD,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def _bind_long_volatility_pair(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    family_id: str,
+    same_strike: bool,
+    master_symbols: frozenset[str] | None,
+    p1: ObservedP1Features | None,
+) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return _ineligible_binding(
+                strategy_id=family_id,
+                policy=policy,
+                all_candidates=all_candidates,
+                reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+            )
+        candidates = in_master
+    if market.volatility is VolatilityState.COMPRESSED:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.DATA_INVALID,),
+        )
+
+    puts = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.PUT
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    calls = [
+        item
+        for item in candidates
+        if item.contract.option_type is OptionType.CALL
+        and _common_reason(item, policy) is None
+        and _dte_ok(item, policy)
+    ]
+    combos: list[tuple[Decimal, FeatureSnapshot, FeatureSnapshot]] = []
+    for put in puts:
+        for call in calls:
+            put_strike = put.contract.strike
+            call_strike = call.contract.strike
+            if put_strike is None or call_strike is None:
+                continue
+            if same_strike:
+                if put_strike != call_strike:
+                    continue
+            elif put_strike >= call_strike:
+                continue
+            score = (
+                _candidate_score(put, candidates, policy, p1=p1, role="long")
+                + _candidate_score(call, candidates, policy, p1=p1, role="long")
+            ) / Decimal(2)
+            combos.append((_q(score), put, call))
+
+    combos.sort(
+        key=lambda row: (-row[0], row[1].contract.symbol, row[2].contract.symbol)
+    )
+    if not combos:
+        return _ineligible_binding(
+            strategy_id=family_id,
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(_dominant_reason(candidates, policy),),
+        )
+
+    score, put, call = combos[0]
+    selected_symbols = (put.contract.symbol, call.contract.symbol)
+    rejected = _rejected_symbols(all_candidates, selected_symbols)
+    return BoundCandidates(
+        binding=CandidateBinding(
+            strategy_id=family_id,
+            binding_version=policy.binding_version,
+            selected_symbols=selected_symbols,
+            score=score,
+            eligible=True,
+            rejected_symbols=rejected,
+        ),
+        candidates=(put, call),
+        setup_features=_setup(
+            market,
+            put,
+            structure=StructureKind.DEBIT_SPREAD,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
+def _ineligible_binding(
+    *,
+    strategy_id: str,
+    policy: IdentificationPolicy,
+    all_candidates: tuple[FeatureSnapshot, ...],
+    reason_codes: tuple[ReasonCode, ...],
+) -> BoundCandidates:
+    return BoundCandidates(
+        binding=CandidateBinding(
+            strategy_id=strategy_id,
+            binding_version=policy.binding_version,
+            selected_symbols=(),
+            score=_ZERO,
+            eligible=False,
+            reason_codes=reason_codes,
+            rejected_symbols=tuple(sorted(c.contract.symbol for c in all_candidates)),
+        ),
+        candidates=(),
+        setup_features=None,
+    )
+
+
+def _rejected_symbols(
+    all_candidates: tuple[FeatureSnapshot, ...],
+    selected_symbols: tuple[str, ...],
+) -> tuple[str, ...]:
+    selected = set(selected_symbols)
+    return tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol not in selected
+        )
+    )
+
+
+def bind_m2_long_option(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    calendar: TradingCalendarPort | None = None,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+    allow_fallback_expiry: bool = False,
+) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return BoundCandidates(
+                binding=CandidateBinding(
+                    strategy_id="positional_long_option",
+                    binding_version=policy.binding_version,
+                    selected_symbols=(),
+                    score=_ZERO,
+                    eligible=False,
+                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+                    rejected_symbols=tuple(
+                        sorted(c.contract.symbol for c in all_candidates)
+                    ),
+                ),
+                candidates=(),
+                setup_features=None,
+            )
+        candidates = in_master
+
+    option_type = _direction_type(market)
+    if option_type is None:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="positional_long_option",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    cal = calendar or get_calendar_port()
+    as_of = cal.session_date(market.calculated_at)
+    listed_expiries = tuple(
+        set(
+            item.contract.expiry
+            for item in candidates
+            if item.contract.expiry is not None
+        )
+    )
+    expiry_sel: M2ExpirySelection = cal.select_m2_expiry(
+        listed_expiries, as_of=as_of, allow_fallback=allow_fallback_expiry
+    )
+    if not expiry_sel.eligible or expiry_sel.selected_expiry is None:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="positional_long_option",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(expiry_sel.reason_code,),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    expiry_candidates = tuple(
+        item
+        for item in candidates
+        if item.contract.expiry == expiry_sel.selected_expiry
+    )
+    eligible = [
+        item
+        for item in expiry_candidates
+        if item.contract.option_type is option_type
+        and _common_reason(item, policy) is None
+        and _abs_delta_in_range(item, Decimal("0.45"), Decimal("0.65"))
+    ]
+    if not eligible:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="positional_long_option",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(
+                    _dominant_reason(expiry_candidates or candidates, policy),
+                ),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    ranked = sorted(
+        (
+            (
+                _candidate_score(
+                    item,
+                    candidates,
+                    policy,
+                    delta_range=(Decimal("0.45"), Decimal("0.65")),
+                    p1=p1,
+                ),
+                item,
+            )
+            for item in eligible
+        ),
+        key=lambda pair: (-pair[0], pair[1].contract.symbol),
+    )
+    score, selected = ranked[0]
+    selected_symbol = selected.contract.symbol
+    rejected = tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol != selected_symbol
+        )
+    )
+    binding = CandidateBinding(
+        strategy_id="positional_long_option",
+        binding_version=policy.binding_version,
+        selected_symbols=(selected_symbol,),
+        score=score,
+        eligible=True,
+        rejected_symbols=rejected,
+    )
+    return BoundCandidates(
+        binding=binding,
+        candidates=(selected,),
+        setup_features=_setup(
+            market,
+            selected,
+            structure=StructureKind.LONG_OPTION,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+            dte=expiry_sel.dte,
+            extra_score_components={
+                "m2_dte": Decimal(expiry_sel.dte or 0),
+                "is_holiday_substituted": Decimal(
+                    1 if expiry_sel.is_holiday_substituted else 0
+                ),
+                "is_monthly_substituted": Decimal(
+                    1 if expiry_sel.is_monthly_substituted else 0
+                ),
+            },
+        ),
+    )
+
+
+def bind_m1_cas_option(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    market: MarketState,
+    policy: IdentificationPolicy,
+    calendar: TradingCalendarPort | None = None,
+    master_symbols: frozenset[str] | None = None,
+    p1: ObservedP1Features | None = None,
+    allow_0dte: bool = False,
+    delta_range: tuple[Decimal, Decimal] = (Decimal("0.20"), Decimal("0.40")),
+) -> BoundCandidates:
+    all_candidates = candidates
+    if master_symbols is not None:
+        in_master = tuple(
+            item for item in candidates if item.contract.symbol in master_symbols
+        )
+        if not in_master:
+            return BoundCandidates(
+                binding=CandidateBinding(
+                    strategy_id="cas_microstructure",
+                    binding_version=policy.binding_version,
+                    selected_symbols=(),
+                    score=_ZERO,
+                    eligible=False,
+                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
+                    rejected_symbols=tuple(
+                        sorted(c.contract.symbol for c in all_candidates)
+                    ),
+                ),
+                candidates=(),
+                setup_features=None,
+            )
+        candidates = in_master
+
+    option_type = _direction_type(market)
+    if option_type is None:
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="cas_microstructure",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    cal = calendar or get_calendar_port()
+    as_of = cal.session_date(market.calculated_at)
+
+    def _is_zero_dte(item: FeatureSnapshot) -> bool:
+        return bool(
+            (item.derivatives is not None and item.derivatives.days_to_expiry == 0)
+            or (
+                item.contract.expiry is not None
+                and (item.contract.expiry - as_of).days == 0
+            )
+        )
+
+    if not allow_0dte:
+        dte_candidates = tuple(item for item in candidates if not _is_zero_dte(item))
+    else:
+        dte_candidates = candidates
+
+    min_delta, max_delta = delta_range
+    eligible = [
+        item
+        for item in dte_candidates
+        if item.contract.option_type is option_type
+        and _common_reason(item, policy) is None
+        and _abs_delta_in_range(item, min_delta, max_delta)
+    ]
+    if not eligible:
+        if candidates and not dte_candidates:
+            reason = ReasonCode.EXPIRY_0_1_DTE_EXCLUDED
+        else:
+            reason = _dominant_reason(dte_candidates or candidates, policy)
+        return BoundCandidates(
+            binding=CandidateBinding(
+                strategy_id="cas_microstructure",
+                binding_version=policy.binding_version,
+                selected_symbols=(),
+                score=_ZERO,
+                eligible=False,
+                reason_codes=(reason,),
+                rejected_symbols=tuple(
+                    sorted(c.contract.symbol for c in all_candidates)
+                ),
+            ),
+            candidates=(),
+            setup_features=None,
+        )
+
+    ranked = sorted(
+        (
+            (
+                _candidate_score(
+                    item,
+                    candidates,
+                    policy,
+                    delta_range=delta_range,
+                    p1=p1,
+                ),
+                item,
+            )
+            for item in eligible
+        ),
+        key=lambda pair: (-pair[0], pair[1].contract.symbol),
+    )
+    score, selected = ranked[0]
+    selected_symbol = selected.contract.symbol
+    rejected = tuple(
+        sorted(
+            item.contract.symbol
+            for item in all_candidates
+            if item.contract.symbol != selected_symbol
+        )
+    )
+    binding = CandidateBinding(
+        strategy_id="cas_microstructure",
+        binding_version=policy.binding_version,
+        selected_symbols=(selected_symbol,),
+        score=score,
+        eligible=True,
+        rejected_symbols=rejected,
+    )
+    return BoundCandidates(
+        binding=binding,
+        candidates=(selected,),
+        setup_features=_setup(
+            market,
+            selected,
+            structure=StructureKind.CAS_OPTION,
+            score=score,
+            policy=policy,
+            rejected=rejected,
+            p1=p1,
+        ),
+    )
+
+
 def _common_reason(  # noqa: PLR0911 - explicit fail-closed gate precedence
     candidate: FeatureSnapshot, policy: IdentificationPolicy
 ) -> ReasonCode | None:
@@ -245,20 +1624,18 @@ def _dte_ok(candidate: FeatureSnapshot, policy: IdentificationPolicy) -> bool:
 
 
 def _long_delta_ok(candidate: FeatureSnapshot, policy: IdentificationPolicy) -> bool:
-    delta = _abs_delta(candidate)
-    return (
-        delta is not None
-        and policy.contracts.long_delta_min <= delta <= policy.contracts.long_delta_max
+    return _abs_delta_in_range(
+        candidate,
+        policy.contracts.long_delta_min,
+        policy.contracts.long_delta_max,
     )
 
 
 def _short_delta_ok(candidate: FeatureSnapshot, policy: IdentificationPolicy) -> bool:
-    delta = _abs_delta(candidate)
-    return (
-        delta is not None
-        and policy.contracts.short_delta_min
-        <= delta
-        <= policy.contracts.short_delta_max
+    return _abs_delta_in_range(
+        candidate,
+        policy.contracts.short_delta_min,
+        policy.contracts.short_delta_max,
     )
 
 
@@ -290,6 +1667,41 @@ def _valid_debit_pair(  # noqa: PLR0911 - invalid payoff conditions fail closed
         return False
     reward_risk = (width - debit) / debit
     return reward_risk >= policy.contracts.min_reward_risk
+
+
+def _valid_credit_pair(  # noqa: PLR0911 - invalid payoff conditions fail closed
+    long_leg: FeatureSnapshot,
+    short_leg: FeatureSnapshot,
+    option_type: OptionType,
+    policy: IdentificationPolicy,
+    *,
+    max_risk_ratio: Decimal | None = None,
+) -> bool:
+    if long_leg.contract.expiry != short_leg.contract.expiry:
+        return False
+    long_strike, short_strike = long_leg.contract.strike, short_leg.contract.strike
+    if long_strike is None or short_strike is None or long_strike == short_strike:
+        return False
+    if option_type is OptionType.PUT and long_strike >= short_strike:
+        return False
+    if option_type is OptionType.CALL and long_strike <= short_strike:
+        return False
+    long_ask, short_bid = long_leg.market.ask, short_leg.market.bid
+    if long_ask is None or short_bid is None:
+        return False
+    lot = long_leg.features.get("lot_size")
+    if lot is None or lot <= 0:
+        return False
+    cost_points = policy.contracts.estimated_round_trip_cost_per_lot / lot
+    net_credit = short_bid.value - long_ask.value - cost_points
+    width = abs(short_strike - long_strike)
+    if net_credit <= 0 or net_credit >= width:
+        return False
+    cap = max_risk_ratio
+    if cap is None:
+        cap = getattr(policy.contracts, "max_risk_ratio", Decimal("4.0"))
+    risk = width - net_credit
+    return (risk / net_credit) <= cap
 
 
 def _candidate_score(
@@ -508,6 +1920,8 @@ def _setup(
     policy: IdentificationPolicy,
     rejected: tuple[str, ...],
     p1: ObservedP1Features | None = None,
+    dte: int | None = None,
+    extra_score_components: dict[str, Decimal] | None = None,
 ) -> SetupFeatures:
     derivatives = candidate.derivatives
     if derivatives is None:
@@ -516,19 +1930,23 @@ def _setup(
     spread = _spread_fraction(candidate)
     if spread is None:
         raise ValueError("setup features require a valid observed spread")
+    score_components = {
+        "contract_binding": score,
+        "trend_strength": abs(market.trend_score or _ZERO),
+    }
+    if extra_score_components:
+        score_components.update(extra_score_components)
+    resolved_dte = dte if dte is not None else derivatives.days_to_expiry
     return SetupFeatures(
         identification_rule_version=policy.policy_version,
         router_version=policy.router_version,
         market_state_id=market.market_state_id,
         raw_setup_score=score,
-        score_components={
-            "contract_binding": score,
-            "trend_strength": abs(market.trend_score or _ZERO),
-        },
+        score_components=score_components,
         trend=market.trend,
         volatility=market.volatility,
         structure=structure,
-        dte=derivatives.days_to_expiry,
+        dte=resolved_dte,
         delta=None if greeks is None else greeks.delta,
         implied_volatility=None if greeks is None else greeks.implied_volatility,
         iv_percentile=market.iv_percentile,
@@ -559,6 +1977,13 @@ def _abs_delta(candidate: FeatureSnapshot) -> Decimal | None:
         return None
     delta = derivatives.greeks.delta
     return None if delta is None else abs(delta)
+
+
+def _abs_delta_in_range(
+    candidate: FeatureSnapshot, min_delta: Decimal, max_delta: Decimal
+) -> bool:
+    delta = _abs_delta(candidate)
+    return delta is not None and min_delta <= delta <= max_delta
 
 
 def _spread_fraction(candidate: FeatureSnapshot) -> Decimal | None:

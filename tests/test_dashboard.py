@@ -30,6 +30,7 @@ def _make_repo(root: Path) -> None:
         root / "config" / "paper_session.yaml",
         {
             "store_path": "data/paper/trading.sqlite",
+            "portfolio_risk_dir": "data/paper/portfolio_risk",
             "strategy_ids": ["positional_long_option", "debit_spread"],
             "strategy_stances": {
                 "positional_long_option": "PAPER",
@@ -157,3 +158,79 @@ def test_empty_store_is_not_reported_as_healthy(
 def test_remote_path_preserves_home_expansion() -> None:
     assert _remote_path("~/fno-automated") == '"$HOME"/fno-automated'
     assert _remote_path("/srv/trading desk") == "'/srv/trading desk'"
+
+
+def test_snapshot_includes_supervision_and_cycle_evidence(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    _make_repo(tmp_path)
+    daemon_path = tmp_path / "data" / "daemon_heartbeat.json"
+    daemon_path.parent.mkdir(parents=True, exist_ok=True)
+    daemon_path.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-22T05:00:00+00:00",
+                "phase": "MARKET_ACTIVE",
+            }
+        ),
+        encoding="utf-8",
+    )
+    session_hb = tmp_path / "data" / "paper" / "session_heartbeat.json"
+    session_hb.parent.mkdir(parents=True, exist_ok=True)
+    session_hb.write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-22T05:01:00+00:00",
+                "cycle_count": 2,
+                "route_winner": "debit_spread",
+                "system_state": "READY",
+            }
+        ),
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "data" / "paper" / "trading.sqlite"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "INSERT INTO trading_events VALUES (2,?,?,?,?,?)",
+        (
+            "CYC-1",
+            "cycle_evidence",
+            json.dumps(
+                {
+                    "schema_version": "1",
+                    "cycle_id": "CYC-1",
+                    "as_of": "2026-09-22T05:01:00+00:00",
+                    "system_state": "READY",
+                    "entries_blocked": False,
+                    "reconcile_id": "REC-1",
+                    "route_decision": {
+                        "schema_version": "1",
+                        "route_id": "R-1",
+                        "router_version": "router-v1",
+                        "market_state_id": "MS-1",
+                        "paper_winner": "debit_spread",
+                    },
+                    "strategies": [],
+                }
+            ),
+            None,
+            "2026-09-22T05:01:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setattr(collector, "_systemd", lambda _root: [])
+    monkeypatch.setattr(collector, "_run", lambda *_args, **_kwargs: "testrev")
+    monkeypatch.setattr(
+        collector,
+        "_host",
+        lambda _root: {"hostname": "test", "load_average": [0, 0, 0]},
+    )
+
+    snapshot = collector.build_dashboard_snapshot(tmp_path, source="test")
+
+    assert snapshot["supervision"]["daemon"]["phase"] == "MARKET_ACTIVE"
+    assert snapshot["supervision"]["paper_session"]["route_winner"] == "debit_spread"
+    assert snapshot["latest_cycle"]["cycle_id"] == "CYC-1"
+    assert any(layer["id"] == "L0" for layer in snapshot["layers"])
+    assert snapshot["execution"]["event_counts"]["cycle_evidence"] == 1

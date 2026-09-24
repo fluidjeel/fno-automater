@@ -5,9 +5,11 @@ Invariant 24: kill-switch actions are independently callable and tested.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum, unique
+from typing import Any
 
 from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
@@ -18,7 +20,7 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.portfolio import PortfolioSnapshot
-from trading.domain.enums import ReasonCode, Trigger
+from trading.domain.enums import ModeId, ReasonCode, Trigger
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Rounding
 
@@ -46,6 +48,11 @@ class SafetyControlKind(StrEnum):
     DAILY_LOSS_KILL_SWITCH = "DAILY_LOSS_KILL_SWITCH"
     GLOBAL_HALT = "GLOBAL_HALT"
     GLOBAL_HALT_RELEASE = "GLOBAL_HALT_RELEASE"
+    MODE_HALT = "MODE_HALT"
+    MODE_HALT_RELEASE = "MODE_HALT_RELEASE"
+    MODE_DAILY_LOSS_KILL_SWITCH = "MODE_DAILY_LOSS_KILL_SWITCH"
+    MODE_ENTRY_FREEZE = "MODE_ENTRY_FREEZE"
+    MODE_ENTRY_FREEZE_RELEASE = "MODE_ENTRY_FREEZE_RELEASE"
 
 
 class SafetyControlEvent(VersionedModel):
@@ -67,6 +74,13 @@ class SafetyControlEvent(VersionedModel):
     new_halted_strategies: tuple[NonEmptyStr, ...] = ()
     reason_codes: tuple[ReasonCode, ...]
     recorded_at: UtcDatetime
+    # Mode-level state snapshots
+    prior_halted_modes: tuple[str, ...] = ()
+    new_halted_modes: tuple[str, ...] = ()
+    prior_mode_daily_loss_switches: tuple[str, ...] = ()
+    new_mode_daily_loss_switches: tuple[str, ...] = ()
+    prior_mode_entry_frozen: tuple[str, ...] = ()
+    new_mode_entry_frozen: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +90,9 @@ class _SafetyState:
     daily_loss_kill_switch: bool = False
     halted_strategies: frozenset[str] = frozenset()
     protection_degraded: bool = False
+    halted_modes: frozenset[ModeId] = frozenset()
+    mode_daily_loss_switches: frozenset[ModeId] = frozenset()
+    mode_entry_frozen: frozenset[ModeId] = frozenset()
 
 
 class SafetyControls:
@@ -117,6 +134,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -142,6 +162,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -168,6 +191,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies | {strategy_id},
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -194,6 +220,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies - {strategy_id},
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -219,6 +248,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -244,6 +276,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -275,16 +310,155 @@ class SafetyControls:
                 daily_loss_kill_switch=True,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=state.protection_degraded,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
-    def blocks_entry(self, strategy_id: str | None = None) -> bool:
+    def freeze_mode_entries(
+        self,
+        mode_id: ModeId,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Freeze new entries for one mode without affecting other modes."""
+        return self._apply_mode(
+            kind=SafetyControlKind.MODE_ENTRY_FREEZE,
+            mode_id=mode_id,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.ENTRY_FROZEN,),
+            mutate=lambda state: dataclasses.replace(
+                state,
+                mode_entry_frozen=state.mode_entry_frozen | {mode_id},
+            ),
+        )
+
+    def release_mode_entry_freeze(
+        self,
+        mode_id: ModeId,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Release a per-mode entry freeze."""
+        return self._apply_mode(
+            kind=SafetyControlKind.MODE_ENTRY_FREEZE_RELEASE,
+            mode_id=mode_id,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.OK,),
+            mutate=lambda state: dataclasses.replace(
+                state,
+                mode_entry_frozen=state.mode_entry_frozen - {mode_id},
+            ),
+        )
+
+    def halt_mode(
+        self,
+        mode_id: ModeId,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Halt all new entries for a mode and add it to the halted set."""
+        return self._apply_mode(
+            kind=SafetyControlKind.MODE_HALT,
+            mode_id=mode_id,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.STRATEGY_HALTED,),
+            mutate=lambda state: dataclasses.replace(
+                state,
+                halted_modes=state.halted_modes | {mode_id},
+                mode_entry_frozen=state.mode_entry_frozen | {mode_id},
+            ),
+        )
+
+    def release_mode_halt(
+        self,
+        mode_id: ModeId,
+        *,
+        actor: str,
+        scope: str,
+        incident_id: str | None = None,
+        trigger: Trigger = Trigger.OPERATOR,
+    ) -> SafetyControlEvent:
+        """Release a per-mode halt."""
+        return self._apply_mode(
+            kind=SafetyControlKind.MODE_HALT_RELEASE,
+            mode_id=mode_id,
+            actor=actor,
+            scope=scope,
+            incident_id=incident_id,
+            trigger=trigger,
+            reason_codes=(ReasonCode.OK,),
+            mutate=lambda state: dataclasses.replace(
+                state,
+                halted_modes=state.halted_modes - {mode_id},
+                mode_entry_frozen=state.mode_entry_frozen - {mode_id},
+            ),
+        )
+
+    def evaluate_mode_daily_loss(
+        self,
+        mode_id: ModeId,
+        ledger: Any,  # ModeLedger (use Any to avoid circular import)
+        *,
+        scope: str,
+        trigger: Trigger = Trigger.SCHEDULER,
+        daily_budget_cap_fraction: Any = None,  # Decimal
+    ) -> SafetyControlEvent | None:
+        """Latch mode daily-loss kill switch when the mode cap is breached."""
+        if mode_id in self._state.mode_daily_loss_switches:
+            return None
+        if daily_budget_cap_fraction is None:
+            return None
+        if not ledger.daily_loss_breached(daily_budget_cap_fraction):
+            return None
+        return self._apply_mode(
+            kind=SafetyControlKind.MODE_DAILY_LOSS_KILL_SWITCH,
+            mode_id=mode_id,
+            actor="risk-engine",
+            scope=scope,
+            trigger=trigger,
+            reason_codes=(
+                ReasonCode.RISK_LIMIT_DAILY_LOSS,
+                ReasonCode.ENTRY_FROZEN,
+            ),
+            mutate=lambda state: dataclasses.replace(
+                state,
+                mode_daily_loss_switches=state.mode_daily_loss_switches | {mode_id},
+                mode_entry_frozen=state.mode_entry_frozen | {mode_id},
+            ),
+        )
+
+    def blocks_entry(
+        self,
+        strategy_id: str | None = None,
+        mode_id: ModeId | None = None,
+    ) -> bool:
         """Return whether new exposure is blocked by an active control."""
-        return bool(self.entry_block_reasons(strategy_id))
+        return bool(self.entry_block_reasons(strategy_id, mode_id))
 
     def entry_block_reasons(
         self,
         strategy_id: str | None = None,
+        mode_id: ModeId | None = None,
     ) -> tuple[ReasonCode, ...]:
         """Return machine-readable reasons blocking new exposure."""
         reasons: list[ReasonCode] = []
@@ -296,6 +470,14 @@ class SafetyControls:
             reasons.append(ReasonCode.PROTECTION_DEGRADED)
         if strategy_id is not None and strategy_id in self._state.halted_strategies:
             reasons.append(ReasonCode.STRATEGY_HALTED)
+        if mode_id is not None:
+            if mode_id in self._state.mode_daily_loss_switches:
+                reasons.append(ReasonCode.RISK_LIMIT_DAILY_LOSS)
+                reasons.append(ReasonCode.ENTRY_FROZEN)
+            if mode_id in self._state.halted_modes:
+                reasons.append(ReasonCode.STRATEGY_HALTED)
+            if mode_id in self._state.mode_entry_frozen:
+                reasons.append(ReasonCode.ENTRY_FROZEN)
         return tuple(dict.fromkeys(reasons))
 
     def degrade_protection(
@@ -320,6 +502,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=True,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -345,6 +530,9 @@ class SafetyControls:
                 daily_loss_kill_switch=state.daily_loss_kill_switch,
                 halted_strategies=state.halted_strategies,
                 protection_degraded=False,
+                halted_modes=state.halted_modes,
+                mode_daily_loss_switches=state.mode_daily_loss_switches,
+                mode_entry_frozen=state.mode_entry_frozen,
             ),
         )
 
@@ -379,6 +567,43 @@ class SafetyControls:
             new_halted_strategies=tuple(sorted(new_state.halted_strategies)),
             reason_codes=reason_codes,
             recorded_at=self._clock.now_utc(),
+            prior_halted_modes=tuple(sorted(m.value for m in prior.halted_modes)),
+            new_halted_modes=tuple(sorted(m.value for m in new_state.halted_modes)),
+            prior_mode_daily_loss_switches=tuple(
+                sorted(m.value for m in prior.mode_daily_loss_switches)
+            ),
+            new_mode_daily_loss_switches=tuple(
+                sorted(m.value for m in new_state.mode_daily_loss_switches)
+            ),
+            prior_mode_entry_frozen=tuple(
+                sorted(m.value for m in prior.mode_entry_frozen)
+            ),
+            new_mode_entry_frozen=tuple(
+                sorted(m.value for m in new_state.mode_entry_frozen)
+            ),
+        )
+
+    def _apply_mode(
+        self,
+        *,
+        kind: SafetyControlKind,
+        mode_id: ModeId,
+        actor: str,
+        scope: str,
+        trigger: Trigger,
+        reason_codes: tuple[ReasonCode, ...],
+        mutate: Callable[[_SafetyState], _SafetyState],
+        incident_id: str | None = None,
+    ) -> SafetyControlEvent:
+        """Apply a mode-scoped state mutation and return an audit event."""
+        return self._apply(
+            kind=kind,
+            actor=actor,
+            scope=scope,
+            trigger=trigger,
+            reason_codes=reason_codes,
+            mutate=mutate,
+            incident_id=incident_id,
         )
 
 

@@ -764,9 +764,9 @@ def test_exit_depth_gap_does_not_block_software_stop(tmp_path: Path) -> None:
     complete = option.model_copy(
         update={
             "market": f.quote(
-                bid=f.price("91.95"),
-                ask=f.price("92.00"),
-                last=f.price("92.00"),
+                bid=f.price("49.95"),
+                ask=f.price("50.00"),
+                last=f.price("50.00"),
                 volume=4000,
                 bid_size=300,
                 ask_size=300,

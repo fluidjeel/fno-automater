@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -16,7 +17,8 @@ from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
 from trading.domain.contracts.exposure import ExposureReport
 from trading.domain.contracts.instrument import InstrumentSpec
-from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.intent import IntentLeg, TradeIntent
+from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.portfolio import PortfolioSnapshot
 from trading.domain.contracts.risk import ApprovedLeg, LegQuoteRef, RiskDecision
@@ -25,6 +27,7 @@ from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
     DataQuality,
     InstrumentKind,
+    ModeId,
     ReasonCode,
     ReservationState,
     RiskAction,
@@ -33,13 +36,20 @@ from trading.domain.enums import (
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Lots, LotSize, Money, Percent
 from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
+from trading.research.registry import is_experimental_off_strict_book
 from trading.risk.limits import (
     build_sizing_limits,
     evaluate_exposure_limits,
     evaluate_pre_trade_limits,
     project_post_trade_exposure,
 )
+from trading.risk.mode_ledger import FourModeBook
 from trading.risk.reservation import CapitalReservationService
+from trading.risk.sizing.butterfly import (
+    ButterflyLegs,
+    LongButterflySizingEngine,
+    is_long_butterfly,
+)
 from trading.risk.sizing.commodity_future import (
     CommodityFutureSizingEngine,
     is_commodity_future,
@@ -54,12 +64,23 @@ from trading.risk.sizing.debit_spread import (
     is_debit_spread,
     spread_legs,
 )
+from trading.risk.sizing.iron_butterfly import (
+    IronButterflyLegs,
+    IronButterflySizingEngine,
+    is_iron_butterfly,
+)
 from trading.risk.sizing.iron_condor import (
     IronCondorLegs,
     IronCondorSizingEngine,
     is_iron_condor,
 )
 from trading.risk.sizing.long_option import LongOptionSizingEngine, LotBounds
+from trading.risk.sizing.long_volatility import (
+    LongStraddleSizingEngine,
+    LongStrangleSizingEngine,
+    is_long_straddle,
+    is_long_strangle,
+)
 from trading.risk.snapshot_bundle import validate_leg_snapshot_bundle
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 
@@ -76,6 +97,10 @@ class _StructureKind(StrEnum):
     DEBIT_SPREAD = "DEBIT_SPREAD"
     CREDIT_SPREAD = "CREDIT_SPREAD"
     IRON_CONDOR = "IRON_CONDOR"
+    IRON_BUTTERFLY = "IRON_BUTTERFLY"
+    LONG_BUTTERFLY = "LONG_BUTTERFLY"
+    LONG_STRADDLE = "LONG_STRADDLE"
+    LONG_STRANGLE = "LONG_STRANGLE"
     COMMODITY_FUTURE = "COMMODITY_FUTURE"
 
 
@@ -113,6 +138,14 @@ class _SnapshotAudit(TypedDict):
     leg_quotes: tuple[LegQuoteRef, ...]
 
 
+@functools.lru_cache(maxsize=1)
+def _get_cached_modes_config() -> ModesConfig | None:
+    try:
+        return load_modes_config()
+    except Exception:
+        return None
+
+
 class RiskGateway:
     """Deterministic pre-trade gate: size, limit-check, reserve, decide."""
 
@@ -125,6 +158,9 @@ class RiskGateway:
         margin_preview: MarginPreviewPort,
         clock: Clock,
         id_factory: IdFactory,
+        nifty_only_execution: bool = True,
+        modes_config: ModesConfig | None = None,
+        mode_book: FourModeBook | None = None,
     ) -> None:
         self._account_config = account_config
         self._risk_policy = risk_policy
@@ -132,13 +168,30 @@ class RiskGateway:
         self._margin_preview = margin_preview
         self._clock = clock
         self._ids = id_factory
+        self._nifty_only_execution = nifty_only_execution
+        self._modes_config = modes_config or _get_cached_modes_config()
+        if mode_book is not None:
+            self._mode_book: FourModeBook | None = mode_book
+        elif self._modes_config is not None:
+            self._mode_book = FourModeBook(modes_config=self._modes_config)
+        else:
+            self._mode_book = None
         self._long_option_sizer = LongOptionSizingEngine()
         self._debit_spread_sizer = DebitSpreadSizingEngine()
         self._credit_spread_sizer = CreditSpreadSizingEngine()
         self._iron_condor_sizer = IronCondorSizingEngine()
+        self._iron_butterfly_sizer = IronButterflySizingEngine()
+        self._long_butterfly_sizer = LongButterflySizingEngine()
+        self._long_straddle_sizer = LongStraddleSizingEngine()
+        self._long_strangle_sizer = LongStrangleSizingEngine()
         self._commodity_future_sizer = CommodityFutureSizingEngine()
 
-    def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:  # noqa: PLR0915
+    @property
+    def mode_book(self) -> FourModeBook | None:
+        """Four-mode capital book, if configured."""
+        return self._mode_book
+
+    def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:
         """Return an approval with reserved capital or a machine-readable rejection."""
         now = self._clock.now_utc()
         intent = request.intent
@@ -185,6 +238,18 @@ class RiskGateway:
                 audit=audit,
             )
 
+        if self._nifty_only_execution and (
+            request.instrument.underlying != "NIFTY"
+            or request.instrument.instrument_kind is not InstrumentKind.OPTION
+        ):
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(ReasonCode.NON_NIFTY_EXECUTION_REJECTED,),
+                decided_at=now,
+                audit=audit,
+            )
+
         structure = _detect_structure(request)
         if structure is None:
             return self._reject(
@@ -194,6 +259,51 @@ class RiskGateway:
                 decided_at=now,
                 audit=audit,
             )
+
+        if is_experimental_off_strict_book(intent.family_id):
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(ReasonCode.CALENDAR_EXPERIMENTAL_OFF_STRICT_BOOK,),
+                decided_at=now,
+                audit=audit,
+            )
+
+        if intent.mode_id is not None:
+            if intent.family_id is None:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(ReasonCode.MODE_FAMILY_NOT_PERMITTED,),
+                    decided_at=now,
+                    audit=audit,
+                )
+            modes_cfg = self._modes_config or _get_cached_modes_config()
+            if modes_cfg is not None and intent.mode_id in modes_cfg.modes:
+                allowed_families = {
+                    f.value if hasattr(f, "value") else str(f)
+                    for f in modes_cfg.modes[intent.mode_id].allowed_families
+                }
+                if intent.family_id not in allowed_families:
+                    return self._reject(
+                        intent,
+                        portfolio,
+                        reason_codes=(ReasonCode.MODE_FAMILY_NOT_PERMITTED,),
+                        decided_at=now,
+                        audit=audit,
+                    )
+            if intent.mode_id == ModeId.M3_TACTICAL_POSITIONAL and (
+                structure is _StructureKind.LONG_OPTION
+                or len(intent.legs) == 1
+                or intent.family_id in {"long_call", "long_put"}
+            ):
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(ReasonCode.MODE_FAMILY_NOT_PERMITTED,),
+                    decided_at=now,
+                    audit=audit,
+                )
         if any(
             leg.side is Side.SELL for leg in intent.legs
         ) and not _short_is_admissible(structure, policy):
@@ -250,7 +360,7 @@ class RiskGateway:
                     audit=audit,
                 )
 
-        if not policy.has_allocation(intent.strategy_id):
+        if intent.mode_id is None and not policy.has_allocation(intent.strategy_id):
             # Fail closed: build_sizing_limits raises for an unlisted strategy,
             # and a configuration gap must surface as a machine-readable
             # rejection rather than an exception out of the decision path.
@@ -263,12 +373,19 @@ class RiskGateway:
                 audit=audit,
             )
 
+        mode_ledger = None
+        if intent.mode_id is not None and self._mode_book is not None:
+            mode_ledger = self._mode_book.get_ledger(intent.mode_id)
+
         limits = build_sizing_limits(
             portfolio,
             account_risk,
             policy,
             intent.strategy_id,
             config_version=self._account_config.version,
+            mode_id=intent.mode_id,
+            modes_config=self._modes_config,
+            mode_ledger=mode_ledger,
         )
         sizing_request = SizingRequest(
             request_id=self._ids.new_id("SIZE-REQ"),
@@ -290,6 +407,10 @@ class RiskGateway:
                 debit_spread_sizer=self._debit_spread_sizer,
                 credit_spread_sizer=self._credit_spread_sizer,
                 iron_condor_sizer=self._iron_condor_sizer,
+                iron_butterfly_sizer=self._iron_butterfly_sizer,
+                long_butterfly_sizer=self._long_butterfly_sizer,
+                long_straddle_sizer=self._long_straddle_sizer,
+                long_strangle_sizer=self._long_strangle_sizer,
                 commodity_future_sizer=self._commodity_future_sizer,
                 margin_preview=self._margin_preview,
                 account_id=self._account_config.config.account_id,
@@ -304,7 +425,12 @@ class RiskGateway:
                 audit=audit,
             )
         if sizing.approved_lots <= 0:
-            reason = _zero_lot_reason(sizing.bounds)
+            reason = _zero_lot_reason(sizing.bounds, mode_id=intent.mode_id)
+            if intent.mode_id is not None and (
+                sizing.bounds.risk_lots <= 0
+                or sizing.recalculated_max_loss > limits.max_loss_per_trade
+            ):
+                reason = ReasonCode.MIN_LOT_EXCEEDS_BUDGET
             return self._reject(
                 intent,
                 portfolio,
@@ -343,9 +469,7 @@ class RiskGateway:
             )
 
         if request.exposure_report is not None:
-            exposure_check = evaluate_exposure_limits(
-                request.exposure_report, policy
-            )
+            exposure_check = evaluate_exposure_limits(request.exposure_report, policy)
             if not exposure_check.passed:
                 return self._reject(
                     intent,
@@ -363,6 +487,8 @@ class RiskGateway:
             amount=sizing.recalculated_max_loss,
             margin_available=limits.margin_available,
             risk_decision_id=decision_id,
+            mode_id=intent.mode_id,
+            idempotency_key=intent.intent_id,
         )
         if reservation.state is not ReservationState.RESERVED:
             reason = (
@@ -377,6 +503,8 @@ class RiskGateway:
                 decided_at=now,
                 audit=audit,
             )
+        if self._mode_book is not None and intent.mode_id is not None:
+            self._mode_book.try_reserve(intent.mode_id, sizing.recalculated_max_loss)
 
         post_trade = project_post_trade_exposure(
             portfolio,
@@ -454,6 +582,14 @@ def _detect_structure(request: RiskGatewayRequest) -> _StructureKind | None:
     intent = request.intent
     if is_iron_condor(intent):
         return _StructureKind.IRON_CONDOR
+    if is_iron_butterfly(intent):
+        return _StructureKind.IRON_BUTTERFLY
+    if is_long_butterfly(intent):
+        return _StructureKind.LONG_BUTTERFLY
+    if is_long_straddle(intent):
+        return _StructureKind.LONG_STRADDLE
+    if is_long_strangle(intent):
+        return _StructureKind.LONG_STRANGLE
     if is_debit_spread(intent):
         return _StructureKind.DEBIT_SPREAD
     if is_credit_spread(intent):
@@ -553,6 +689,10 @@ def _is_defined_risk(structure: _StructureKind) -> bool:
         _StructureKind.DEBIT_SPREAD,
         _StructureKind.CREDIT_SPREAD,
         _StructureKind.IRON_CONDOR,
+        _StructureKind.IRON_BUTTERFLY,
+        _StructureKind.LONG_BUTTERFLY,
+        _StructureKind.LONG_STRADDLE,
+        _StructureKind.LONG_STRANGLE,
     }
 
 
@@ -582,6 +722,10 @@ def _is_multi_leg(structure: _StructureKind) -> bool:
         _StructureKind.DEBIT_SPREAD,
         _StructureKind.CREDIT_SPREAD,
         _StructureKind.IRON_CONDOR,
+        _StructureKind.IRON_BUTTERFLY,
+        _StructureKind.LONG_BUTTERFLY,
+        _StructureKind.LONG_STRADDLE,
+        _StructureKind.LONG_STRANGLE,
     }
 
 
@@ -610,6 +754,10 @@ def _compute_sizing_outcome(
     debit_spread_sizer: DebitSpreadSizingEngine,
     credit_spread_sizer: CreditSpreadSizingEngine,
     iron_condor_sizer: IronCondorSizingEngine,
+    iron_butterfly_sizer: IronButterflySizingEngine,
+    long_butterfly_sizer: LongButterflySizingEngine,
+    long_straddle_sizer: LongStraddleSizingEngine,
+    long_strangle_sizer: LongStrangleSizingEngine,
     commodity_future_sizer: CommodityFutureSizingEngine,
     margin_preview: MarginPreviewPort,
     account_id: str,
@@ -730,6 +878,160 @@ def _compute_sizing_outcome(
             net_delta_delta=net_delta_delta,
         )
 
+    if structure is _StructureKind.IRON_BUTTERFLY:
+        try:
+            butterfly_sizing = iron_butterfly_sizer.size(
+                sizing_request,
+                request.leg_snapshots,
+                policy,
+                margin_preview,
+                account_id=account_id,
+                account_risk=account_risk,
+                preview_request_id=preview_request_id,
+                lot_size=lot_size,
+            )
+        except ValueError as exc:
+            raise _SizingError(str(exc)) from exc
+        approved_lots = butterfly_sizing.approved_lots
+        approved_legs = _approved_iron_butterfly_legs(
+            butterfly_sizing.legs,
+            approved_lots,
+            butterfly_sizing.lot_size,
+        )
+        net_delta_delta = (
+            _spread_net_delta_delta(
+                request.leg_snapshots,
+                approved_lots,
+                butterfly_sizing.lot_size,
+            )
+            if approved_lots > 0
+            else 0
+        )
+        return _SizingOutcome(
+            approved_lots=approved_lots,
+            bounds=butterfly_sizing.bounds,
+            recalculated_max_loss=butterfly_sizing.recalculated_max_loss,
+            estimated_margin=butterfly_sizing.estimated_margin,
+            approved_legs=approved_legs,
+            net_delta_delta=net_delta_delta,
+        )
+
+    if structure is _StructureKind.LONG_BUTTERFLY:
+        try:
+            fly_sizing = long_butterfly_sizer.size(
+                sizing_request,
+                request.leg_snapshots,
+                policy,
+                margin_preview,
+                account_id=account_id,
+                account_risk=account_risk,
+                preview_request_id=preview_request_id,
+                lot_size=lot_size,
+            )
+        except ValueError as exc:
+            raise _SizingError(str(exc)) from exc
+        approved_lots = fly_sizing.approved_lots
+        approved_legs = _approved_butterfly_legs(
+            fly_sizing.legs,
+            approved_lots,
+            fly_sizing.lot_size,
+        )
+        net_delta_delta = (
+            _spread_net_delta_delta(
+                request.leg_snapshots,
+                approved_lots,
+                fly_sizing.lot_size,
+            )
+            if approved_lots > 0
+            else 0
+        )
+        return _SizingOutcome(
+            approved_lots=approved_lots,
+            bounds=fly_sizing.bounds,
+            recalculated_max_loss=fly_sizing.recalculated_max_loss,
+            estimated_margin=fly_sizing.estimated_margin,
+            approved_legs=approved_legs,
+            net_delta_delta=net_delta_delta,
+        )
+
+    if structure is _StructureKind.LONG_STRADDLE:
+        try:
+            straddle_sizing = long_straddle_sizer.size(
+                sizing_request,
+                request.leg_snapshots,
+                policy,
+                margin_preview,
+                account_id=account_id,
+                account_risk=account_risk,
+                preview_request_id=preview_request_id,
+                lot_size=lot_size,
+            )
+        except ValueError as exc:
+            raise _SizingError(str(exc)) from exc
+        approved_lots = straddle_sizing.approved_lots
+        approved_legs = _approved_volatility_legs(
+            straddle_sizing.call_leg,
+            straddle_sizing.put_leg,
+            approved_lots,
+            straddle_sizing.lot_size,
+        )
+        net_delta_delta = (
+            _spread_net_delta_delta(
+                request.leg_snapshots,
+                approved_lots,
+                straddle_sizing.lot_size,
+            )
+            if approved_lots > 0
+            else 0
+        )
+        return _SizingOutcome(
+            approved_lots=approved_lots,
+            bounds=straddle_sizing.bounds,
+            recalculated_max_loss=straddle_sizing.recalculated_max_loss,
+            estimated_margin=straddle_sizing.estimated_margin,
+            approved_legs=approved_legs,
+            net_delta_delta=net_delta_delta,
+        )
+
+    if structure is _StructureKind.LONG_STRANGLE:
+        try:
+            strangle_sizing = long_strangle_sizer.size(
+                sizing_request,
+                request.leg_snapshots,
+                policy,
+                margin_preview,
+                account_id=account_id,
+                account_risk=account_risk,
+                preview_request_id=preview_request_id,
+                lot_size=lot_size,
+            )
+        except ValueError as exc:
+            raise _SizingError(str(exc)) from exc
+        approved_lots = strangle_sizing.approved_lots
+        approved_legs = _approved_volatility_legs(
+            strangle_sizing.call_leg,
+            strangle_sizing.put_leg,
+            approved_lots,
+            strangle_sizing.lot_size,
+        )
+        net_delta_delta = (
+            _spread_net_delta_delta(
+                request.leg_snapshots,
+                approved_lots,
+                strangle_sizing.lot_size,
+            )
+            if approved_lots > 0
+            else 0
+        )
+        return _SizingOutcome(
+            approved_lots=approved_lots,
+            bounds=strangle_sizing.bounds,
+            recalculated_max_loss=strangle_sizing.recalculated_max_loss,
+            estimated_margin=strangle_sizing.estimated_margin,
+            approved_legs=approved_legs,
+            net_delta_delta=net_delta_delta,
+        )
+
     if structure is _StructureKind.COMMODITY_FUTURE:
         try:
             future_sizing = commodity_future_sizer.size(
@@ -837,12 +1139,83 @@ def _approved_credit_spread_legs(
     short_leg, long_leg = credit_spread_legs(intent)
     return (
         ApprovedLeg(
-            leg_id=short_leg.leg_id,
+            leg_id=long_leg.leg_id,
             lots=Lots(approved_lots),
             lot_size=lot_size,
         ),
         ApprovedLeg(
-            leg_id=long_leg.leg_id,
+            leg_id=short_leg.leg_id,
+            lots=Lots(approved_lots),
+            lot_size=lot_size,
+        ),
+    )
+
+
+def _approved_iron_butterfly_legs(
+    legs: object,
+    approved_lots: int,
+    lot_size: LotSize,
+) -> tuple[ApprovedLeg, ...]:
+    if approved_lots <= 0:
+        return ()
+    if not isinstance(legs, IronButterflyLegs):
+        raise TypeError("legs must be IronButterflyLegs")
+    return tuple(
+        ApprovedLeg(
+            leg_id=leg.leg_id,
+            lots=Lots(approved_lots),
+            lot_size=lot_size,
+        )
+        for leg in (
+            legs.long_put,
+            legs.long_call,
+            legs.short_put,
+            legs.short_call,
+        )
+    )
+
+
+def _approved_butterfly_legs(
+    legs: object,
+    approved_lots: int,
+    lot_size: LotSize,
+) -> tuple[ApprovedLeg, ...]:
+    if approved_lots <= 0:
+        return ()
+    if not isinstance(legs, ButterflyLegs):
+        raise TypeError("legs must be ButterflyLegs")
+    return tuple(
+        ApprovedLeg(
+            leg_id=leg.leg_id,
+            lots=Lots(approved_lots),
+            lot_size=lot_size,
+        )
+        for leg in (
+            legs.low_wing,
+            legs.high_wing,
+            legs.short_body,
+        )
+    )
+
+
+def _approved_volatility_legs(
+    call_leg: object,
+    put_leg: object,
+    approved_lots: int,
+    lot_size: LotSize,
+) -> tuple[ApprovedLeg, ...]:
+    if approved_lots <= 0:
+        return ()
+    if not isinstance(call_leg, IntentLeg) or not isinstance(put_leg, IntentLeg):
+        raise TypeError("legs must be IntentLeg")
+    return (
+        ApprovedLeg(
+            leg_id=put_leg.leg_id,
+            lots=Lots(approved_lots),
+            lot_size=lot_size,
+        ),
+        ApprovedLeg(
+            leg_id=call_leg.leg_id,
             lots=Lots(approved_lots),
             lot_size=lot_size,
         ),
@@ -865,10 +1238,10 @@ def _approved_condor_legs(
             lot_size=lot_size,
         )
         for leg in (
-            legs.short_call,
-            legs.long_call,
-            legs.short_put,
             legs.long_put,
+            legs.short_put,
+            legs.long_call,
+            legs.short_call,
         )
     )
 
@@ -895,7 +1268,9 @@ def _spread_reason(feature: FeatureSnapshot, max_spread: Percent) -> ReasonCode 
     return None
 
 
-def _zero_lot_reason(bounds: LotBounds) -> ReasonCode:
+def _zero_lot_reason(bounds: LotBounds, *, mode_id: ModeId | None = None) -> ReasonCode:
+    if bounds.risk_lots <= 0 and mode_id is not None:
+        return ReasonCode.MIN_LOT_EXCEEDS_BUDGET
     if bounds.margin_lots <= 0:
         return ReasonCode.MARGIN_INSUFFICIENT
     if bounds.capital_lots <= 0:

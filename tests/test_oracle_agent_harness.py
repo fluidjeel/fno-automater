@@ -123,9 +123,16 @@ def test_systemd_units_exist() -> None:
         ROOT / "deploy" / "agent-research.service",
         ROOT / "deploy" / "agent-research.timer",
         ROOT / "deploy" / "fno-automated.service",
+        ROOT / "deploy" / "paper-session.service",
+        ROOT / "deploy" / "paper-watchdog.service",
+        ROOT / "deploy" / "paper-watchdog.timer",
+        ROOT / "deploy" / "paper-session.timer",
     ]
     for unit in units:
         assert unit.is_file(), f"missing systemd unit: {unit}"
         content = unit.read_text(encoding="utf-8")
         assert "[Unit]" in content
         assert "User=apple" not in content, f"hardcoded macOS user in {unit}"
+    sudoers = ROOT / "deploy" / "fno-systemctl.sudoers"
+    assert sudoers.is_file(), "missing sudoers drop-in"
+    assert "NOPASSWD" in sudoers.read_text(encoding="utf-8")

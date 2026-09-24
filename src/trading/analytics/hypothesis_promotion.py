@@ -94,9 +94,7 @@ def cluster_to_hypothesis(
 ) -> ResearchHypothesis | None:
     """Promote an eligible cluster; return None if it stays a note."""
     by_id = _records_by_id(records)
-    ok, testable = _cluster_eligible(
-        cluster, by_id, min_occurrences=min_occurrences
-    )
+    ok, testable = _cluster_eligible(cluster, by_id, min_occurrences=min_occurrences)
     if not ok or testable is None:
         return None
     return ResearchHypothesis(
@@ -197,9 +195,7 @@ def promote_improvements(
             notes.append(cluster)
             continue
         hypotheses.append(hyp)
-        experiments.append(
-            hypothesis_to_shadow_experiment(hyp, started_at=as_of)
-        )
+        experiments.append(hypothesis_to_shadow_experiment(hyp, started_at=as_of))
         promoted_record_ids.update(cluster.record_ids)
 
     final_records: list[ImprovementRecord] = []
@@ -211,7 +207,7 @@ def promote_improvements(
             update={
                 "occurrences": max(
                     row.occurrences,
-                    occurrence_by_record.get(row.record_id, row.occurrences)
+                    occurrence_by_record.get(row.record_id, row.occurrences),
                 )
             }
         )

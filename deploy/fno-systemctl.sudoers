@@ -1,0 +1,5 @@
+# Allow the ubuntu supervisor to start/restart FNO runtime units without a password.
+ubuntu ALL=(root) NOPASSWD: /bin/systemctl start fno-paper-session.service
+ubuntu ALL=(root) NOPASSWD: /bin/systemctl restart fno-paper-session.service
+ubuntu ALL=(root) NOPASSWD: /bin/systemctl start fno-data-tick.service
+ubuntu ALL=(root) NOPASSWD: /bin/systemctl restart fno-data-tick.service

@@ -71,9 +71,7 @@ def test_bounded_partial_exit_grant_rejected_at_validate() -> None:
 
 
 def test_shadow_grant_allows_tighten() -> None:
-    grant = _grant(
-        mode=AuthorityMode.SHADOW, actions=(AgentAction.TIGHTEN_STOP,)
-    )
+    grant = _grant(mode=AuthorityMode.SHADOW, actions=(AgentAction.TIGHTEN_STOP,))
     result = maybe_log_position_shadow(
         _packet(),
         slot_id=ReviewSlotId.NSE_MORNING,
@@ -91,9 +89,7 @@ def test_shadow_grant_allows_tighten() -> None:
 
 
 def test_advisory_grant_allows_partial() -> None:
-    grant = _grant(
-        mode=AuthorityMode.ADVISORY, actions=(AgentAction.PARTIAL_EXIT,)
-    )
+    grant = _grant(mode=AuthorityMode.ADVISORY, actions=(AgentAction.PARTIAL_EXIT,))
     result = maybe_log_position_shadow(
         _packet(),
         slot_id=ReviewSlotId.NSE_AFTERNOON,

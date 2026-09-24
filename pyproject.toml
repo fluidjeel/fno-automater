@@ -76,10 +76,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
-"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN401", "ANN201", "ANN202", "E501"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN001", "ANN401", "ANN201", "ANN202", "E501", "PLC0415", "RUF002", "N817", "RUF043", "PLR0915"]
 "tests/paper_positional_sim/**" = ["E501"]
 "src/trading/storage/trading_store.py" = ["E501", "S608"]
-"src/trading/runtime/paper_session.py" = ["E501"]
+"src/trading/runtime/paper_session.py" = ["E501", "PLR0912", "PLR0915"]
 "src/trading/analytics/monthly_meta_report.py" = ["PLR2004"]
 "src/trading/analytics/bias.py" = ["PLR2004"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
@@ -101,8 +101,8 @@ ignore = [
 ]
 "scripts/fyers_tbt_capability_probe.py" = ["E501", "PLR0915"]
 "tests/test_fyers_tbt_capability_probe.py" = ["E501"]
-"src/trading/cli.py" = ["PLR0912", "PLR0915", "PLC0415"]
-"src/trading/runtime/paper_runner.py" = ["PLR0911", "PLR0912", "PLR0915"]
+"src/trading/cli.py" = ["E501", "PLR0912", "PLR0915", "PLC0415"]
+"src/trading/runtime/paper_runner.py" = ["E501", "PLR0911", "PLR0912", "PLR0915"]
 "src/trading/risk/snapshot_bundle.py" = ["PLR0911"]
 "src/trading/ai/tools.py" = ["PLR0912", "PLR2004"]
 "src/trading/ai/loop.py" = ["PLR0911"]
@@ -111,7 +111,20 @@ ignore = [
 "src/trading/analytics/eligibility.py" = ["PLR0912"]
 "src/trading/news/scoring.py" = ["PLR0912", "PLR0915"]
 "src/trading/news/sources.py" = ["PLR0912"]
-"src/trading/risk/gateway.py" = ["PLR0911", "PLR0912"]
+"src/trading/risk/gateway.py" = ["PLR0911", "PLR0912", "PLR0915"]
+"src/trading/identification/binders.py" = ["PLR0912", "PLR2004"]
+"src/trading/risk/affordability.py" = [
+    "E501", "PLR0912", "PLR0915", "PLR0917", "PLR2004", "B008", "S112", "RUF001",
+]
+"src/trading/risk/payoff.py" = ["PLR0911", "PLR0912", "PLR2004"]
+"src/trading/risk/sizing/butterfly.py" = ["PLR2004"]
+"src/trading/risk/sizing/iron_butterfly.py" = ["PLR2004"]
+"src/trading/portfolio/arbitration.py" = ["B023", "E501", "PLR0912", "PLR0915"]
+"src/trading/portfolio/campaign_drawdown.py" = ["E501"]
+"src/trading/portfolio/counterfactual_book.py" = ["E501"]
+"src/trading/portfolio/economic_overlap.py" = ["E501", "PLC0415", "PLR0911"]
+"src/trading/strategies/m4_broad_basket.py" = ["E501", "PLR0911", "PLR2004"]
+"src/trading/runtime/cas_event_path.py" = ["E501"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -143,6 +156,24 @@ module = [
     "tests.test_paper_protection",
 ]
 # WIP until QuoteUpdateResult / PaperSessionConfig.protection are wired.
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tests.test_p1_mode_policy_and_gateway",
+    "tests.test_p2_four_ledgers_and_reservations",
+    "tests.test_p2_mode_ledgers_and_reservations",
+    "tests.test_p4_producers_and_arbiter",
+    "tests.test_p6_credit_verticals_and_g2",
+    "tests.test_p7_m1_selector_and_g3_path",
+    "tests.test_p8_whole_structure_spread_valuation",
+    "tests.test_p10_iron_condor_binder_and_g2",
+    "tests.test_p11_m4_broad_basket",
+    "tests.test_p12_economic_overlap_m4_cap",
+    "tests.test_p13_positional_reviews",
+    "tests.test_p14_calendar_research_registry",
+]
+# Phase verification suites use dynamic fixtures; typed at runtime via factories.
 ignore_errors = true
 
 [tool.pytest.ini_options]

@@ -145,7 +145,4 @@ def _add_money(bucket: dict[str, Money], key: str, amount: Money) -> None:
 
 
 def _buckets(raw: Mapping[str, Money]) -> tuple[NotionalBucket, ...]:
-    return tuple(
-        NotionalBucket(key=key, notional=raw[key]) for key in sorted(raw)
-    )
-
+    return tuple(NotionalBucket(key=key, notional=raw[key]) for key in sorted(raw))

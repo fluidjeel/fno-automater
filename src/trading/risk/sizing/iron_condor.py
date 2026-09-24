@@ -114,6 +114,10 @@ def condor_legs(intent: TradeIntent) -> IronCondorLegs:
         raise ValueError("call wing must have short strike below long strike")
     if long_put_strike >= short_put_strike:
         raise ValueError("put wing must have long strike below short strike")
+    if short_put_strike >= short_call_strike:
+        raise ValueError(
+            "iron condor requires short put strike below short call strike"
+        )
     call_width = long_call_strike - short_call_strike
     put_width = short_put_strike - long_put_strike
     if call_width != put_width:
@@ -156,9 +160,18 @@ class IronCondorSizingEngine:
         )
         long_strike = legs.long_call.contract.strike
         short_strike = legs.short_call.contract.strike
-        if long_strike is None or short_strike is None:
+        long_put_strike = legs.long_put.contract.strike
+        short_put_strike = legs.short_put.contract.strike
+        if (
+            long_strike is None
+            or short_strike is None
+            or long_put_strike is None
+            or short_put_strike is None
+        ):
             raise ValueError("iron condor legs require strikes")
-        wing_width = long_strike - short_strike
+        put_width = short_put_strike - long_put_strike
+        call_width = long_strike - short_strike
+        wing_width = max(put_width, call_width)
         max_loss_value = wing_width - net_credit_per_unit.value
         if max_loss_value <= 0:
             raise ValueError("net credit exceeds wing width; max loss is undefined")

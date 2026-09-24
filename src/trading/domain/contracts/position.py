@@ -14,7 +14,7 @@ from trading.domain.contracts.base import (
 )
 from trading.domain.contracts.common import ContractRef
 from trading.domain.contracts.terminal_policy import TerminalPolicy
-from trading.domain.enums import ExecutionMode, ExitScope, Side, TradeState
+from trading.domain.enums import ExecutionMode, ExitScope, ModeId, Side, TradeState
 from trading.domain.primitives import Money, Price
 
 __all__ = ["ExitPolicy", "PositionLegState", "PositionState"]
@@ -82,6 +82,8 @@ class PositionState(VersionedModel):
     software_stop_unavailable: StrictBool = False
     protection_degraded_since: UtcDatetime | None = None
     unprotected_reason: NonEmptyStr | None = None
+    mode_id: ModeId | None = None
+    campaign_id: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def _state_matches_coverage_requirement(self) -> PositionState:

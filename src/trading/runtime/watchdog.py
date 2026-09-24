@@ -11,6 +11,7 @@ from trading.domain.contracts import AttentionRequest, ProtectionHeartbeat
 from trading.domain.enums import AttentionBlocker, ReasonCode
 from trading.domain.ids import SequentialIdFactory
 from trading.ops.attention import MemoryAttentionSink
+from trading.ops.operator_alert import notify_operator
 from trading.runtime.paper_session import load_paper_session_config
 
 __all__ = ["run_paper_watchdog"]
@@ -53,6 +54,12 @@ def run_paper_watchdog(
         valid_until=now + timedelta(days=1),
     )
     sink.submit(request)
+    notify_operator(
+        repo_root,
+        title="PAPER protection heartbeat stale",
+        detail=request.detail,
+        dedupe_key="watchdog:protection",
+    )
     if store_path is not None and store_path.is_file():
         _ = store_path
     return 1

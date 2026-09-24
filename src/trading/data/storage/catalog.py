@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import UTC
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 from trading.data.events import CanonicalMarketEvent
 
 __all__ = ["CatalogWriter"]
+
+logger = logging.getLogger(__name__)
 
 _SNAPSHOT_INDEX_COLUMNS: tuple[tuple[str, type], ...] = (
     ("snapshot_id", str),
@@ -71,7 +74,6 @@ class CatalogWriter:
         if not events:
             return None
         try:
-            import duckdb
             import polars as pl
         except ImportError:
             return None
@@ -91,23 +93,17 @@ class CatalogWriter:
         merged.write_parquet(path)
         incoming_path = self._parquet / f"{day}.incoming.parquet"
         incoming.write_parquet(incoming_path)
-        connection = duckdb.connect(str(self._duckdb_path))
-        try:
-            connection.execute(
+        self._upsert_duckdb(
+            incoming_path,
+            (
                 "CREATE TABLE IF NOT EXISTS canonical_events ("
                 "event_id VARCHAR PRIMARY KEY, provider VARCHAR, symbol VARCHAR, "
                 "event_type VARCHAR, event_time VARCHAR, source_time VARCHAR, "
                 "receive_time VARCHAR, provider_sequence BIGINT, raw_ref VARCHAR, "
                 "normalization_version VARCHAR)"
-            )
-            quoted = str(incoming_path).replace("'", "''")
-            connection.execute(
-                "INSERT OR REPLACE INTO canonical_events "
-                f"SELECT * FROM read_parquet('{quoted}')"
-            )
-        finally:
-            connection.close()
-            incoming_path.unlink(missing_ok=True)
+            ),
+            "canonical_events",
+        )
         return path
 
     def _normalize_frame(
@@ -147,7 +143,6 @@ class CatalogWriter:
         if not rows:
             return None
         try:
-            import duckdb
             import polars as pl
         except ImportError:
             return None
@@ -168,21 +163,43 @@ class CatalogWriter:
         merged.write_parquet(path)
         incoming_path = self._parquet / f"snapshots-{day}.incoming.parquet"
         incoming.write_parquet(incoming_path)
-        connection = duckdb.connect(str(self._duckdb_path))
-        try:
-            connection.execute(
+        self._upsert_duckdb(
+            incoming_path,
+            (
                 "CREATE TABLE IF NOT EXISTS decision_snapshots ("
                 "snapshot_id VARCHAR, symbol VARCHAR, as_of VARCHAR, "
                 "decision VARCHAR, quality_state VARCHAR, "
                 "permits_new_exposure BOOLEAN, reason_codes VARCHAR, "
                 "PRIMARY KEY (symbol, as_of))"
-            )
-            quoted = str(incoming_path).replace("'", "''")
-            connection.execute(
-                "INSERT OR REPLACE INTO decision_snapshots "
-                f"SELECT * FROM read_parquet('{quoted}')"
-            )
-        finally:
-            connection.close()
-            incoming_path.unlink(missing_ok=True)
+            ),
+            "decision_snapshots",
+        )
         return path
+
+    def _upsert_duckdb(
+        self,
+        incoming_path: Path,
+        create_sql: str,
+        table_name: str,
+    ) -> None:
+        """Best-effort DuckDB index. Parquet JSONL remain authoritative."""
+        try:
+            import duckdb
+        except ImportError:
+            incoming_path.unlink(missing_ok=True)
+            return
+        try:
+            connection = duckdb.connect(str(self._duckdb_path))
+            try:
+                connection.execute(create_sql)
+                quoted = str(incoming_path).replace("'", "''")
+                connection.execute(
+                    f"INSERT OR REPLACE INTO {table_name} "
+                    f"SELECT * FROM read_parquet('{quoted}')"
+                )
+            finally:
+                connection.close()
+        except Exception as exc:
+            logger.warning("duckdb catalog index skipped: %s", exc)
+        finally:
+            incoming_path.unlink(missing_ok=True)

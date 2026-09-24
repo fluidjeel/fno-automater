@@ -92,9 +92,7 @@ class Phase1SizingAdvice(StrictModel):
     """Shared sizing advice: closed bucket → type-capped multiplier <= 1.0."""
 
     confidence_bucket: ConfidenceBucket
-    size_multiplier: ExactDecimal = Field(
-        le=Decimal("1"), ge=Decimal("0")
-    )
+    size_multiplier: ExactDecimal = Field(le=Decimal("1"), ge=Decimal("0"))
 
     @model_validator(mode="after")
     def _matches_phase1_table(self) -> Phase1SizingAdvice:

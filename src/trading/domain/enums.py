@@ -20,6 +20,7 @@ __all__ = [
     "AttentionBlocker",
     "AttributionCode",
     "AuthorityMode",
+    "CarryGateAction",
     "Comparator",
     "ConfidenceBucket",
     "DataQuality",
@@ -35,8 +36,11 @@ __all__ = [
     "Exchange",
     "ExecutionMode",
     "ExitScope",
+    "FamilyId",
+    "FamilyResearchStatus",
     "FamilyStance",
     "FillOutcome",
+    "FunnelStage",
     "GateOutcome",
     "HoldingStyle",
     "ImprovementArea",
@@ -48,6 +52,7 @@ __all__ = [
     "InvalidationStatus",
     "LiquidityGrade",
     "MacroEventSeverity",
+    "ModeId",
     "OptionType",
     "OrderPlanState",
     "OrderState",
@@ -63,6 +68,7 @@ __all__ = [
     "ReconciliationTrigger",
     "ReservationState",
     "ReviewAction",
+    "ReviewExecutionStatus",
     "ReviewSlotId",
     "RiskAction",
     "Severity",
@@ -142,6 +148,36 @@ class ExecutionMode(StrEnum):
             ExecutionMode.LIMITED_REAL,
             ExecutionMode.NORMAL_REAL,
         }
+
+
+@unique
+class ModeId(StrEnum):
+    """Four named trading modes sharing the portfolio arbiter (P1/spec §4)."""
+
+    M1_CAS = "M1_CAS"
+    M2_DIRECTIONAL = "M2_DIRECTIONAL"
+    M3_TACTICAL_POSITIONAL = "M3_TACTICAL_POSITIONAL"
+    M4_STRATEGIC_POSITIONAL = "M4_STRATEGIC_POSITIONAL"
+
+
+@unique
+class FamilyId(StrEnum):
+    """The 14 defined strategy families (§5 of NIFTY_FOUR_MODE_CURSOR_REDESIGN.md)."""
+
+    long_call = "long_call"
+    long_put = "long_put"
+    bull_call_debit = "bull_call_debit"
+    bear_put_debit = "bear_put_debit"
+    bull_put_credit = "bull_put_credit"
+    bear_call_credit = "bear_call_credit"
+    short_iron_condor_defined = "short_iron_condor_defined"
+    short_iron_butterfly_defined = "short_iron_butterfly_defined"
+    long_call_butterfly = "long_call_butterfly"
+    long_put_butterfly = "long_put_butterfly"
+    long_straddle = "long_straddle"
+    long_strangle = "long_strangle"
+    long_call_calendar = "long_call_calendar"
+    long_put_calendar = "long_put_calendar"
 
 
 @unique
@@ -279,6 +315,14 @@ class ExitScope(StrEnum):
 
 
 @unique
+class CarryGateAction(StrEnum):
+    """Mode 2 overnight carry gate outcome recorded before entry cutoff."""
+
+    CARRY_APPROVED = "CARRY_APPROVED"
+    CARRY_REJECTED = "CARRY_REJECTED"
+
+
+@unique
 class HoldingStyle(StrEnum):
     """Whether an open trade is held overnight or closed the same session."""
 
@@ -296,15 +340,36 @@ class ReviewAction(StrEnum):
     FULL_EXIT = "FULL_EXIT"
     PROPOSE_HEDGE = "PROPOSE_HEDGE"
     PROPOSE_ROLL = "PROPOSE_ROLL"
+    PROPOSE_SWITCH = "PROPOSE_SWITCH"
+    ROLL = "ROLL"
+    SWITCH = "SWITCH"
 
     @property
     def is_proposal(self) -> bool:
-        """HEDGE/ROLL are new trades; they never auto-submit."""
-        return self in {ReviewAction.PROPOSE_HEDGE, ReviewAction.PROPOSE_ROLL}
+        """HEDGE/ROLL/SWITCH proposals never auto-submit without G2 close/open."""
+        return self in {
+            ReviewAction.PROPOSE_HEDGE,
+            ReviewAction.PROPOSE_ROLL,
+            ReviewAction.PROPOSE_SWITCH,
+        }
 
     @property
     def submits_exit(self) -> bool:
-        return self in {ReviewAction.PARTIAL_EXIT, ReviewAction.FULL_EXIT}
+        return self in {
+            ReviewAction.PARTIAL_EXIT,
+            ReviewAction.FULL_EXIT,
+            ReviewAction.ROLL,
+            ReviewAction.SWITCH,
+        }
+
+
+@unique
+class ReviewExecutionStatus(StrEnum):
+    """Whether a review action with a linked trade was executed."""
+
+    EXECUTED = "EXECUTED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    PROPOSED_NOT_EXECUTED = "PROPOSED_NOT_EXECUTED"
 
 
 @unique
@@ -441,6 +506,31 @@ class ProposalType(StrEnum):
 
 
 @unique
+class FamilyResearchStatus(StrEnum):
+    """Lifecycle and research posture for one strategy family."""
+
+    IMPLEMENTED_UNIT = "IMPLEMENTED_UNIT"
+    LIFECYCLE_PROVEN = "LIFECYCLE_PROVEN"
+    PAPER_STANCE_ENABLED = "PAPER_STANCE_ENABLED"
+    EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN = "EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN"
+
+
+@unique
+class FunnelStage(StrEnum):
+    """Stages in the four-mode activity funnel (R-023)."""
+
+    EVALUATION = "evaluation"
+    ELIGIBLE_SIGNAL = "eligible_signal"
+    BOUND_CONTRACTS = "bound_contracts"
+    VALID_STRUCTURE = "valid_structure"
+    MODE_RISK = "mode_risk"
+    PORTFOLIO = "portfolio"
+    ORDER = "order"
+    FILL = "fill"
+    MANAGED_EXIT = "managed_exit"
+
+
+@unique
 class FamilyStance(StrEnum):
     """Proposed paper/shadow posture for one strategy family. Never a live switch."""
 
@@ -520,7 +610,6 @@ class ConfidenceBucket(StrEnum):
 
 @unique
 class AgentAction(StrEnum):
-
     """Closed agent output vocabulary. C1: BOUNDED may grant config-promotion only."""
 
     # Config-promotion — the only BOUNDED-eligible set (C1 2026-09-20).
@@ -667,6 +756,11 @@ class ReasonCode(StrEnum):
     CONTRACT_EXPIRED = "CONTRACT_EXPIRED"
     OUTSIDE_SESSION = "OUTSIDE_SESSION"
     EVENT_BLACKOUT = "EVENT_BLACKOUT"
+    NON_NIFTY_EXECUTION_REJECTED = "NON_NIFTY_EXECUTION_REJECTED"
+    MODE_FAMILY_NOT_PERMITTED = "MODE_FAMILY_NOT_PERMITTED"
+    EXPIRY_0_1_DTE_EXCLUDED = "EXPIRY_0_1_DTE_EXCLUDED"
+    CALENDAR_NO_ELIGIBLE_EXPIRY = "CALENDAR_NO_ELIGIBLE_EXPIRY"
+    INSTRUMENT_MASTER_ABSENT = "INSTRUMENT_MASTER_ABSENT"
 
     # Risk and capital
     RISK_LIMIT_TRADE = "RISK_LIMIT_TRADE"
@@ -679,6 +773,7 @@ class ReasonCode(StrEnum):
     CAPITAL_UNAVAILABLE = "CAPITAL_UNAVAILABLE"
     MAX_LOSS_UNDEFINED = "MAX_LOSS_UNDEFINED"
     SIZE_BELOW_MINIMUM = "SIZE_BELOW_MINIMUM"
+    MIN_LOT_EXCEEDS_BUDGET = "MIN_LOT_EXCEEDS_BUDGET"
 
     # Liquidity and execution
     SPREAD_TOO_WIDE = "SPREAD_TOO_WIDE"
@@ -688,6 +783,10 @@ class ReasonCode(StrEnum):
     BROKER_REJECTED = "BROKER_REJECTED"
     RATE_LIMIT = "RATE_LIMIT"
     DUPLICATE_IDEMPOTENCY_KEY = "DUPLICATE_IDEMPOTENCY_KEY"
+    EXACT_DUPLICATE_SUPPRESSED = "EXACT_DUPLICATE_SUPPRESSED"
+    ECONOMIC_OVERLAP_SUPPRESSED = "ECONOMIC_OVERLAP_SUPPRESSED"
+    OPPOSING_EXPOSURE_REJECTED = "OPPOSING_EXPOSURE_REJECTED"
+    M4_POSITION_CAP_REACHED = "M4_POSITION_CAP_REACHED"
     PARTIAL_FILL_UNREPAIRED = "PARTIAL_FILL_UNREPAIRED"
 
     # Operational
@@ -714,7 +813,21 @@ class ReasonCode(StrEnum):
     # Positional review
     REVIEW_DUPLICATE_SLOT = "REVIEW_DUPLICATE_SLOT"
     REVIEW_PROPOSAL_REQUIRES_L2 = "REVIEW_PROPOSAL_REQUIRES_L2"
+    PROPOSED_NOT_EXECUTED = "PROPOSED_NOT_EXECUTED"
     STOP_WIDEN_REJECTED = "STOP_WIDEN_REJECTED"
+    CALENDAR_SAME_EXPIRY_FORMULA_REFUSED = "CALENDAR_SAME_EXPIRY_FORMULA_REFUSED"
+    CALENDAR_EXPERIMENTAL_OFF_STRICT_BOOK = "CALENDAR_EXPERIMENTAL_OFF_STRICT_BOOK"
+
+    # Mode 2 carry gate (P9)
+    CARRY_MODE_MISMATCH = "CARRY_MODE_MISMATCH"
+    CARRY_THESIS_STALE = "CARRY_THESIS_STALE"
+    CARRY_THESIS_INVALID = "CARRY_THESIS_INVALID"
+    CARRY_INSUFFICIENT_DTE = "CARRY_INSUFFICIENT_DTE"
+    CARRY_OVERNIGHT_BUDGET = "CARRY_OVERNIGHT_BUDGET"
+    CARRY_EVENT_BLACKOUT = "CARRY_EVENT_BLACKOUT"
+    CARRY_PORTFOLIO_BLOCKED = "CARRY_PORTFOLIO_BLOCKED"
+    CARRY_EXIT_STATE_MISSING = "CARRY_EXIT_STATE_MISSING"
+    CARRY_RECOVERY_UNHEALTHY = "CARRY_RECOVERY_UNHEALTHY"
 
     # AI, all of which fall back to a deterministic baseline
     AI_UNAVAILABLE = "AI_UNAVAILABLE"
@@ -1015,4 +1128,3 @@ class DemotionReason(StrEnum):
     VERSION_TRIPLE_MISMATCH = "VERSION_TRIPLE_MISMATCH"
     BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     MANUAL = "MANUAL"
-

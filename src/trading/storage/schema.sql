@@ -23,9 +23,14 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 CREATE TABLE IF NOT EXISTS reservations (
     reservation_id TEXT PRIMARY KEY,
     state TEXT NOT NULL,
+    mode_id TEXT,
+    idempotency_key TEXT,
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_reservations_idem
+    ON reservations (idempotency_key);
 
 CREATE TABLE IF NOT EXISTS system_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -37,6 +42,9 @@ CREATE TABLE IF NOT EXISTS system_state (
 CREATE TABLE IF NOT EXISTS position_lifecycle (
     trade_id TEXT PRIMARY KEY,
     state TEXT NOT NULL,
+    mode_id TEXT,
+    campaign_id TEXT,
+    policy_version TEXT,
     payload TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -51,6 +59,15 @@ CREATE TABLE IF NOT EXISTS review_slot_runs (
 
 CREATE TABLE IF NOT EXISTS entry_freeze (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    entries_blocked INTEGER NOT NULL,
+    reason_code TEXT,
+    detail TEXT,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mode_entry_freeze (
+    mode_id TEXT PRIMARY KEY,
     entries_blocked INTEGER NOT NULL,
     reason_code TEXT,
     detail TEXT,

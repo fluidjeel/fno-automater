@@ -25,7 +25,9 @@ from trading.domain.contracts import (
     EntryFreezeRecord,
     FeatureSnapshot,
     InstrumentSpec,
+    MarketState,
     OrderEvent,
+    PositionCarryRecord,
     PositionLifecycleRecord,
     PositionReviewRecord,
     ReconciliationEvent,
@@ -34,6 +36,7 @@ from trading.domain.contracts import (
     SetupFeatures,
     TradeIntent,
 )
+from trading.domain.contracts.carry import CarryGateDecision
 from trading.domain.contracts.common import Versions
 from trading.domain.contracts.entry import StrikeShortlist
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
@@ -44,12 +47,15 @@ from trading.domain.contracts.position import PositionState
 from trading.domain.contracts.protection import ProtectionStateRecord
 from trading.domain.contracts.snapshot import MarketQuote, SnapshotTimes
 from trading.domain.enums import (
+    CarryGateAction,
     DeskRole,
     DifferenceClass,
     Exchange,
     ExecutionMode,
     ExitScope,
+    FamilyId,
     HoldingStyle,
+    ModeId,
     OrderPlanState,
     OrderState,
     OrderType,
@@ -57,6 +63,7 @@ from trading.domain.enums import (
     ReasonCode,
     ReconciliationTrigger,
     ReviewAction,
+    ReviewExecutionStatus,
     ReviewSlotId,
     RiskAction,
     Severity,
@@ -78,13 +85,16 @@ from trading.oms import (
     OrderRateLimiter,
 )
 from trading.portfolio import (
+    ArbitrationResult,
+    PortfolioArbiter,
     PortfolioReconciler,
     build_broker_snapshot,
     build_portfolio_view,
 )
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
+from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.review_schedule import ReviewSlot
+from trading.runtime.review_schedule import ReviewSlot, next_review_slot_id
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
@@ -95,11 +105,18 @@ from trading.trade import (
     assert_stop_not_wider,
     monitor_leg,
 )
+from trading.trade.carry_gate import (
+    build_m2_carry_gate_input,
+    evaluate_m2_carry_gate,
+    load_carry_gate_config,
+)
 from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.trade.review import ReviewEngine, ReviewEvaluation
+from trading.trade.review_roll_switch import family_supports_roll_switch
 
 __all__ = [
     "LifecycleAlert",
+    "PaperCarryGateResult",
     "PaperCycleResult",
     "PaperReviewResult",
     "PaperRunner",
@@ -157,6 +174,8 @@ class PaperStrategyRequest:
     setup_features: SetupFeatures | None = None
     route_decision: RouteDecision | None = None
     shortlist: StrikeShortlist | None = None
+    forced_mode_id: ModeId | None = None
+    forced_family_id: FamilyId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +206,7 @@ class PaperCycleResult:
     reconcile_id: str
     entries_blocked: bool
     route_decision: RouteDecision | None = None
+    arbitration_result: ArbitrationResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +217,17 @@ class PaperReviewResult:
     session_date: date
     decisions: tuple[PositionReviewRecord, ...]
     slot_recorded: bool
+    missed_slot_ids: tuple[ReviewSlotId, ...] = ()
+    is_recovery: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCarryGateResult:
+    """Outcome of one Mode 2 carry gate pass for a session date."""
+
+    session_date: date
+    decisions: tuple[PositionCarryRecord, ...]
+    exit_events: tuple[OrderEvent, ...]
 
 
 class _ProtectionKind:
@@ -210,6 +241,17 @@ class _ProtectionDiagnosis:
     kind: str
     reason_code: ReasonCode
     detail: str
+
+
+@dataclass(slots=True)
+class _StrategyEvalRecord:
+    request: PaperStrategyRequest
+    early_outcome: PaperStrategyOutcome | None = None
+    intents: tuple[TradeIntent, ...] = ()
+    rejection_reasons: tuple[ReasonCode, ...] = ()
+    strategy: object | None = None
+    portfolio: object | None = None
+    can_execute: bool = False
 
 
 @dataclass
@@ -296,6 +338,7 @@ class PaperRunner:
             controls=SafetyControls(clock=clock, id_factory=id_factory),
             reservations=reservations,
         )
+        self._arbiter = PortfolioArbiter()
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._protection_snapshots: dict[str, FeatureSnapshot] = {}
         self._lifecycle_recovered = False
@@ -310,27 +353,47 @@ class PaperRunner:
         )
 
     def run_cycle(self, requests: Sequence[PaperStrategyRequest]) -> PaperCycleResult:
-        """Reconcile, evaluate each strategy, and submit only approved paper orders."""
+        """Reconcile, evaluate each strategy, arbitrate, and submit approved orders."""
         self.recover_lifecycle()
         boot = self._services.reconciler.boot_reconcile(self._account.config.account_id)
         system_state = boot.result.resulting_system_state
         self._maybe_release_entry_freeze(reconcile_blocked=boot.result.entries_blocked)
         entries_blocked = self._entries_are_blocked(boot.result.entries_blocked)
-        outcomes: list[PaperStrategyOutcome] = []
+
+        eval_records: list[_StrategyEvalRecord] = []
+        all_executable_intents: list[TradeIntent] = []
         for request in requests:
             assert_paper_isolation(
                 self._account.config.environment,
                 request.execution_mode,
                 self._services.broker,
             )
+            rec = self._evaluate_strategy(
+                request,
+                system_state=system_state,
+                entries_blocked=entries_blocked,
+                reconcile_id=boot.result.result_id,
+            )
+            eval_records.append(rec)
+            if rec.can_execute:
+                all_executable_intents.extend(rec.intents)
+
+        arb_result = self._arbiter.arbitrate(
+            all_executable_intents,
+            existing_positions=self._services.trade_manager.list_positions(),
+            now=self._clock.now_utc(),
+        )
+
+        outcomes: list[PaperStrategyOutcome] = []
+        for rec in eval_records:
             outcomes.append(
-                self._run_strategy(
-                    request,
-                    system_state=system_state,
+                self._execute_strategy_eval(
+                    rec,
+                    arb_result=arb_result,
                     entries_blocked=entries_blocked,
-                    reconcile_id=boot.result.result_id,
                 )
             )
+
         route_decision = next(
             (
                 request.route_decision
@@ -345,11 +408,29 @@ class PaperRunner:
             reconcile_id=boot.result.result_id,
             entries_blocked=entries_blocked,
             route_decision=route_decision,
+            arbitration_result=arb_result,
+        )
+
+    def persist_cycle_evidence(
+        self, result: PaperCycleResult, *, as_of: datetime
+    ) -> int:
+        """Append one durable cycle-evidence event for dashboard traceability."""
+        cycle_id = self._ids.new_id("CYC")
+        evidence = build_cycle_evidence(result, cycle_id=cycle_id, as_of=as_of)
+        return self._services.store.append(
+            TradingEventType.CYCLE_EVIDENCE,
+            evidence,
+            event_id=cycle_id,
+            recorded_at=as_of,
         )
 
     @property
     def broker(self) -> PaperBroker:
         return self._services.broker
+
+    @property
+    def id_factory(self) -> IdFactory:
+        return self._ids
 
     @property
     def trade_manager(self) -> TradeManager:
@@ -636,31 +717,128 @@ class PaperRunner:
         snapshots: Mapping[str, FeatureSnapshot],
         *,
         session_date: date,
+        missed_slot_ids: tuple[ReviewSlotId, ...] = (),
+        configured_slots: tuple[ReviewSlot, ...] = (),
     ) -> PaperReviewResult:
         """Review persisted positional opens for one due slot. Idempotent.
 
-        HEDGE/ROLL emit a structured proposal and do not submit. Stops stay
-        software-only; this does not place a broker-resident protective order.
+        HEDGE/ROLL/SWITCH proposals submit only for G2 close/open families.
+        Stops stay software-only; this does not place a broker-resident stop.
         """
-        if self._services.store.has_review_slot_run(slot.slot_id, session_date):
+        recovery_ids = missed_slot_ids or (slot.slot_id,)
+        if all(
+            self._services.store.has_review_slot_run(slot_id, session_date)
+            for slot_id in recovery_ids
+        ):
             return PaperReviewResult(
                 slot_id=slot.slot_id,
                 session_date=session_date,
                 decisions=(),
                 slot_recorded=False,
+                missed_slot_ids=missed_slot_ids,
+                is_recovery=len(missed_slot_ids) > 1,
             )
-        decisions = self._review_positions(slot, snapshots, session_date=session_date)
-        inserted = self._services.store.record_review_slot_run(
-            slot_id=slot.slot_id,
+        decisions = self._review_positions(
+            slot,
+            snapshots,
             session_date=session_date,
-            venue=slot.venue,
-            as_of=self._clock.now_utc(),
+            missed_slot_ids=missed_slot_ids,
+            configured_slots=configured_slots,
         )
+        inserted = False
+        now = self._clock.now_utc()
+        for slot_id in recovery_ids:
+            if self._services.store.record_review_slot_run(
+                slot_id=slot_id,
+                session_date=session_date,
+                venue=slot.venue,
+                as_of=now,
+            ):
+                inserted = True
         return PaperReviewResult(
             slot_id=slot.slot_id,
             session_date=session_date,
             decisions=decisions,
             slot_recorded=inserted,
+            missed_slot_ids=missed_slot_ids,
+            is_recovery=len(missed_slot_ids) > 1,
+        )
+
+    def run_m2_carry_gate(
+        self,
+        snapshots: Mapping[str, FeatureSnapshot],
+        *,
+        session_date: date,
+        market: MarketState | None,
+        mode_reference_capital: Money,
+        event_blackout: bool,
+        portfolio_entries_blocked: bool,
+        mode_daily_loss_breached: bool,
+    ) -> PaperCarryGateResult:
+        """Evaluate Mode 2 overnight carry once per trade per session date."""
+        now = self._clock.now_utc()
+        config = load_carry_gate_config()
+        decisions: list[PositionCarryRecord] = []
+        exit_events: list[OrderEvent] = []
+        for position in self._services.trade_manager.list_positions():
+            if position.state is not TradeState.OPEN:
+                continue
+            mode_id = position.mode_id
+            book = self._open_book.get(position.trade_id)
+            if book is None:
+                continue
+            intent, decision = book
+            mode_id = mode_id or intent.mode_id
+            if mode_id is not ModeId.M2_DIRECTIONAL:
+                continue
+            persisted = self._services.store.get_position_lifecycle(position.trade_id)
+            prior = persisted.carry_records if persisted is not None else ()
+            if any(item.session_date == session_date for item in prior):
+                continue
+            remaining_dte = _remaining_dte(position, intent, snapshots)
+            if remaining_dte is None:
+                continue
+            recovery_healthy = not (
+                position.protection_degraded or position.software_stop_unavailable
+            )
+            inputs = build_m2_carry_gate_input(
+                position=position,
+                intent=intent,
+                market=market,
+                session_date=session_date,
+                mode_reference_capital=mode_reference_capital,
+                config=config,
+                event_blackout=event_blackout,
+                portfolio_entries_blocked=portfolio_entries_blocked,
+                mode_daily_loss_breached=mode_daily_loss_breached,
+                recovery_healthy=recovery_healthy,
+                remaining_dte=remaining_dte,
+            )
+            outcome = evaluate_m2_carry_gate(
+                trade_id=position.trade_id,
+                session_date=session_date,
+                inputs=inputs,
+                config=config,
+                as_of=now,
+                decision_id=self._ids.new_id("CRG"),
+            )
+            record = _stamp_carry(outcome, carry_id=self._ids.new_id("CRR"), now=now)
+            if outcome.exit_initiated:
+                exit_events.extend(
+                    self._initiate_carry_rejection_exit(
+                        position,
+                        intent=intent,
+                        decision=decision,
+                        snapshots=snapshots,
+                        detail=outcome.detail,
+                    )
+                )
+            self._write_lifecycle(position.trade_id, extra_carry=(record,))
+            decisions.append(record)
+        return PaperCarryGateResult(
+            session_date=session_date,
+            decisions=tuple(decisions),
+            exit_events=tuple(exit_events),
         )
 
     def recorded_review_slots(
@@ -678,6 +856,8 @@ class PaperRunner:
         snapshots: Mapping[str, FeatureSnapshot],
         *,
         session_date: date,
+        missed_slot_ids: tuple[ReviewSlotId, ...] = (),
+        configured_slots: tuple[ReviewSlot, ...] = (),
     ) -> tuple[PositionReviewRecord, ...]:
         now = self._clock.now_utc()
         decisions: list[PositionReviewRecord] = []
@@ -689,13 +869,17 @@ class PaperRunner:
             holding = _holding_style(intent)
             if holding is not HoldingStyle.POSITIONAL:
                 continue
+            persisted = self._services.store.get_position_lifecycle(position.trade_id)
+            if not _eligible_for_scheduled_review(position, intent, persisted):
+                continue
             if not _matches_slot_venue(position, slot.venue):
                 continue
-            persisted = self._services.store.get_position_lifecycle(position.trade_id)
             prior = persisted.reviews if persisted is not None else ()
-            if any(
-                item.slot_id is slot.slot_id and item.session_date == session_date
-                for item in prior
+            if _review_already_recorded(
+                prior,
+                slot_id=slot.slot_id,
+                session_date=session_date,
+                missed_slot_ids=missed_slot_ids,
             ):
                 continue
             diagnosis = self._diagnose_protection(position, intent, snapshots)
@@ -757,6 +941,14 @@ class PaperRunner:
             if evaluation.reason_code is ReasonCode.REVIEW_DUPLICATE_SLOT:
                 continue
 
+            evaluation, execution_status, next_slot_id = _resolve_review_evaluation(
+                evaluation,
+                intent=intent,
+                position=position,
+                slot=slot,
+                configured_slots=configured_slots,
+            )
+
             spot_price = Decimal("0")
             if (
                 feature.derivatives is not None
@@ -799,6 +991,9 @@ class PaperRunner:
                 review_id=self._ids.new_id("REV"),
                 submitted=submitted,
                 now=now,
+                execution_status=execution_status,
+                missed_slot_ids=missed_slot_ids,
+                next_slot_id=next_slot_id,
             )
             self._write_lifecycle(position.trade_id, extra_reviews=(review,))
             decisions.append(review)
@@ -832,6 +1027,27 @@ class PaperRunner:
             return False
         if evaluation.action.is_proposal or evaluation.action is ReviewAction.HOLD:
             return False
+        if evaluation.action in {ReviewAction.ROLL, ReviewAction.SWITCH}:
+            self._services.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.OK,
+                    detail=evaluation.detail,
+                    updated_policy=evaluation.updated_policy,
+                ),
+            )
+            pending = self._services.trade_manager.get_position(position.trade_id)
+            if pending is None:
+                return False
+            events = self._submit_exit(
+                intent,
+                decision,
+                pending,
+                snapshots,
+                quantity_contracts=evaluation.exit_quantity_contracts,
+            )
+            return bool(events)
         if not evaluation.should_submit_exit:
             return False
         self._services.trade_manager.apply_exit_evaluation(
@@ -855,6 +1071,30 @@ class PaperRunner:
             remaining_stays_open=evaluation.action is ReviewAction.PARTIAL_EXIT,
         )
         return bool(events)
+
+    def _initiate_carry_rejection_exit(
+        self,
+        position: PositionState,
+        *,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        snapshots: Mapping[str, FeatureSnapshot],
+        detail: str,
+    ) -> tuple[OrderEvent, ...]:
+        """Start an orderly exit when carry is rejected while the session is tradable."""
+        self._services.trade_manager.apply_exit_evaluation(
+            position.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail=f"carry rejected: {detail}",
+                updated_policy=position.exit_policy,
+            ),
+        )
+        pending = self._services.trade_manager.get_position(position.trade_id)
+        if pending is None:
+            return ()
+        return self._submit_exit(intent, decision, pending, snapshots)
 
     def _exit_plan(
         self,
@@ -1093,6 +1333,7 @@ class PaperRunner:
         *,
         exit_order_ids: tuple[str, ...] | None = None,
         extra_reviews: tuple[PositionReviewRecord, ...] = (),
+        extra_carry: tuple[PositionCarryRecord, ...] = (),
     ) -> None:
         existing = self._services.store.get_position_lifecycle(trade_id)
         position = self._services.trade_manager.get_position(trade_id)
@@ -1113,6 +1354,7 @@ class PaperRunner:
             else (existing.exit_order_ids if existing is not None else ())
         )
         prior_reviews = existing.reviews if existing is not None else ()
+        prior_carry = existing.carry_records if existing is not None else ()
         record = PositionLifecycleRecord(
             trade_id=trade_id,
             position=position,
@@ -1121,6 +1363,7 @@ class PaperRunner:
             holding_style=_holding_style(intent),
             exit_order_ids=ids,
             reviews=(*prior_reviews, *extra_reviews),
+            carry_records=(*prior_carry, *extra_carry),
             as_of=position.as_of,
         )
         if existing is not None and _lifecycle_unchanged(existing, record):
@@ -1596,14 +1839,14 @@ class PaperRunner:
             )
         )
 
-    def _run_strategy(
+    def _evaluate_strategy(
         self,
         request: PaperStrategyRequest,
         *,
         system_state: SystemState,
         entries_blocked: bool,
         reconcile_id: str,
-    ) -> PaperStrategyOutcome:
+    ) -> _StrategyEvalRecord:
         readiness = self._readiness.evaluate(
             ReadinessRequest(
                 system_state=system_state,
@@ -1616,7 +1859,7 @@ class PaperRunner:
             )
         )
         if not readiness.entries_permitted:
-            return PaperStrategyOutcome(
+            early = PaperStrategyOutcome(
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -1630,10 +1873,11 @@ class PaperRunner:
                 decision_quotes=_decision_quotes(request),
                 execution_mode=request.execution_mode,
             )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
 
         p0_block = self._paper_p0_block_reasons(request, skip_margin=True)
         if p0_block and request.execute:
-            return PaperStrategyOutcome(
+            early = PaperStrategyOutcome(
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -1647,11 +1891,12 @@ class PaperRunner:
                 decision_quotes=_decision_quotes(request),
                 execution_mode=request.execution_mode,
             )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
 
         try:
             strategy = build_strategy(request.strategy_id)
         except KeyError:
-            return PaperStrategyOutcome(
+            early = PaperStrategyOutcome(
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -1664,6 +1909,7 @@ class PaperRunner:
                 decision_quotes=_decision_quotes(request),
                 execution_mode=request.execution_mode,
             )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
 
         underlying = request.underlying
         if request.strategy_id == "cas_microstructure":
@@ -1719,10 +1965,17 @@ class PaperRunner:
                 macro=request.macro,
             )
         )
+        intent_updates: dict[str, object] = {
+            "setup_features": request.setup_features,
+        }
+        if request.forced_mode_id is not None:
+            intent_updates["mode_id"] = request.forced_mode_id
+        if request.forced_family_id is not None:
+            intent_updates["family_id"] = request.forced_family_id
         intents = tuple(
             intent.model_copy(
                 update={
-                    "setup_features": request.setup_features,
+                    **intent_updates,
                     "strategy_confidence": (
                         intent.strategy_confidence
                         if request.setup_features is None
@@ -1734,40 +1987,86 @@ class PaperRunner:
         )
         rejection_reasons = tuple(item.reason for item in decision.rejections)
         if not decision.intents:
-            return PaperStrategyOutcome(
+            early = PaperStrategyOutcome(
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
                 rejection_reasons=rejection_reasons,
                 decisions=(),
                 order_events=(),
-                strategy_version=strategy.strategy_version,
+                strategy_version=getattr(strategy, "strategy_version", "unknown"),
                 executed=request.execute,
                 setup_features=request.setup_features,
                 route_decision=request.route_decision,
                 decision_quotes=_decision_quotes(request),
                 execution_mode=request.execution_mode,
             )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
 
         if not request.execute:
-            return PaperStrategyOutcome(
+            early = PaperStrategyOutcome(
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=intents,
                 rejection_reasons=rejection_reasons,
                 decisions=(),
                 order_events=(),
-                strategy_version=strategy.strategy_version,
+                strategy_version=getattr(strategy, "strategy_version", "unknown"),
                 executed=False,
                 setup_features=request.setup_features,
                 route_decision=request.route_decision,
                 decision_quotes=_decision_quotes(request),
                 execution_mode=request.execution_mode,
             )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
 
+        return _StrategyEvalRecord(
+            request=request,
+            intents=intents,
+            rejection_reasons=rejection_reasons,
+            strategy=strategy,
+            portfolio=portfolio,
+            can_execute=True,
+        )
+
+    def _execute_strategy_eval(
+        self,
+        rec: _StrategyEvalRecord,
+        *,
+        arb_result: ArbitrationResult,
+        entries_blocked: bool,
+    ) -> PaperStrategyOutcome:
+        if rec.early_outcome is not None:
+            return rec.early_outcome
+
+        request = rec.request
+        strategy = rec.strategy
+        portfolio = rec.portfolio
+        intents = rec.intents
+
+        approved_ids = {i.intent_id for i in arb_result.approved_intents}
+        suppressions = {s.candidate_intent_id: s for s in arb_result.suppressed_intents}
+
+        rejection_reasons = list(rec.rejection_reasons)
         risk_decisions: list[RiskDecision] = []
         order_events: list[OrderEvent] = []
+
         for intent in intents:
+            if id(intent) in arb_result.suppressed_object_ids:
+                rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                continue
+            if arb_result.approved_object_ids:
+                if id(intent) not in arb_result.approved_object_ids:
+                    if intent.intent_id in suppressions:
+                        rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                    continue
+            else:
+                if intent.intent_id in suppressions:
+                    rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                    continue
+                if intent.intent_id not in approved_ids:
+                    continue
+
             instrument = _instrument_for(intent, request.instruments)
             if instrument is None:
                 continue
@@ -1776,7 +2075,7 @@ class PaperRunner:
                 RiskGatewayRequest(
                     intent=intent,
                     feature_snapshot=_feature_for(intent, request),
-                    portfolio_snapshot=portfolio,
+                    portfolio_snapshot=portfolio,  # type: ignore[arg-type]
                     instrument=instrument,
                     leg_snapshots=_leg_snapshots(intent, request),
                     event_risk_state=request.event_risk_state,
@@ -1796,19 +2095,47 @@ class PaperRunner:
                 continue
             events = self._submit(intent, risk, request)
             order_events.extend(events)
+
         return PaperStrategyOutcome(
             strategy_id=request.strategy_id,
             snapshot_id=request.underlying.snapshot_id,
             intents=intents,
-            rejection_reasons=rejection_reasons,
+            rejection_reasons=tuple(rejection_reasons),
             decisions=tuple(risk_decisions),
             order_events=tuple(order_events),
-            strategy_version=strategy.strategy_version,
+            strategy_version=getattr(strategy, "strategy_version", "unknown"),
             executed=True,
             setup_features=request.setup_features,
             route_decision=request.route_decision,
             decision_quotes=_decision_quotes(request),
             execution_mode=request.execution_mode,
+        )
+
+    def _run_strategy(
+        self,
+        request: PaperStrategyRequest,
+        *,
+        system_state: SystemState,
+        entries_blocked: bool,
+        reconcile_id: str,
+    ) -> PaperStrategyOutcome:
+        rec = self._evaluate_strategy(
+            request,
+            system_state=system_state,
+            entries_blocked=entries_blocked,
+            reconcile_id=reconcile_id,
+        )
+        if not rec.can_execute:
+            return rec.early_outcome  # type: ignore[return-value]
+        arb = self._arbiter.arbitrate(
+            rec.intents,
+            existing_positions=self._services.trade_manager.list_positions(),
+            now=self._clock.now_utc(),
+        )
+        return self._execute_strategy_eval(
+            rec,
+            arb_result=arb,
+            entries_blocked=entries_blocked,
         )
 
     def _paper_p0_block_reasons(
@@ -1977,6 +2304,144 @@ def _holding_style(intent: TradeIntent) -> HoldingStyle:
     return HoldingStyle.POSITIONAL
 
 
+def _eligible_for_scheduled_review(
+    position: PositionState,
+    intent: TradeIntent,
+    persisted: PositionLifecycleRecord | None,
+) -> bool:
+    """M3/M4 and carried M2 receive 10:30/14:30 reviews; M1 is excluded."""
+    mode_id = position.mode_id or intent.mode_id
+    if mode_id is ModeId.M1_CAS:
+        return False
+    if mode_id in {
+        ModeId.M3_TACTICAL_POSITIONAL,
+        ModeId.M4_STRATEGIC_POSITIONAL,
+    }:
+        return True
+    if mode_id is ModeId.M2_DIRECTIONAL:
+        if persisted is None:
+            return False
+        return any(
+            item.action is CarryGateAction.CARRY_APPROVED
+            for item in persisted.carry_records
+        )
+    return True
+
+
+def _review_already_recorded(
+    prior: tuple[PositionReviewRecord, ...],
+    *,
+    slot_id: ReviewSlotId,
+    session_date: date,
+    missed_slot_ids: tuple[ReviewSlotId, ...],
+) -> bool:
+    if missed_slot_ids:
+        missed = frozenset(missed_slot_ids)
+        return any(
+            item.session_date == session_date
+            and (item.slot_id in missed or frozenset(item.missed_slot_ids) == missed)
+            for item in prior
+        )
+    return any(
+        item.slot_id is slot_id and item.session_date == session_date for item in prior
+    )
+
+
+def _resolve_review_evaluation(
+    evaluation: ReviewEvaluation,
+    *,
+    intent: TradeIntent,
+    position: PositionState,
+    slot: ReviewSlot,
+    configured_slots: tuple[ReviewSlot, ...],
+) -> tuple[ReviewEvaluation, ReviewExecutionStatus | None, ReviewSlotId | None]:
+    next_slot = (
+        next_review_slot_id(slot.slot_id, configured_slots)
+        if evaluation.action is ReviewAction.HOLD
+        and evaluation.reason_code is ReasonCode.OK
+        else None
+    )
+    detail = evaluation.detail
+    if next_slot is not None:
+        detail = f"{detail}; next review slot {next_slot.value}"
+
+    if evaluation.action is ReviewAction.PROPOSE_ROLL:
+        if family_supports_roll_switch(intent.family_id):
+            qty = sum(leg.quantity_contracts for leg in position.legs)
+            return (
+                ReviewEvaluation(
+                    action=ReviewAction.ROLL,
+                    reason_code=ReasonCode.OK,
+                    detail=(
+                        f"G2 roll close path: {evaluation.detail}; "
+                        "open leg requires Layer 2 approval"
+                    ),
+                    updated_policy=evaluation.updated_policy,
+                    exit_quantity_contracts=qty,
+                ),
+                ReviewExecutionStatus.NOT_APPLICABLE,
+                next_slot,
+            )
+        return (
+            ReviewEvaluation(
+                action=evaluation.action,
+                reason_code=ReasonCode.PROPOSED_NOT_EXECUTED,
+                detail=(f"{evaluation.detail}; family lacks G2 close/open plans"),
+                updated_policy=evaluation.updated_policy,
+            ),
+            ReviewExecutionStatus.PROPOSED_NOT_EXECUTED,
+            next_slot,
+        )
+
+    if evaluation.action is ReviewAction.PROPOSE_SWITCH:
+        if family_supports_roll_switch(intent.family_id):
+            qty = sum(leg.quantity_contracts for leg in position.legs)
+            return (
+                ReviewEvaluation(
+                    action=ReviewAction.SWITCH,
+                    reason_code=ReasonCode.OK,
+                    detail=(
+                        f"G2 switch close path: {evaluation.detail}; "
+                        "replacement requires Layer 2 approval"
+                    ),
+                    updated_policy=evaluation.updated_policy,
+                    exit_quantity_contracts=qty,
+                ),
+                ReviewExecutionStatus.NOT_APPLICABLE,
+                next_slot,
+            )
+        return (
+            ReviewEvaluation(
+                action=evaluation.action,
+                reason_code=ReasonCode.PROPOSED_NOT_EXECUTED,
+                detail=(f"{evaluation.detail}; family lacks G2 close/open plans"),
+                updated_policy=evaluation.updated_policy,
+            ),
+            ReviewExecutionStatus.PROPOSED_NOT_EXECUTED,
+            next_slot,
+        )
+
+    if evaluation.action is ReviewAction.HOLD and next_slot is not None:
+        return (
+            ReviewEvaluation(
+                action=evaluation.action,
+                reason_code=evaluation.reason_code,
+                detail=detail,
+                updated_policy=evaluation.updated_policy,
+                exit_quantity_contracts=evaluation.exit_quantity_contracts,
+            ),
+            ReviewExecutionStatus.NOT_APPLICABLE,
+            next_slot,
+        )
+
+    status = (
+        ReviewExecutionStatus.NOT_APPLICABLE
+        if not evaluation.action.is_proposal
+        else None
+    )
+    return evaluation, status, next_slot
+
+
 def _monitor_snapshot(
     intent: TradeIntent, leg_snapshots: Mapping[str, FeatureSnapshot]
 ) -> FeatureSnapshot | None:
@@ -1995,6 +2460,7 @@ def _lifecycle_unchanged(
         and existing.holding_style == updated.holding_style
         and existing.exit_order_ids == updated.exit_order_ids
         and existing.reviews == updated.reviews
+        and existing.carry_records == updated.carry_records
     )
 
 
@@ -2084,6 +2550,9 @@ def _stamp_review(
     review_id: str,
     submitted: bool,
     now: datetime,
+    execution_status: ReviewExecutionStatus | None = None,
+    missed_slot_ids: tuple[ReviewSlotId, ...] = (),
+    next_slot_id: ReviewSlotId | None = None,
 ) -> PositionReviewRecord:
     tightened = (
         evaluation.updated_policy.stop_price
@@ -2103,6 +2572,9 @@ def _stamp_review(
         frozen_policy_id=policy_id,
         tightened_stop_price=tightened,
         exit_quantity_contracts=evaluation.exit_quantity_contracts,
+        execution_status=execution_status,
+        missed_slot_ids=missed_slot_ids,
+        next_slot_id=next_slot_id,
         as_of=now,
     )
 
@@ -2154,6 +2626,41 @@ def _unavailable_review(
         frozen_policy_id=policy_id,
         as_of=now,
     )
+
+
+def _stamp_carry(
+    decision: CarryGateDecision,
+    *,
+    carry_id: str,
+    now: datetime,
+) -> PositionCarryRecord:
+    return PositionCarryRecord(
+        carry_id=carry_id,
+        trade_id=decision.trade_id,
+        session_date=decision.session_date,
+        action=decision.action,
+        mode_id=decision.mode_id,
+        reason_code=decision.reason_code,
+        detail=decision.detail,
+        exit_initiated=decision.exit_initiated,
+        as_of=now,
+    )
+
+
+def _remaining_dte(
+    position: PositionState,
+    intent: TradeIntent,
+    snapshots: Mapping[str, FeatureSnapshot],
+) -> int | None:
+    watched = monitor_leg(intent)
+    for leg in position.legs:
+        if leg.leg_id != watched.leg_id:
+            continue
+        snapshot = snapshots.get(leg.contract.symbol)
+        if snapshot is None or snapshot.derivatives is None:
+            return None
+        return snapshot.derivatives.days_to_expiry
+    return None
 
 
 def _as_reconciliation(payload: object) -> ReconciliationEvent | None:

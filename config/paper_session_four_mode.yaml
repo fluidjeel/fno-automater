@@ -1,0 +1,41 @@
+# Four-mode portfolio PAPER session. Independent mode/family stances.
+schema_version: "1"
+routing_profile: four_mode
+poll_interval_seconds: 60
+eod_local: "15:40"
+option_strikes_each_side: 2
+experiment_prefix: "EXP-4M"
+mode_stances:
+  M1_CAS: SHADOW
+  M2_DIRECTIONAL: SHADOW
+  M3_TACTICAL_POSITIONAL: PAPER
+  M4_STRATEGIC_POSITIONAL: PAPER
+family_stances:
+  long_straddle: SHADOW
+  long_strangle: SHADOW
+  long_call_calendar: SUSPENDED
+  long_put_calendar: SUSPENDED
+commodity_underlying: CRUDEOIL
+commodity_exchange: MCX
+commodity_segment: MCX_COM
+cohort_dir: data/paper/cohorts
+store_path: data/paper/trading.sqlite
+broker_state_path: data/paper/broker_state.json
+portfolio_risk_dir: data/paper/portfolio_risk
+session_heartbeat_path: data/paper/session_heartbeat.json
+positional_review:
+  nse_slots:
+    - id: NSE_MORNING
+      local: "10:30"
+    - id: NSE_AFTERNOON
+      local: "14:30"
+  mcx_slots: []
+cas_event_driven:
+  enabled: false
+  profile: quote_only
+  quote_max_age_ms: 500
+  max_entry_latency_ms: 2000
+  microprice_dislocation_ticks: "2"
+  min_top_book_size: 1
+  daily_loss_budget_fraction: "0.15"
+  max_attempts_per_session: 20

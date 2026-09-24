@@ -27,12 +27,16 @@ from trading.domain.clock import FrozenClock
 from trading.domain.contracts import (
     DerivativesContext,
     FeatureSnapshot,
+    PositionLifecycleRecord,
     PositionReviewRecord,
     TradeIntent,
 )
+from trading.domain.contracts.carry import PositionCarryRecord
 from trading.domain.contracts.position import PositionState
 from trading.domain.enums import (
+    CarryGateAction,
     HoldingStyle,
+    ModeId,
     OptionType,
     ReasonCode,
     ReviewAction,
@@ -123,6 +127,36 @@ def _nse_slots() -> tuple[ReviewSlot, ...]:
     )
 
 
+def _stamp_carry_approved(
+    runner: PaperRunner,
+    trade_id: str,
+    *,
+    session_date: date = SESSION_DATE,
+) -> PositionLifecycleRecord:
+    record = PositionCarryRecord(
+        carry_id="CRR-TEST",
+        trade_id=trade_id,
+        session_date=session_date,
+        action=CarryGateAction.CARRY_APPROVED,
+        mode_id=ModeId.M2_DIRECTIONAL,
+        reason_code=ReasonCode.OK,
+        detail="test carry approval for scheduled review",
+        exit_initiated=False,
+        as_of=SLOT_1030,
+    )
+    runner._write_lifecycle(trade_id, extra_carry=(record,))
+    lifecycle = runner._services.store.get_position_lifecycle(trade_id)
+    assert lifecycle is not None
+    return lifecycle
+
+
+def _open_reviewable_long(store: TradingStore, clock: FrozenClock) -> PaperRunner:
+    runner = _open_long(store, clock)
+    position = runner.trade_manager.list_positions()[0]
+    _stamp_carry_approved(runner, position.trade_id)
+    return runner
+
+
 def _session(
     runner: PaperRunner,
     clock: FrozenClock,
@@ -172,17 +206,20 @@ class TestDueSlots:
             recorded=frozenset(),
         )
         assert [item.slot_id for item in first] == [ReviewSlotId.NSE_MORNING]
-        both = due_review_slots(
+        recovery = due_review_slots(
             now_local=afternoon,
             session_open=time(9, 15),
             eod=time(15, 40),
             slots=slots,
             recorded=frozenset(),
         )
-        assert [item.slot_id for item in both] == [
+        assert len(recovery) == 1
+        assert recovery[0].is_recovery is True
+        assert recovery[0].slot_id is ReviewSlotId.NSE_AFTERNOON
+        assert recovery[0].missed_slot_ids == (
             ReviewSlotId.NSE_MORNING,
             ReviewSlotId.NSE_AFTERNOON,
-        ]
+        )
 
     def test_missed_morning_is_due_after_restart_before_eod(self) -> None:
         """If 10:30 was missed while down, run it once after restart in session."""
@@ -233,6 +270,7 @@ class TestReviewEngine:
         )
         assert result.action is ReviewAction.HOLD
         assert result.reason_code is ReasonCode.OK
+        assert "positional review holds" in result.detail
 
     def test_tighten_stop_is_monotonic(self) -> None:
         """Invariant 17: trail may only raise a long stop."""
@@ -367,7 +405,7 @@ class TestPaperSessionReviews:
     def test_both_slots_fire_and_duplicate_tick_is_safe(
         self, store: TradingStore, clock: FrozenClock, tmp_path: Path
     ) -> None:
-        runner = _open_long(store, clock)
+        runner = _open_reviewable_long(store, clock)
         sink = _Sink()
         session = _session(runner, clock, tmp_path, sink)
         clock.set(SLOT_1030)
@@ -391,7 +429,7 @@ class TestPaperSessionReviews:
     def test_missed_morning_runs_once_after_restart(
         self, store: TradingStore, clock: FrozenClock, tmp_path: Path
     ) -> None:
-        first = _open_long(store, clock)
+        first = _open_reviewable_long(store, clock)
         first.flush_lifecycle()
         clock.set(SLOT_1100)
         second = _restart(store, clock, first.broker)
@@ -412,7 +450,7 @@ class TestPaperSessionReviews:
         self, store: TradingStore, clock: FrozenClock, tmp_path: Path
     ) -> None:
         """Invariant 8: stops never wait for the next scheduled review."""
-        runner = _open_long(store, clock)
+        runner = _open_reviewable_long(store, clock)
         sink = _Sink()
         opened = runner.trade_manager.list_positions()[0]
         symbol = opened.legs[0].contract.symbol
@@ -443,7 +481,7 @@ class TestPaperSessionReviews:
     def test_review_full_exit_submits_once(
         self, store: TradingStore, clock: FrozenClock
     ) -> None:
-        runner = _open_long(store, clock)
+        runner = _open_reviewable_long(store, clock)
         opened = runner.trade_manager.list_positions()[0]
         symbol = opened.legs[0].contract.symbol
         near_expiry = _option_snapshot(
@@ -491,7 +529,7 @@ class TestReviewNotify:
             session_date=SESSION_DATE,
             action=ReviewAction.HOLD,
             reason_code=ReasonCode.OK,
-            detail="frozen policy unchanged; no review action",
+            detail="frozen policy unchanged; positional review holds",
             submitted=False,
             frozen_policy_id="EXIT-POL-1",
             as_of=SLOT_1030,

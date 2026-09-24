@@ -51,6 +51,7 @@ from trading.data.replay import build_replay_engine
 from trading.data.settings import FyersSettings
 from trading.data.storage.catalog import CatalogWriter
 from trading.data.storage.parquet_store import JsonlEventStore
+from trading.data.vix_backfill import backfill_vix_snapshots
 from trading.domain.clock import WallClock, ensure_utc
 from trading.domain.contracts import CohortPackage
 from trading.domain.ids import SequentialIdFactory
@@ -221,6 +222,24 @@ def _cmd_data_backfill_instruments(_args: argparse.Namespace) -> int:
     if not results:
         print("no reference.segments configured", file=sys.stderr)
         return 1
+    return 0
+
+
+def _cmd_data_backfill_vix_history(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    result = backfill_vix_snapshots(
+        pipeline_config=config,
+        repo_root=root,
+        feed=_fyers_feed(root),
+        clock=WallClock(),
+        app_config_path=_resolve_repo_path("config/paper.yaml"),
+        days=args.days,
+    )
+    print(
+        f"{result.symbol}: wrote={result.written} skipped={result.skipped} "
+        f"trading_days={result.trading_days}"
+    )
     return 0
 
 
@@ -1280,13 +1299,67 @@ def _cmd_data_record_chain(args: argparse.Namespace) -> int:
 
 
 def _cmd_ops_daemon(args: argparse.Namespace) -> int:
-    from trading.ops.daemon import DaemonSupervisor
+    from trading.ops.daemon import DaemonPhase, DaemonSupervisor
+    from trading.ops.orchestrator import PaperAutopilotOrchestrator
 
-    supervisor = DaemonSupervisor()
+    repo = _repo_root()
+    orchestrator = PaperAutopilotOrchestrator(
+        repo,
+        dry_run=bool(args.dry_run),
+    )
+
+    def _on_phase_change(previous: DaemonPhase, phase: DaemonPhase) -> None:
+        orchestrator.on_phase(phase, previous=previous)
+
+    def _on_tick(phase: DaemonPhase) -> None:
+        orchestrator.tick(phase)
+
+    supervisor = DaemonSupervisor(
+        heartbeat_path=repo / "data" / "daemon_heartbeat.json",
+        on_phase_change=_on_phase_change,
+        on_tick=_on_tick,
+    )
     print(
         f"Starting DaemonSupervisor (interval={args.interval}s, dry_run={args.dry_run})"
     )
+    if int(args.iterations) > 0:
+        for _ in range(int(args.iterations)):
+            supervisor.tick()
+        return 0
     supervisor.run(poll_interval_seconds=float(args.interval))
+    return 0
+
+
+def _cmd_ops_ensure_paper(_args: argparse.Namespace) -> int:
+    """One-shot autopilot health pass for timers and manual recovery."""
+    from trading.domain.clock import WallClock
+    from trading.ops.daemon import determine_phase
+    from trading.ops.orchestrator import PaperAutopilotOrchestrator
+
+    repo = _repo_root()
+    orchestrator = PaperAutopilotOrchestrator(repo)
+    phase = determine_phase(WallClock().now_utc())
+    result = orchestrator.tick(phase)
+    inactive = [item for item in result.services if not getattr(item, "active", True)]
+    if inactive:
+        return 1
+    return 0
+
+
+def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
+    """Send a Telegram alert when systemd reports a unit failure."""
+    from trading.ops.operator_alert import notify_operator
+
+    unit = str(args.unit)
+    repo = _repo_root()
+    notify_operator(
+        repo,
+        title=f"{unit} failed",
+        detail=(
+            f"systemd OnFailure fired for {unit}. Check journalctl and session logs."
+        ),
+        dedupe_key=f"onfailure:{unit}",
+    )
     return 0
 
 
@@ -1310,6 +1383,26 @@ def _cmd_ops_telegram_bot(args: argparse.Namespace) -> int:
     print(f"Starting Telegram Interactive Bot polling for chat {chat_id}...")
     stop_event = threading.Event()
     bot.run_loop(stop_event)
+    return 0
+
+
+def _cmd_evaluate_operator_view(args: argparse.Namespace) -> int:
+    from trading.runtime.family_status import (
+        build_family_operator_view,
+        build_four_mode_allocations,
+    )
+    from trading.runtime.paper_session import load_paper_session_config
+
+    repo = _repo_root()
+    session_cfg = load_paper_session_config(repo / "config" / "paper_session.yaml")
+    payload = {
+        "allocations": list(build_four_mode_allocations()),
+        "families": [
+            row.model_dump(mode="json")
+            for row in build_family_operator_view(session_cfg)
+        ],
+    }
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -1356,6 +1449,39 @@ def _cmd_evaluate_counterfactual(args: argparse.Namespace) -> int:
         )
     results = evaluate_counterfactuals(records)
     print(format_counterfactual_report(results))
+    return 0
+
+
+def _cmd_risk_one_lot(args: argparse.Namespace) -> int:
+    repo = _repo_root()
+    from trading.domain.primitives import Currency, Money
+    from trading.risk.affordability import (
+        evaluate_affordability,
+        persist_affordability_report,
+    )
+
+    equity = Money.of(Decimal(str(args.equity)), Currency.INR) if args.equity else None
+    report = evaluate_affordability(
+        repo,
+        lot_size_override=args.lot_size_override,
+        total_equity=equity,
+    )
+    out_path = (
+        Path(args.output)
+        if args.output
+        else repo / "docs" / "reports" / "G1_ONE_LOT_AFFORDABILITY.md"
+    )
+    saved = persist_affordability_report(repo, report, out_path)
+    print(f"Gate G1 One-Lot Affordability Report persisted to: {saved}")
+    print(
+        f"Evaluated {len(report.evaluations)} structures across 4 modes (NIFTY Lot: {report.lot_size})."
+    )
+    fits = sum(1 for e in report.evaluations if e.one_lot_fits_budget)
+    exceeds = sum(1 for e in report.evaluations if not e.one_lot_fits_budget)
+    print(
+        f"One-Lot Fits Cap: {fits}, Exceeds Budget: {exceeds} "
+        "(Note: fitting cap is offline feasibility only, NOT authorization to run PAPER; G2 requires lifecycle proof)"
+    )
     return 0
 
 
@@ -1442,6 +1568,17 @@ def main(argv: list[str] | None = None) -> int:
         help="inclusive lookback in UTC days (default: config fyers.bar_lookback_days)",
     )
     history.set_defaults(func=_cmd_data_backfill_history)
+    vix_history = backfill_sub.add_parser(
+        "vix-history",
+        help="backfill India VIX daily closes into the snapshot store",
+    )
+    vix_history.add_argument(
+        "--days",
+        type=int,
+        default=45,
+        help="inclusive lookback in UTC days (default: 45)",
+    )
+    vix_history.set_defaults(func=_cmd_data_backfill_vix_history)
     news = data_sub.add_parser("news", help="macro news JSONL helpers")
     news_sub = news.add_subparsers(dest="news_cmd", required=True)
     validate = news_sub.add_parser("validate", help="check macro_news.jsonl records")
@@ -1613,6 +1750,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     reviews_parser.set_defaults(func=_cmd_evaluate_reviews)
 
+    operator_view_parser = evaluate_sub.add_parser(
+        "operator-view",
+        help="print four-mode allocations and per-family G1/G2 status as JSON",
+    )
+    operator_view_parser.set_defaults(func=_cmd_evaluate_operator_view)
+
     desk_parser = evaluate_sub.add_parser(
         "desk",
         help="print Agent Desk PART 14 scorecard for one role as JSON",
@@ -1678,6 +1821,29 @@ def main(argv: list[str] | None = None) -> int:
         help="path to counterfactual trades JSON file",
     )
     cf_parser.set_defaults(func=_cmd_evaluate_counterfactual)
+
+    risk = sub.add_parser("risk", help="Layer 2 risk, limits and affordability")
+    risk_sub = risk.add_subparsers(dest="risk_cmd", required=True)
+    one_lot = risk_sub.add_parser(
+        "one-lot", help="evaluate Gate G1 one-lot affordability across all 4 modes"
+    )
+    one_lot.add_argument(
+        "--output",
+        default="",
+        help="custom report destination path (defaults to docs/reports/G1_ONE_LOT_AFFORDABILITY.md)",
+    )
+    one_lot.add_argument(
+        "--lot-size-override",
+        type=int,
+        default=None,
+        help="override instrument master lot size for scenario testing",
+    )
+    one_lot.add_argument(
+        "--equity",
+        default="",
+        help="total reference paper equity in INR (defaults to 700000)",
+    )
+    one_lot.set_defaults(func=_cmd_risk_one_lot)
 
     paper = sub.add_parser("paper", help="supervised PAPER runner helpers")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)
@@ -1800,6 +1966,19 @@ def main(argv: list[str] | None = None) -> int:
         help="simulate without triggering commands",
     )
     daemon.set_defaults(func=_cmd_ops_daemon)
+
+    ensure_paper = ops_sub.add_parser(
+        "ensure-paper",
+        help="ensure PAPER runtime units are active for the current market phase",
+    )
+    ensure_paper.set_defaults(func=_cmd_ops_ensure_paper)
+
+    alert_failure = ops_sub.add_parser(
+        "alert-unit-failure",
+        help="send Telegram alert when a systemd unit fails",
+    )
+    alert_failure.add_argument("unit", help="systemd unit name")
+    alert_failure.set_defaults(func=_cmd_ops_alert_unit_failure)
 
     tg_bot = ops_sub.add_parser(
         "telegram-bot", help="run two-way interactive Telegram bot"

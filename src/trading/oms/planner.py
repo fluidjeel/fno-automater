@@ -114,7 +114,7 @@ class OrderPlanPlanner:
                 leg_feature,
                 intent.entry_policy.limit_offset_ticks,
             )
-            quantity_contracts = approved.quantity.contracts
+            quantity_contracts = approved.quantity.contracts * intent_leg.ratio
             internal_order_id = self._ids.new_id("ORD")
             idempotency_key = derive_idempotency_key(
                 account_id=request.account_id,
@@ -211,6 +211,6 @@ def _protective_stub(
         contract=intent_leg.contract,
         side=exit_side,
         order_type=OrderType.STOP,
-        quantity_contracts=approved.quantity.contracts,
+        quantity_contracts=approved.quantity.contracts * intent_leg.ratio,
         trigger_price=trigger_price,
     )

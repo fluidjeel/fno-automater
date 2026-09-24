@@ -92,10 +92,25 @@ def format_review_decision(review: PositionReviewRecord) -> str:
         else ""
     )
     submitted = " submitted" if review.submitted else " not-submitted"
+    missed = (
+        f" missed_slots={[item.value for item in review.missed_slot_ids]}"
+        if review.missed_slot_ids
+        else ""
+    )
+    next_slot = (
+        f" next_slot={review.next_slot_id.value}"
+        if review.next_slot_id is not None
+        else ""
+    )
+    execution = (
+        f" execution={review.execution_status.value}"
+        if review.execution_status is not None
+        else ""
+    )
     return (
         f"PAPER review {review.slot_id.value} {review.action.value} "
         f"trade={review.trade_id} {review.reason_code.value} "
-        f"{review.detail}{stop}{qty}{submitted} "
+        f"{review.detail}{stop}{qty}{submitted}{missed}{next_slot}{execution} "
         f"(software-only protection; not broker-resident)"
     )
 
