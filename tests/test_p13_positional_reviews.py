@@ -35,10 +35,10 @@ from trading.runtime.paper_runner import (
     PaperRunner,
     _eligible_for_scheduled_review,
 )
-from trading.trade.roll_switch import resolve_roll_switch_review
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.storage.trading_store import TradingStore
 from trading.trade.review_roll_switch import family_supports_roll_switch
+from trading.trade.roll_switch import resolve_roll_switch_review
 
 NOW = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
 IST = ZoneInfo("Asia/Kolkata")

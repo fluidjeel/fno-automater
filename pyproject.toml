@@ -76,10 +76,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Tests assert, construct deliberately invalid values and need naive datetimes
 # to prove they are rejected.
-"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN001", "ANN401", "ANN201", "ANN202", "E501", "PLC0415", "RUF002", "N817", "RUF043", "PLR0915"]
+"tests/**" = ["S101", "S105", "S106", "S603", "S607", "DTZ001", "DTZ003", "DTZ005", "PLR2004", "ANN001", "ANN401", "ANN201", "ANN202", "ANN205", "E501", "PLC0415", "RUF002", "N817", "RUF043", "PLR0915"]
 "tests/paper_positional_sim/**" = ["E501"]
 "src/trading/storage/trading_store.py" = ["E501", "S608"]
-"src/trading/runtime/paper_session.py" = ["E501", "PLR0912", "PLR0915"]
+"src/trading/runtime/paper_session.py" = ["E501", "PLR0912", "PLR0915", "PLC0415"]
 "src/trading/analytics/monthly_meta_report.py" = ["PLR2004"]
 "src/trading/analytics/bias.py" = ["PLR2004"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
@@ -124,7 +124,10 @@ ignore = [
 "src/trading/portfolio/counterfactual_book.py" = ["E501"]
 "src/trading/portfolio/economic_overlap.py" = ["E501", "PLC0415", "PLR0911"]
 "src/trading/strategies/m4_broad_basket.py" = ["E501", "PLR0911", "PLR2004"]
-"src/trading/runtime/cas_event_path.py" = ["E501"]
+"src/trading/runtime/cas_event_path.py" = ["E501", "PLR0912"]
+"src/trading/risk/mode_ledger.py" = ["PLR0917"]
+"src/trading/storage/schema_migration.py" = ["PLC0415", "S608"]
+"src/trading/trade/roll_switch.py" = ["PLR0911"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

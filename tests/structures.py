@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import Any
 
+import tests.factories as f
 from tests.test_four_mode_session_integration import _runner
 from tests.test_four_mode_trade_simulations import _macro, _option, _request, _spec
 from tests.test_p10_iron_condor_binder_and_g2 import _condor_candidates
 from tests.test_p10_iron_condor_binder_and_g2 import _macro as m4_macro
 from tests.test_p11_m4_broad_basket import _call_butterfly_candidates
-import tests.factories as f
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import FeatureSnapshot
 from trading.domain.enums import ExecutionMode, FamilyId, ModeId, OptionType

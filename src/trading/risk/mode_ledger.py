@@ -26,6 +26,7 @@ from typing import Any, Final, Self
 
 from pydantic import Field, model_validator
 
+from trading.config.risk_policy import load_risk_policy
 from trading.domain.contracts.base import StrictModel
 from trading.domain.contracts.fill_charges import FillChargeRecord
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
@@ -33,7 +34,6 @@ from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.order import OrderEvent
 from trading.domain.enums import ModeId, ReservationState, TradeState
 from trading.domain.primitives import Currency, Money, Rounding
-from trading.config.risk_policy import load_risk_policy
 from trading.portfolio.campaign_drawdown import estimate_trade_charges
 from trading.portfolio.conservative_net import conservative_realized_net, estimated_net
 from trading.portfolio.fill_ledger import (
@@ -43,10 +43,10 @@ from trading.portfolio.fill_ledger import (
     trade_confirmed_charges,
     trade_fill_cash_flow,
 )
+from trading.storage.trading_store import TradingStore
 
 _index_order_events = index_order_events
 _order_dedupe_key = order_fill_dedupe_key
-from trading.storage.trading_store import TradingEventType, TradingStore
 
 __all__ = [
     "DEFAULT_TOTAL_EQUITY",

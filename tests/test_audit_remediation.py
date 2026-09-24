@@ -38,13 +38,13 @@ from trading.domain.enums import (
     Side,
     TradeState,
 )
-from trading.trade.roll_switch import begin_roll_switch_transition
-from trading.risk.mode_ledger import FourModeBook
-from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.domain.primitives import Currency, Money
+from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.paper_runner import PaperRunner
 from trading.runtime.paper_session import PaperSession, load_paper_session_config
 from trading.storage.trading_store import TradingStore
+from trading.trade.exits import ExitEvaluation, ExitKind
+from trading.trade.roll_switch import begin_roll_switch_transition
 
 IST = ZoneInfo("Asia/Kolkata")
 NOW = datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
@@ -444,8 +444,8 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_put_credit
-        from trading.storage.trading_store import TradingEventType
         from trading.domain.contracts.order import OrderEvent
+        from trading.storage.trading_store import TradingEventType
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / "closed-pnl.sqlite", clock=clock)
@@ -514,7 +514,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
         mode_id: ModeId,
         leg_count: int,
     ) -> None:
-        import tests.structures as structures
+        from tests import structures
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / f"{opener}.sqlite", clock=clock)
@@ -842,6 +842,7 @@ class TestP0OpenRiskCapsAndAtomicReservations:
         self, tmp_path: Path
     ) -> None:
         from concurrent.futures import ThreadPoolExecutor
+
         from trading.domain.contracts.mode_policy import load_modes_config
         from trading.risk.mode_ledger import FourModeBook
 
@@ -878,7 +879,7 @@ class TestP0OpenRiskCapsAndAtomicReservations:
             book = runner._services.gateway.mode_book
             assert book is not None
             ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
-            intent, decision = runner._open_book[position.trade_id]
+            _intent, decision = runner._open_book[position.trade_id]
             assert decision.recalculated_max_loss is not None
             assert ledger.reserved_capital.amount == Decimal(0)
             assert ledger.margin_used == decision.recalculated_max_loss
@@ -999,8 +1000,8 @@ class TestP0OpenRiskCapsAndAtomicReservations:
         self, tmp_path: Path
     ) -> None:
         from trading.domain.contracts.mode_policy import load_modes_config
-        from trading.domain.enums import ReservationState
         from trading.domain.contracts.reservation import CapitalReservation
+        from trading.domain.enums import ReservationState
         from trading.risk.mode_ledger import FourModeBook
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -1076,6 +1077,7 @@ class TestP0M1EventPathAndM2Carry:
 
     def test_stale_m1_provider_quote_is_rejected(self, tmp_path: Path) -> None:
         from dataclasses import replace
+        from zoneinfo import ZoneInfo
 
         from tests.test_m1_paper_session_integration import (
             _load_validated_session,
@@ -1085,7 +1087,6 @@ class TestP0M1EventPathAndM2Carry:
             _simulated_event,
         )
         from tests.test_p7_m1_selector_and_g3_path import _times
-        from zoneinfo import ZoneInfo
 
         at = datetime(2026, 9, 14, 15, 15, tzinfo=IST).astimezone(ZoneInfo("UTC"))
         clock = FrozenClock(at)
@@ -1217,7 +1218,7 @@ class TestP0RollSwitchPerLegAndReplacement:
     def test_roll_close_plan_uses_per_leg_quantities(
         self, tmp_path: Path, opener: str
     ) -> None:
-        import tests.structures as structures
+        from tests import structures
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / f"roll-{opener}.sqlite", clock=clock)

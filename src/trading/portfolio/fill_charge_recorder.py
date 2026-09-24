@@ -12,7 +12,7 @@ from trading.domain.contracts.fill_charges import (
     FillChargeRecord,
 )
 from trading.domain.contracts.order import OrderEvent
-from trading.domain.enums import OrderState, Side
+from trading.domain.enums import Side
 from trading.domain.primitives import Currency, Money, Rounding
 from trading.portfolio.fill_ledger import is_chargeable_fill, order_fill_dedupe_key
 from trading.storage.trading_store import TradingStore

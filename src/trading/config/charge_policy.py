@@ -19,7 +19,7 @@ from trading.domain.contracts.base import (
     StrictInt,
     VersionedModel,
 )
-from trading.domain.primitives import Currency, Money, Rounding
+from trading.domain.primitives import Money, Rounding
 
 __all__ = [
     "ChargePolicyConfig",
@@ -70,7 +70,9 @@ def load_charge_policy_text(raw: str, *, source: str) -> LoadedChargePolicy:
         data: dict[str, Any] = yaml.safe_load(raw) or {}
         config = ChargePolicyConfig.model_validate(data)
     except Exception as exc:
-        raise ChargePolicyLoadError(f"invalid charge policy at {source}: {exc}") from exc
+        raise ChargePolicyLoadError(
+            f"invalid charge policy at {source}: {exc}"
+        ) from exc
     checksum = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     return LoadedChargePolicy(config=config, source=source, checksum=checksum)
 

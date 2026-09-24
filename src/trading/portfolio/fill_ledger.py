@@ -24,11 +24,11 @@ _CHARGEABLE_STATES = frozenset({OrderState.FILLED, OrderState.PARTIAL})
 
 def is_chargeable_fill(event: OrderEvent) -> bool:
     """Return whether cash-flow and charge reconstruction may use this event."""
-    if event.state not in _CHARGEABLE_STATES:
-        return False
-    if event.filled_quantity <= 0 or event.average_fill_price is None:
-        return False
-    return True
+    return (
+        event.state in _CHARGEABLE_STATES
+        and event.filled_quantity > 0
+        and event.average_fill_price is not None
+    )
 
 
 def order_fill_dedupe_key(event: OrderEvent) -> str:

@@ -82,11 +82,14 @@ class PositionReviewRecord(StrictModel):
 
     @model_validator(mode="after")
     def _proposals_are_not_submitted(self) -> PositionReviewRecord:
-        if self.action.is_proposal and self.submitted:
-            if self.execution_status is not ReviewExecutionStatus.CLOSE_SUBMITTED:
-                raise ValueError(
-                    "HEDGE/ROLL/SWITCH proposals cannot auto-submit without G2 plans"
-                )
+        if (
+            self.action.is_proposal
+            and self.submitted
+            and self.execution_status is not ReviewExecutionStatus.CLOSE_SUBMITTED
+        ):
+            raise ValueError(
+                "HEDGE/ROLL/SWITCH proposals cannot auto-submit without G2 plans"
+            )
         if self.action is ReviewAction.HOLD and self.submitted:
             raise ValueError("HOLD must not submit an order")
         if self.exit_quantity_contracts is not None and self.action not in {

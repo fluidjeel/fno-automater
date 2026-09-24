@@ -90,7 +90,7 @@ INVALIDATION_NOTE = (
 )
 
 # Decision windows match CasEventDrivenConfig scan windows (ops): continuous
-# 09:20–15:00 and closing context 15:00–15:25. Cash auction 15:30–15:40 is out.
+# 09:20-15:00 and closing context 15:00-15:25. Cash auction 15:30-15:40 is out.
 IST = timezone(timedelta(hours=5, minutes=30))
 CAS_WINDOW_START_IST = time(9, 20)
 CAS_WINDOW_END_IST = time(15, 25)
@@ -107,7 +107,9 @@ def _m1_time_exit(now: datetime) -> datetime:
         local.date(), CAS_TIME_EXIT_DEADLINE_IST, tzinfo=IST
     )
     candidate = now + timedelta(seconds=CAS_HOLDING_SECONDS)
-    deadline_utc = deadline_local.astimezone(now.tzinfo) if now.tzinfo else deadline_local
+    deadline_utc = (
+        deadline_local.astimezone(now.tzinfo) if now.tzinfo else deadline_local
+    )
     return min(candidate, deadline_utc)
 
 

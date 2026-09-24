@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from trading.domain.contracts.campaign import CampaignRecord
 from trading.domain.contracts.fill_charges import FillChargeRecord
@@ -17,13 +18,10 @@ from trading.portfolio.conservative_net import (
     estimated_net,
 )
 from trading.portfolio.fill_ledger import (
-    index_fill_charges,
-    index_order_events,
     trade_confirmed_charges,
     trade_fill_cash_flow,
 )
 from trading.storage.trading_store import TradingStore
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from trading.risk.mode_ledger import FourModeBook
@@ -266,7 +264,7 @@ class CampaignLedger:
 def campaign_loss_limit(
     mode_id: ModeId,
     *,
-    mode_book: "FourModeBook",
+    mode_book: FourModeBook,
     modes_config: ModesConfig | None = None,
 ) -> Money:
     """Mode-scoped cumulative loss budget for one roll campaign."""

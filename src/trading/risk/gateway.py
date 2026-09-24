@@ -37,15 +37,15 @@ from trading.domain.enums import (
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Lots, LotSize, Money, Percent
 from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
+from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.research.registry import is_experimental_off_strict_book
 from trading.risk.limits import (
     build_sizing_limits,
-    evaluate_exposure_limits,
     evaluate_campaign_limit,
+    evaluate_exposure_limits,
     evaluate_pre_trade_limits,
     project_post_trade_exposure,
 )
-from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.risk.mode_ledger import FourModeBook
 from trading.risk.reservation import CapitalReservationService
 from trading.risk.sizing.butterfly import (
@@ -226,7 +226,13 @@ class RiskGateway:
             self._mode_fill_recorded.add(trade_id)
             self._mode_close_recorded.discard(trade_id)
 
-    def note_mode_close(self, mode_id: ModeId, amount: Money, *, trade_id: str | None = None) -> None:
+    def note_mode_close(
+        self,
+        mode_id: ModeId,
+        amount: Money,
+        *,
+        trade_id: str | None = None,
+    ) -> None:
         """Release mode open risk after a position fully closes."""
         if self._mode_book is None:
             return

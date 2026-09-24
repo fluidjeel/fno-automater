@@ -117,7 +117,7 @@ def test_g3_mechanism_separation_nfo_continuous_vs_cash_cas(repo_root: Path) -> 
     assert time(9, 20) == CAS_WINDOW_START_IST
     assert time(15, 25) == CAS_WINDOW_END_IST
     # The cash auction starts at 15:30, strictly after the M1 window closes.
-    assert CAS_WINDOW_END_IST < time(15, 30)
+    assert time(15, 30) > CAS_WINDOW_END_IST
 
     session_config_path = repo_root / "config" / "paper_session.yaml"
     with session_config_path.open("r", encoding="utf-8") as f:

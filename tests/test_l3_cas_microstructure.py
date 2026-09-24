@@ -33,12 +33,12 @@ from trading.strategies import (
 from trading.strategies.cas_microstructure import (
     CAS_HOLDING_SECONDS,
     CAS_WINDOW_END_IST,
-    IST,
     FEATURE_AUCTION_IMBALANCE,
     FEATURE_MICROPRICE_EDGE_BPS,
     FEATURE_QUOTE_INSTABILITY,
     FEATURE_SET_VERSION,
     FEATURE_TRADE_FLOW_IMBALANCE,
+    IST,
     MAX_HOLDING_DAYS,
 )
 

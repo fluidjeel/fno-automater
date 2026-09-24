@@ -35,8 +35,8 @@ from trading.domain.contracts import (
     PositionReviewRecord,
     ReconciliationEvent,
     RiskDecision,
-    RouteDecision,
     RollSwitchTransition,
+    RouteDecision,
     SetupFeatures,
     TradeIntent,
 )
@@ -96,11 +96,21 @@ from trading.portfolio import (
     build_broker_snapshot,
     build_portfolio_view,
 )
+from trading.portfolio.campaign_drawdown import (
+    CampaignLedger,
+    campaign_loss_limit,
+    trade_accounting,
+)
+from trading.portfolio.fill_charge_recorder import (
+    backfill_fill_charges,
+    record_fill_charge,
+)
+from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
 from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.review_schedule import ReviewSlot, next_review_slot_id
+from trading.runtime.review_schedule import ReviewSlot
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
@@ -115,16 +125,10 @@ from trading.trade.carry_gate import (
     build_m2_carry_gate_input,
     evaluate_m2_carry_gate,
     load_carry_gate_config,
+    resolve_carry_market,
 )
 from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
-from trading.portfolio.campaign_drawdown import (
-    CampaignLedger,
-    campaign_loss_limit,
-    trade_accounting,
-)
-from trading.portfolio.fill_charge_recorder import backfill_fill_charges, record_fill_charge
-from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
     replacement_blocked_reason,
@@ -858,8 +862,6 @@ class PaperRunner:
             recovery_healthy = not (
                 position.protection_degraded or position.software_stop_unavailable
             )
-            from trading.trade.carry_gate import resolve_carry_market
-
             carry_market = market or resolve_carry_market(
                 intent,
                 session_date=session_date,
@@ -1230,7 +1232,13 @@ class PaperRunner:
                 replacement_trade_id=None,
                 transition=transition,
             )
-        assert transition is not None
+        if transition is None:
+            return PaperRollSwitchReplacementResult(
+                approved=False,
+                reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
+                replacement_trade_id=None,
+                transition=None,
+            )
         if not request.execute:
             return self._reject_roll_switch_replacement(
                 trade_id,
@@ -1353,7 +1361,7 @@ class PaperRunner:
             return ()
         return self._submit_exit(intent, decision, pending, snapshots)
 
-    def _exit_plan(  # noqa: PLR0912 - one explicit per-leg exit order table
+    def _exit_plan(
         self,
         intent: TradeIntent,
         decision: RiskDecision,
@@ -2634,7 +2642,6 @@ class PaperRunner:
             strategy_id=intent.strategy_id,
             account_id=self._account.config.account_id,
         )
-        filled = False
         terminal_fail = False
         for event in submit.events:
             if event.state in {
@@ -2653,7 +2660,6 @@ class PaperRunner:
                 intent=intent,
                 capital_reservation_id=risk.capital_reservation_id,
             )
-            filled = True
             if (
                 event.state is OrderState.FILLED
                 and (

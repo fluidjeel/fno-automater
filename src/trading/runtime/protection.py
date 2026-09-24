@@ -78,9 +78,9 @@ class ProtectionCoordinator:
         self._last_heartbeat_write = None
         self._last_quote_at = None
         self._dedupe = {}
-        self._m1_quote_handler: Callable[[str, MarketQuote, datetime], object | None] | None = (
-            None
-        )
+        self._m1_quote_handler: (
+            Callable[[str, MarketQuote, datetime], object | None] | None
+        ) = None
         scripted.set_handler(self._on_quote)
         rest.set_handler(self._on_quote)
 
