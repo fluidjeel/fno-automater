@@ -68,4 +68,28 @@ Audit regressions are positive product assertions (no defect-expecting checks).
 
 ## Gate 2 — Oracle deployment verification
 
-See deployment section appended after VM run completes.
+**VM:** `ubuntu@92.4.94.79` (`instance-20260912-0856`)  
+**Deployed tree:** rsync from worktree `900293f` (no `.git` on VM).  
+**Config checksums (sha256 prefix):** `charges.yaml:265d9da63cfa16c6`, `paper_session.yaml:3ea2dba6c6616d94`, `risk.yaml:060440d94533ff85`
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Code sync at candidate tree | **PASS** | `charges.yaml`, accounting modules present; config checksums match local 900293f worktree |
+| `deploy_oracle.sh` bootstrap | **FAIL** | Remote `ruff check` reports 48 pre-existing violations; bootstrap aborted before full `pytest` on VM |
+| VM product + audit pytest | **PASS** | 61 passed (`test_four_mode_session_integration`, `test_cas_event_path`, `test_audit_remediation`, `test_fill_charges`) |
+| `new_entries_enabled: false` | **PASS** | `config/paper_session.yaml` on VM |
+| `routing_profile: four_mode` | **PASS** | VM config |
+| SHADOW/SUSPENDED M4 stances | **PASS** | `long_straddle`, `long_strangle` SHADOW; calendars SUSPENDED |
+| `fno-automated.service` restart | **PASS** | `systemctl restart` → `active` |
+| `fno-data-tick.service` | **PASS** | `active` |
+| Legacy `trading.sqlite` in-place migration | **FAIL** | Opening store against pre-900293f DB raises `no such column: idempotency_key`; requires migration runbook before live session |
+| Fresh DB schema (900293f) | **PASS** | New `fill_charges` table creates cleanly |
+| Fyers provider ingress (`data fetch`) | **FAIL** | `FyersApiError 401: Please provide valid token` — refresh `.fyers_token` before market session |
+| Live session router trace | **UNVERIFIED** | Off-hours; `fno-paper-session.service` inactive |
+| Restart with entries disabled (live) | **UNVERIFIED** | Supervisor restarted; no open positions in restored DB path tested end-to-end during market hours |
+
+**Operational notes**
+
+- Pre-deploy `trading.sqlite` backed up on VM as `trading.sqlite.pre-900293f-*` and restored after schema probe.
+- Entry promotion remains blocked: do **not** enable entries until legacy DB migration path is validated and Fyers token is refreshed.
+- M4 SHADOW/SUSPENDED families must not be promoted in a config-only entry release.
