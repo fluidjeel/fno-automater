@@ -71,11 +71,6 @@ def replacement_blocked_reason(
         return ReasonCode.CAPITAL_UNAVAILABLE
     if transition.status is RollSwitchStatus.COMPLETE:
         return ReasonCode.OK
-    if transition.status not in {
-        RollSwitchStatus.CLOSE_COMPLETE,
-        RollSwitchStatus.REPLACEMENT_PENDING_L2,
-    }:
-        return ReasonCode.INSTRUMENT_UNKNOWN
     return None
 
 

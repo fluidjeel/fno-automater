@@ -300,9 +300,11 @@ class TradingStore:
                     reservation = reservation.model_copy(
                         update={"reservation_id": existing.reservation_id}
                     )
-            existing = self._get_reservation_row(reservation.reservation_id)
-            if existing is not None:
-                current = CapitalReservation.model_validate(json.loads(existing["payload"]))
+            existing_row = self._get_reservation_row(reservation.reservation_id)
+            if existing_row is not None:
+                current = CapitalReservation.model_validate(
+                    json.loads(existing_row["payload"])
+                )
                 if current.state.holds_capital:
                     return current
             held = self._sum_active_reservation_amount(

@@ -35,7 +35,10 @@ def compute_fill_charges(
     if not is_chargeable_fill(event):
         raise ValueError(f"order {event.identity.idempotency_key} is not chargeable")
     currency = Currency.INR
-    premium = event.average_fill_price.value
+    average_fill_price = event.average_fill_price
+    if average_fill_price is None:
+        raise ValueError(f"order {event.identity.idempotency_key} has no fill price")
+    premium = average_fill_price.value
     qty = Decimal(event.filled_quantity)
     turnover = (premium * qty).quantize(Decimal("0.01"))
     brokerage = policy.brokerage_per_order.to_money()

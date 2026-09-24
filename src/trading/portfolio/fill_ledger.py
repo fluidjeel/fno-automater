@@ -71,7 +71,10 @@ def trade_fill_cash_flow(
         if not is_chargeable_fill(order):
             continue
         saw_fill = True
-        fill_val = order.average_fill_price.value * Decimal(order.filled_quantity)
+        average_fill_price = order.average_fill_price
+        if average_fill_price is None:
+            continue
+        fill_val = average_fill_price.value * Decimal(order.filled_quantity)
         if order.command.side is Side.SELL:
             net_pnl_decimal += fill_val
         else:

@@ -175,6 +175,9 @@ module = [
     "tests.test_p12_economic_overlap_m4_cap",
     "tests.test_p13_positional_reviews",
     "tests.test_p14_calendar_research_registry",
+    "tests.test_audit_remediation",
+    "tests.test_fill_charges",
+    "tests.structures",
 ]
 # Phase verification suites use dynamic fixtures; typed at runtime via factories.
 ignore_errors = true

@@ -292,19 +292,19 @@ class PaperSession:
         disconnected: bool = False,
     ) -> PaperCycleResult | None:
         """Production entry point: provider quote → ``submit_m1_event``."""
-        ingress = self._m1_ingress
-        if ingress is None:
-            from trading.runtime.m1_event_ingress import M1EventIngress
+        from trading.runtime.m1_event_ingress import M1EventIngress
 
-            ingress = M1EventIngress(session=self, now_utc=self._clock.now_utc)
-            self._m1_ingress = ingress
-        return ingress.on_quote(  # type: ignore[attr-defined]
+        if self._m1_ingress is None:
+            self._m1_ingress = M1EventIngress(session=self, now_utc=self._clock.now_utc)
+        if not isinstance(self._m1_ingress, M1EventIngress):
+            return None
+        result = self._m1_ingress.on_quote(
             symbol,
             quote,
             receive_time=receive_time,
-            quote_time=quote_time,
             disconnected=disconnected,
         )
+        return result if isinstance(result, PaperCycleResult) else None
 
     @property
     def sentinel(self) -> StopSentinel:
@@ -345,7 +345,17 @@ class PaperSession:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
         self.sync_sentinel()
         if self._protection is not None:
-            self._protection.set_m1_quote_handler(self.on_provider_quote)
+
+            def m1_handler(
+                symbol: str, quote: MarketQuote, receive_time: datetime
+            ) -> object | None:
+                return self.on_provider_quote(
+                    symbol,
+                    quote,
+                    receive_time=receive_time,
+                )
+
+            self._protection.set_m1_quote_handler(m1_handler)
             self._protection.refresh_subscriptions()
             self._protection.start()
         try:

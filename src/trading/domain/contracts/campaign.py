@@ -6,14 +6,14 @@ from typing import Any
 
 from pydantic import model_validator
 
-from trading.domain.contracts.base import NonEmptyStr, StrictBool, StrictModel
+from trading.domain.contracts.base import NonEmptyStr, StrictBool, VersionedModel
 from trading.domain.enums import ModeId
 from trading.domain.primitives import Currency, Money
 
 __all__ = ["CampaignRecord"]
 
 
-class CampaignRecord(StrictModel):
+class CampaignRecord(VersionedModel):
     """Cumulative realized outcome for one campaign across trade ids."""
 
     campaign_id: NonEmptyStr

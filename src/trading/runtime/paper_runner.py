@@ -1232,12 +1232,12 @@ class PaperRunner:
                 replacement_trade_id=None,
                 transition=transition,
             )
-        if transition is None:
+        if transition is None or lifecycle is None:
             return PaperRollSwitchReplacementResult(
                 approved=False,
                 reason_codes=(ReasonCode.INSTRUMENT_UNKNOWN,),
                 replacement_trade_id=None,
-                transition=None,
+                transition=transition,
             )
         if not request.execute:
             return self._reject_roll_switch_replacement(
@@ -2674,10 +2674,10 @@ class PaperRunner:
                 )
             self._open_book[trade_id] = (intent, risk)
 
-        position = self._services.trade_manager.get_position(trade_id)
+        final_position = self._services.trade_manager.get_position(trade_id)
         entry_complete = (
-            position is not None
-            and position.state is TradeState.OPEN
+            final_position is not None
+            and final_position.state is TradeState.OPEN
             and not self._services.trade_manager.is_pending(trade_id)
         )
         if entry_complete:
