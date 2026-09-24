@@ -102,6 +102,7 @@ from trading.domain.contracts.intent import (
 from trading.domain.contracts.lifecycle import (
     PositionLifecycleRecord,
     PositionReviewRecord,
+    RollSwitchTransition,
 )
 from trading.domain.contracts.mode_policy import (
     ModePolicy,
@@ -288,6 +289,7 @@ __all__ = [
     "PositionLifecycleRecord",
     "PositionRecord",
     "PositionReviewRecord",
+    "RollSwitchTransition",
     "PositionState",
     "PromotionEligibilityResult",
     "ProtectionHeartbeat",

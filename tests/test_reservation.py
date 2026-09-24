@@ -189,6 +189,31 @@ class TestReservationLifecycle:
         )
         assert released.state is ReservationState.RELEASED
 
+    def test_re_reserve_after_release_reuses_idempotency_key(
+        self,
+        service: CapitalReservationService,
+    ) -> None:
+        """A new attempt after RELEASED must not return the terminal reservation."""
+        first = service.try_reserve(
+            intent_id="INT-ROLL",
+            strategy_id="debit_spread",
+            amount=f.money("50000"),
+            margin_available=MARGIN,
+            risk_decision_id="DEC-1",
+            idempotency_key="idem-roll-replace",
+        )
+        service.release(first.reservation_id, trigger=Trigger.LOCAL_COMMAND)
+        second = service.try_reserve(
+            intent_id="INT-ROLL",
+            strategy_id="debit_spread",
+            amount=f.money("50000"),
+            margin_available=MARGIN,
+            risk_decision_id="DEC-2",
+            idempotency_key="idem-roll-replace",
+        )
+        assert second.state is ReservationState.RESERVED
+        assert second.reservation_id == first.reservation_id
+
     def test_illegal_transition_is_rejected(
         self,
         service: CapitalReservationService,

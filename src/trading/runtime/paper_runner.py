@@ -35,6 +35,7 @@ from trading.domain.contracts import (
     ReconciliationEvent,
     RiskDecision,
     RouteDecision,
+    RollSwitchTransition,
     SetupFeatures,
     TradeIntent,
 )
@@ -68,6 +69,7 @@ from trading.domain.enums import (
     ReviewExecutionStatus,
     ReviewSlotId,
     RiskAction,
+    RollSwitchStatus,
     Severity,
     Side,
     SystemState,
@@ -114,8 +116,13 @@ from trading.trade.carry_gate import (
     load_carry_gate_config,
 )
 from trading.trade.exits import ExitEvaluation, ExitKind
-from trading.trade.review import ReviewEngine, ReviewEvaluation
-from trading.trade.review_roll_switch import family_supports_roll_switch
+from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
+from trading.trade.roll_switch import (
+    begin_roll_switch_transition,
+    replacement_blocked_reason,
+    resolve_roll_switch_review,
+    transition_after_close,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +131,7 @@ __all__ = [
     "PaperCarryGateResult",
     "PaperCycleResult",
     "PaperReviewResult",
+    "PaperRollSwitchReplacementResult",
     "PaperRunner",
     "PaperStrategyOutcome",
     "PaperStrategyRequest",
@@ -176,6 +184,16 @@ class PositionRecoveryResult:
     alerts: tuple[LifecycleAlert, ...]
     unprotected_trade_ids: tuple[str, ...]
     unreconciled_trade_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PaperRollSwitchReplacementResult:
+    """Outcome of one roll/switch replacement attempt after structure close."""
+
+    approved: bool
+    reason_codes: tuple[ReasonCode, ...]
+    replacement_trade_id: str | None
+    transition: RollSwitchTransition | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -985,7 +1003,7 @@ class PaperRunner:
             if evaluation.reason_code is ReasonCode.REVIEW_DUPLICATE_SLOT:
                 continue
 
-            evaluation, execution_status, next_slot_id = _resolve_review_evaluation(
+            evaluation, execution_status, next_slot_id = resolve_roll_switch_review(
                 evaluation,
                 intent=intent,
                 position=position,
@@ -993,6 +1011,7 @@ class PaperRunner:
                 configured_slots=configured_slots,
             )
 
+            review_id = self._ids.new_id("REV")
             spot_price = Decimal("0")
             if (
                 feature.derivatives is not None
@@ -1016,6 +1035,7 @@ class PaperRunner:
                 decision=decision,
                 position=position,
                 snapshots=snapshots,
+                review_id=review_id,
             )
             try:
                 maybe_log_position_shadow(
@@ -1041,7 +1061,7 @@ class PaperRunner:
                 policy_id=position.exit_policy.policy_id,
                 slot_id=slot.slot_id,
                 session_date=session_date,
-                review_id=self._ids.new_id("REV"),
+                review_id=review_id,
                 submitted=submitted,
                 now=now,
                 execution_status=execution_status,
@@ -1060,6 +1080,7 @@ class PaperRunner:
         decision: RiskDecision,
         position: PositionState,
         snapshots: Mapping[str, FeatureSnapshot],
+        review_id: str,
     ) -> bool:
         if evaluation.action is ReviewAction.TIGHTEN_STOP:
             policy = evaluation.updated_policy
@@ -1078,29 +1099,17 @@ class PaperRunner:
                 ),
             )
             return False
+        if evaluation.submit_structure_close and evaluation.roll_switch_kind is not None:
+            return self._submit_roll_switch_close(
+                evaluation,
+                intent=intent,
+                decision=decision,
+                position=position,
+                snapshots=snapshots,
+                review_id=review_id,
+            )
         if evaluation.action.is_proposal or evaluation.action is ReviewAction.HOLD:
             return False
-        if evaluation.action in {ReviewAction.ROLL, ReviewAction.SWITCH}:
-            self._services.trade_manager.apply_exit_evaluation(
-                position.trade_id,
-                ExitEvaluation(
-                    kind=ExitKind.STOP,
-                    reason_code=ReasonCode.OK,
-                    detail=evaluation.detail,
-                    updated_policy=evaluation.updated_policy,
-                ),
-            )
-            pending = self._services.trade_manager.get_position(position.trade_id)
-            if pending is None:
-                return False
-            events = self._submit_exit(
-                intent,
-                decision,
-                pending,
-                snapshots,
-                quantity_contracts=evaluation.exit_quantity_contracts,
-            )
-            return bool(events)
         if not evaluation.should_submit_exit:
             return False
         self._services.trade_manager.apply_exit_evaluation(
@@ -1120,10 +1129,163 @@ class PaperRunner:
             decision,
             pending,
             snapshots,
-            quantity_contracts=evaluation.exit_quantity_contracts,
+            quantity_contracts=structure_exit_quantity(
+                position, evaluation.exit_quantity_contracts
+            ),
             remaining_stays_open=evaluation.action is ReviewAction.PARTIAL_EXIT,
         )
         return bool(events)
+
+    def _submit_roll_switch_close(
+        self,
+        evaluation: ReviewEvaluation,
+        *,
+        intent: TradeIntent,
+        decision: RiskDecision,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+        review_id: str,
+    ) -> bool:
+        """Submit the structure close leg of a roll/switch without relabeling it."""
+        kind = evaluation.roll_switch_kind
+        if kind is None:
+            return False
+        now = self._clock.now_utc()
+        transition = begin_roll_switch_transition(
+            kind=kind,
+            review_id=review_id,
+            as_of=now,
+        )
+        self._write_lifecycle(
+            position.trade_id, roll_switch_transition=transition
+        )
+        self._services.trade_manager.apply_exit_evaluation(
+            position.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail=evaluation.detail,
+                updated_policy=evaluation.updated_policy,
+            ),
+        )
+        pending = self._services.trade_manager.get_position(position.trade_id)
+        if pending is None:
+            return False
+        events = self._submit_exit(
+            intent,
+            decision,
+            pending,
+            snapshots,
+            quantity_contracts=None,
+        )
+        return bool(events)
+
+    def submit_roll_switch_replacement(
+        self,
+        trade_id: str,
+        request: PaperStrategyRequest,
+    ) -> PaperRollSwitchReplacementResult:
+        """Submit a replacement leg after close; requires fresh Layer 2 approval."""
+        lifecycle = self._services.store.get_position_lifecycle(trade_id)
+        transition = (
+            None if lifecycle is None else lifecycle.roll_switch_transition
+        )
+        blocked = replacement_blocked_reason(
+            transition,
+            entries_blocked=self._entries_are_blocked(reconcile_blocked=False),
+        )
+        if blocked is not None and blocked is not ReasonCode.OK:
+            return PaperRollSwitchReplacementResult(
+                approved=False,
+                reason_codes=(blocked,),
+                replacement_trade_id=None,
+                transition=transition,
+            )
+        position = self._services.trade_manager.get_position(trade_id)
+        if position is None or position.state is not TradeState.CLOSED:
+            return PaperRollSwitchReplacementResult(
+                approved=False,
+                reason_codes=(ReasonCode.UNRECONCILED_POSITION,),
+                replacement_trade_id=None,
+                transition=transition,
+            )
+        assert transition is not None
+        if not request.execute:
+            return self._reject_roll_switch_replacement(
+                trade_id,
+                transition=transition,
+                reason_codes=(ReasonCode.CAPITAL_UNAVAILABLE,),
+            )
+        pending_transition = transition.model_copy(
+            update={
+                "status": RollSwitchStatus.REPLACEMENT_PENDING_L2,
+                "as_of": self._clock.now_utc(),
+            }
+        )
+        self._write_lifecycle(
+            trade_id, roll_switch_transition=pending_transition
+        )
+        result = self.run_cycle(
+            (_stamp_roll_switch_replacement_request(request, pending_transition),)
+        )
+        if not result.outcomes:
+            return self._reject_roll_switch_replacement(
+                trade_id, transition=pending_transition
+            )
+        outcome = result.outcomes[0]
+        if outcome.order_events and not outcome.rejection_reasons:
+            replacement_trade_id = outcome.order_events[0].identity.trade_id
+            completed = pending_transition.model_copy(
+                update={
+                    "status": RollSwitchStatus.COMPLETE,
+                    "replacement_trade_id": replacement_trade_id,
+                    "as_of": self._clock.now_utc(),
+                }
+            )
+            self._write_lifecycle(
+                trade_id,
+                roll_switch_transition=completed,
+                patch_last_review_execution=ReviewExecutionStatus.ROLL_SWITCH_COMPLETE,
+                completed_roll_switch=transition.kind,
+            )
+            return PaperRollSwitchReplacementResult(
+                approved=True,
+                reason_codes=(ReasonCode.OK,),
+                replacement_trade_id=replacement_trade_id,
+                transition=completed,
+            )
+        reasons = outcome.rejection_reasons or outcome.entry_blocked_reasons
+        return self._reject_roll_switch_replacement(
+            trade_id,
+            transition=pending_transition,
+            reason_codes=reasons or (ReasonCode.CAPITAL_UNAVAILABLE,),
+        )
+
+    def _reject_roll_switch_replacement(
+        self,
+        trade_id: str,
+        *,
+        transition: RollSwitchTransition,
+        reason_codes: tuple[ReasonCode, ...] = (ReasonCode.CAPITAL_UNAVAILABLE,),
+    ) -> PaperRollSwitchReplacementResult:
+        rejected = transition.model_copy(
+            update={
+                "status": RollSwitchStatus.REPLACEMENT_REJECTED,
+                "rejection_reason": reason_codes[0],
+                "as_of": self._clock.now_utc(),
+            }
+        )
+        self._write_lifecycle(
+            trade_id,
+            roll_switch_transition=rejected,
+            patch_last_review_execution=ReviewExecutionStatus.REPLACEMENT_REJECTED,
+        )
+        return PaperRollSwitchReplacementResult(
+            approved=False,
+            reason_codes=reason_codes,
+            replacement_trade_id=None,
+            transition=rejected,
+        )
 
     def _initiate_carry_rejection_exit(
         self,
@@ -1319,7 +1481,23 @@ class PaperRunner:
                     trade_id=position.trade_id,
                 )
             self._open_book.pop(position.trade_id, None)
+            self._advance_roll_switch_after_close(position.trade_id)
         return submit.events
+
+    def _advance_roll_switch_after_close(self, trade_id: str) -> None:
+        """Move an in-flight roll/switch to replacement-pending once close fills."""
+        existing = self._services.store.get_position_lifecycle(trade_id)
+        if existing is None or existing.roll_switch_transition is None:
+            return
+        transition = transition_after_close(
+            existing.roll_switch_transition,
+            as_of=self._clock.now_utc(),
+        )
+        self._write_lifecycle(
+            trade_id,
+            roll_switch_transition=transition,
+            patch_last_review_execution=ReviewExecutionStatus.REPLACEMENT_PENDING_L2,
+        )
 
     def _adopt_existing_exit_orders(
         self,
@@ -1405,6 +1583,9 @@ class PaperRunner:
         exit_order_ids: tuple[str, ...] | None = None,
         extra_reviews: tuple[PositionReviewRecord, ...] = (),
         extra_carry: tuple[PositionCarryRecord, ...] = (),
+        roll_switch_transition: RollSwitchTransition | None = None,
+        patch_last_review_execution: ReviewExecutionStatus | None = None,
+        completed_roll_switch: ReviewAction | None = None,
     ) -> None:
         existing = self._services.store.get_position_lifecycle(trade_id)
         position = self._services.trade_manager.get_position(trade_id)
@@ -1426,6 +1607,21 @@ class PaperRunner:
         )
         prior_reviews = existing.reviews if existing is not None else ()
         prior_carry = existing.carry_records if existing is not None else ()
+        reviews = (*prior_reviews, *extra_reviews)
+        if patch_last_review_execution is not None and reviews:
+            last = reviews[-1]
+            reviews = (
+                *reviews[:-1],
+                last.model_copy(
+                    update={
+                        "execution_status": patch_last_review_execution,
+                        "completed_roll_switch": completed_roll_switch,
+                    }
+                ),
+            )
+        transition = roll_switch_transition
+        if transition is None and existing is not None:
+            transition = existing.roll_switch_transition
         record = PositionLifecycleRecord(
             trade_id=trade_id,
             position=position,
@@ -1433,8 +1629,9 @@ class PaperRunner:
             risk_decision=decision,
             holding_style=_holding_style(intent),
             exit_order_ids=ids,
-            reviews=(*prior_reviews, *extra_reviews),
+            reviews=reviews,
             carry_records=(*prior_carry, *extra_carry),
+            roll_switch_transition=transition,
             as_of=position.as_of,
         )
         if existing is not None and _lifecycle_unchanged(existing, record):
@@ -2363,6 +2560,39 @@ class PaperRunner:
                 self._services.broker.publish_quote(leg.contract.symbol, quote)
 
 
+def _stamp_roll_switch_replacement_request(
+    request: PaperStrategyRequest,
+    transition: RollSwitchTransition,
+) -> PaperStrategyRequest:
+    """Give a replacement leg fresh intent/order identity after structure close."""
+    suffix = f"replace-{transition.transition_id}"
+    underlying = request.underlying.model_copy(
+        update={"snapshot_id": f"{request.underlying.snapshot_id}-{suffix}"}
+    )
+    candidates = tuple(
+        candidate.model_copy(
+            update={"snapshot_id": f"{candidate.snapshot_id}-{suffix}"}
+        )
+        for candidate in request.candidates
+    )
+    return PaperStrategyRequest(
+        strategy_id=request.strategy_id,
+        underlying=underlying,
+        candidates=candidates,
+        instruments=request.instruments,
+        event_risk_state=request.event_risk_state,
+        experiment_id=f"{request.experiment_id}::{transition.transition_id}",
+        execution_mode=request.execution_mode,
+        macro=request.macro,
+        execute=request.execute,
+        setup_features=request.setup_features,
+        route_decision=request.route_decision,
+        shortlist=request.shortlist,
+        forced_mode_id=request.forced_mode_id,
+        forced_family_id=request.forced_family_id,
+    )
+
+
 def _decision_quotes(
     request: PaperStrategyRequest,
 ) -> tuple[tuple[str, MarketQuote], ...]:
@@ -2472,101 +2702,6 @@ def _review_already_recorded(
     )
 
 
-def _resolve_review_evaluation(
-    evaluation: ReviewEvaluation,
-    *,
-    intent: TradeIntent,
-    position: PositionState,
-    slot: ReviewSlot,
-    configured_slots: tuple[ReviewSlot, ...],
-) -> tuple[ReviewEvaluation, ReviewExecutionStatus | None, ReviewSlotId | None]:
-    next_slot = (
-        next_review_slot_id(slot.slot_id, configured_slots)
-        if evaluation.action is ReviewAction.HOLD
-        and evaluation.reason_code is ReasonCode.OK
-        else None
-    )
-    detail = evaluation.detail
-    if next_slot is not None:
-        detail = f"{detail}; next review slot {next_slot.value}"
-
-    if evaluation.action is ReviewAction.PROPOSE_ROLL:
-        if family_supports_roll_switch(intent.family_id):
-            qty = sum(leg.quantity_contracts for leg in position.legs)
-            return (
-                ReviewEvaluation(
-                    action=ReviewAction.ROLL,
-                    reason_code=ReasonCode.OK,
-                    detail=(
-                        f"G2 roll close path: {evaluation.detail}; "
-                        "open leg requires Layer 2 approval"
-                    ),
-                    updated_policy=evaluation.updated_policy,
-                    exit_quantity_contracts=qty,
-                ),
-                ReviewExecutionStatus.NOT_APPLICABLE,
-                next_slot,
-            )
-        return (
-            ReviewEvaluation(
-                action=evaluation.action,
-                reason_code=ReasonCode.PROPOSED_NOT_EXECUTED,
-                detail=(f"{evaluation.detail}; family lacks G2 close/open plans"),
-                updated_policy=evaluation.updated_policy,
-            ),
-            ReviewExecutionStatus.PROPOSED_NOT_EXECUTED,
-            next_slot,
-        )
-
-    if evaluation.action is ReviewAction.PROPOSE_SWITCH:
-        if family_supports_roll_switch(intent.family_id):
-            qty = sum(leg.quantity_contracts for leg in position.legs)
-            return (
-                ReviewEvaluation(
-                    action=ReviewAction.SWITCH,
-                    reason_code=ReasonCode.OK,
-                    detail=(
-                        f"G2 switch close path: {evaluation.detail}; "
-                        "replacement requires Layer 2 approval"
-                    ),
-                    updated_policy=evaluation.updated_policy,
-                    exit_quantity_contracts=qty,
-                ),
-                ReviewExecutionStatus.NOT_APPLICABLE,
-                next_slot,
-            )
-        return (
-            ReviewEvaluation(
-                action=evaluation.action,
-                reason_code=ReasonCode.PROPOSED_NOT_EXECUTED,
-                detail=(f"{evaluation.detail}; family lacks G2 close/open plans"),
-                updated_policy=evaluation.updated_policy,
-            ),
-            ReviewExecutionStatus.PROPOSED_NOT_EXECUTED,
-            next_slot,
-        )
-
-    if evaluation.action is ReviewAction.HOLD and next_slot is not None:
-        return (
-            ReviewEvaluation(
-                action=evaluation.action,
-                reason_code=evaluation.reason_code,
-                detail=detail,
-                updated_policy=evaluation.updated_policy,
-                exit_quantity_contracts=evaluation.exit_quantity_contracts,
-            ),
-            ReviewExecutionStatus.NOT_APPLICABLE,
-            next_slot,
-        )
-
-    status = (
-        ReviewExecutionStatus.NOT_APPLICABLE
-        if not evaluation.action.is_proposal
-        else None
-    )
-    return evaluation, status, next_slot
-
-
 def _monitor_snapshot(
     intent: TradeIntent, leg_snapshots: Mapping[str, FeatureSnapshot]
 ) -> FeatureSnapshot | None:
@@ -2586,6 +2721,7 @@ def _lifecycle_unchanged(
         and existing.exit_order_ids == updated.exit_order_ids
         and existing.reviews == updated.reviews
         and existing.carry_records == updated.carry_records
+        and existing.roll_switch_transition == updated.roll_switch_transition
     )
 
 
@@ -2693,7 +2829,11 @@ def _stamp_review(
         action=evaluation.action,
         reason_code=evaluation.reason_code,
         detail=evaluation.detail,
-        submitted=submitted and not evaluation.action.is_proposal,
+        submitted=submitted
+        and (
+            not evaluation.action.is_proposal
+            or execution_status is ReviewExecutionStatus.CLOSE_SUBMITTED
+        ),
         frozen_policy_id=policy_id,
         tightened_stop_price=tightened,
         exit_quantity_contracts=evaluation.exit_quantity_contracts,

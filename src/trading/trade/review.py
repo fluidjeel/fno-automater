@@ -43,9 +43,13 @@ class ReviewEvaluation:
     detail: str
     updated_policy: ExitPolicy | None = None
     exit_quantity_contracts: int | None = None
+    submit_structure_close: bool = False
+    roll_switch_kind: ReviewAction | None = None
 
     @property
     def should_submit_exit(self) -> bool:
+        if self.submit_structure_close:
+            return True
         return self.action.submits_exit
 
 
@@ -119,7 +123,9 @@ class ReviewEngine:
                     reason_code=ReasonCode.OK,
                     detail=enforced.detail,
                     updated_policy=enforced.updated_policy,
-                    exit_quantity_contracts=_open_quantity(position),
+                    exit_quantity_contracts=structure_exit_quantity(
+                        position, _open_quantity(position)
+                    ),
                 )
             if enforced.outcome is TerminalEnforcementOutcome.REVERTED_TO_FLATTEN:
                 # Apply revert then continue remaining review against flatten policy.
@@ -139,7 +145,9 @@ class ReviewEngine:
                 reason_code=ReasonCode.OK,
                 detail=f"frozen policy exit: {exit_eval.detail}",
                 updated_policy=exit_eval.updated_policy,
-                exit_quantity_contracts=_open_quantity(position),
+                exit_quantity_contracts=structure_exit_quantity(
+                    position, _open_quantity(position)
+                ),
             )
 
         dte = _days_to_expiry(feature)
@@ -152,7 +160,9 @@ class ReviewEngine:
                     f"days to expiry {dte} is at or inside frozen "
                     f"exit_before_expiry_days {expiry_days}"
                 ),
-                exit_quantity_contracts=_open_quantity(position),
+                exit_quantity_contracts=structure_exit_quantity(
+                    position, _open_quantity(position)
+                ),
             )
 
         if not _already_partialed(prior_reviews):
@@ -227,6 +237,15 @@ def _already_partialed(prior: tuple[PositionReviewRecord, ...]) -> bool:
 
 def _open_quantity(position: PositionState) -> int:
     return sum(leg.quantity_contracts for leg in position.legs)
+
+
+def structure_exit_quantity(
+    position: PositionState, quantity: int | None
+) -> int | None:
+    """Apply a shared exit quantity only for single-leg structures."""
+    if quantity is None or len(position.legs) != 1:
+        return None
+    return quantity
 
 
 def _partial_exit_quantity(position: PositionState, policy: ExitPolicy) -> int | None:

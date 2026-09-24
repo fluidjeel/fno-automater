@@ -30,10 +30,34 @@ from trading.domain.enums import (
     ReviewAction,
     ReviewExecutionStatus,
     ReviewSlotId,
+    RollSwitchStatus,
 )
 from trading.domain.primitives import Price
 
-__all__ = ["PositionCarryRecord", "PositionLifecycleRecord", "PositionReviewRecord"]
+__all__ = [
+    "PositionCarryRecord",
+    "PositionLifecycleRecord",
+    "PositionReviewRecord",
+    "RollSwitchTransition",
+]
+
+
+class RollSwitchTransition(StrictModel):
+    """Linked close-then-replace state for one roll or switch review."""
+
+    transition_id: NonEmptyStr
+    review_id: NonEmptyStr
+    kind: ReviewAction
+    status: RollSwitchStatus
+    replacement_trade_id: NonEmptyStr | None = None
+    rejection_reason: ReasonCode | None = None
+    as_of: UtcDatetime
+
+    @model_validator(mode="after")
+    def _kind_is_roll_or_switch(self) -> RollSwitchTransition:
+        if self.kind not in {ReviewAction.ROLL, ReviewAction.SWITCH}:
+            raise ValueError("roll/switch transition kind must be ROLL or SWITCH")
+        return self
 
 
 class PositionReviewRecord(StrictModel):
@@ -51,6 +75,7 @@ class PositionReviewRecord(StrictModel):
     tightened_stop_price: Price | None = None
     exit_quantity_contracts: StrictInt | None = Field(default=None, gt=0)
     execution_status: ReviewExecutionStatus | None = None
+    completed_roll_switch: ReviewAction | None = None
     missed_slot_ids: tuple[ReviewSlotId, ...] = ()
     next_slot_id: ReviewSlotId | None = None
     as_of: UtcDatetime
@@ -58,9 +83,10 @@ class PositionReviewRecord(StrictModel):
     @model_validator(mode="after")
     def _proposals_are_not_submitted(self) -> PositionReviewRecord:
         if self.action.is_proposal and self.submitted:
-            raise ValueError(
-                "HEDGE/ROLL/SWITCH proposals cannot auto-submit without G2 plans"
-            )
+            if self.execution_status is not ReviewExecutionStatus.CLOSE_SUBMITTED:
+                raise ValueError(
+                    "HEDGE/ROLL/SWITCH proposals cannot auto-submit without G2 plans"
+                )
         if self.action is ReviewAction.HOLD and self.submitted:
             raise ValueError("HOLD must not submit an order")
         if self.exit_quantity_contracts is not None and self.action not in {
@@ -91,6 +117,7 @@ class PositionLifecycleRecord(VersionedModel):
     exit_order_ids: tuple[NonEmptyStr, ...] = ()
     reviews: tuple[PositionReviewRecord, ...] = ()
     carry_records: tuple[PositionCarryRecord, ...] = ()
+    roll_switch_transition: RollSwitchTransition | None = None
     as_of: UtcDatetime
     mode_id: ModeId | None = None
     campaign_id: NonEmptyStr | None = None

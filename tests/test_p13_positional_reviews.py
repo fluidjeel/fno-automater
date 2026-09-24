@@ -28,13 +28,14 @@ from trading.domain.enums import (
     ReviewAction,
     ReviewExecutionStatus,
     ReviewSlotId,
+    RollSwitchStatus,
 )
 from trading.domain.ids import SequentialIdFactory
 from trading.runtime.paper_runner import (
     PaperRunner,
     _eligible_for_scheduled_review,
-    _resolve_review_evaluation,
 )
+from trading.trade.roll_switch import resolve_roll_switch_review
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.storage.trading_store import TradingStore
 from trading.trade.review_roll_switch import family_supports_roll_switch
@@ -135,21 +136,23 @@ class TestRollSwitchGating:
     def test_g2_long_call_roll_resolves_to_close_path(self) -> None:
         position, intent, _feature = _engine_inputs(dte=1, expiry_days=None)
         intent = intent.model_copy(update={"family_id": "long_call"})
-        evaluation, status, _next = _resolve_review_evaluation(
+        evaluation, status, _next = resolve_roll_switch_review(
             ReviewEvaluationStub.propose_roll(),
             intent=intent,
             position=position,
             slot=ReviewSlot(ReviewSlotId.NSE_MORNING, parse_hhmm("10:30")),
             configured_slots=_nse_slots(),
         )
-        assert evaluation.action is ReviewAction.ROLL
-        assert evaluation.exit_quantity_contracts == 75
-        assert status is ReviewExecutionStatus.NOT_APPLICABLE
+        assert evaluation.action is ReviewAction.PROPOSE_ROLL
+        assert evaluation.submit_structure_close is True
+        assert evaluation.roll_switch_kind is ReviewAction.ROLL
+        assert evaluation.exit_quantity_contracts is None
+        assert status is ReviewExecutionStatus.CLOSE_SUBMITTED
 
     def test_unproven_family_roll_is_proposed_not_executed(self) -> None:
         position, intent, _feature = _engine_inputs(dte=1, expiry_days=None)
         intent = intent.model_copy(update={"family_id": "credit_spread"})
-        evaluation, status, _next = _resolve_review_evaluation(
+        evaluation, status, _next = resolve_roll_switch_review(
             ReviewEvaluationStub.propose_roll(),
             intent=intent,
             position=position,
@@ -173,10 +176,11 @@ class TestRollSwitchGating:
         symbol = opened.legs[0].contract.symbol
         snapshot = _option_snapshot(opened.legs[0].contract)
         evaluation = ReviewEvaluation(
-            action=ReviewAction.ROLL,
+            action=ReviewAction.PROPOSE_ROLL,
             reason_code=ReasonCode.OK,
             detail="G2 roll close path",
-            exit_quantity_contracts=opened.legs[0].quantity_contracts,
+            submit_structure_close=True,
+            roll_switch_kind=ReviewAction.ROLL,
         )
         submitted = runner._apply_review(
             evaluation,
@@ -184,8 +188,17 @@ class TestRollSwitchGating:
             decision=decision,
             position=opened,
             snapshots={symbol: snapshot},
+            review_id="REV-TEST",
         )
         assert submitted is True
+        lifecycle = store.get_position_lifecycle(opened.trade_id)
+        assert lifecycle is not None
+        assert lifecycle.roll_switch_transition is not None
+        assert lifecycle.roll_switch_transition.status in {
+            RollSwitchStatus.CLOSE_PENDING,
+            RollSwitchStatus.CLOSE_COMPLETE,
+            RollSwitchStatus.REPLACEMENT_PENDING_L2,
+        }
 
 
 class TestModeEligibility:
@@ -220,7 +233,7 @@ class TestModeEligibility:
 class TestHoldNextSlot:
     def test_hold_records_next_slot_time(self) -> None:
         position, intent, _feature = _engine_inputs()
-        evaluation, status, next_slot = _resolve_review_evaluation(
+        evaluation, status, next_slot = resolve_roll_switch_review(
             ReviewEvaluationStub.hold(),
             intent=intent,
             position=position,

@@ -29,7 +29,16 @@ from tests.test_paper_runner import ROOT
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import DerivativesContext, FeatureSnapshot
 from trading.domain.contracts.common import ContractRef
-from trading.domain.enums import ModeId, OptionType, ReasonCode, Side, TradeState
+from trading.domain.enums import (
+    FamilyId,
+    ModeId,
+    OptionType,
+    ReasonCode,
+    ReviewAction,
+    Side,
+    TradeState,
+)
+from trading.trade.roll_switch import begin_roll_switch_transition
 from trading.risk.mode_ledger import FourModeBook
 from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.domain.primitives import Currency, Money
@@ -1175,5 +1184,276 @@ class TestP0M1EventPathAndM2Carry:
             records = store.list_position_lifecycle()
             carry = records[-1].carry_records[-1]
             assert carry.action is CarryGateAction.CARRY_APPROVED
+        finally:
+            store.close()
+
+
+class TestP0RollSwitchPerLegAndReplacement:
+    """M4 ROLL/SWITCH: per-leg close quantities and L2-gated replacement."""
+
+    @staticmethod
+    def _roll_evaluation():
+        from trading.trade.review import ReviewEvaluation
+
+        return ReviewEvaluation(
+            action=ReviewAction.PROPOSE_ROLL,
+            reason_code=ReasonCode.OK,
+            detail="audit roll close",
+            submit_structure_close=True,
+            roll_switch_kind=ReviewAction.ROLL,
+        )
+
+    def _close_via_roll(
+        self,
+        runner: PaperRunner,
+        position: object,
+        snapshots: dict[str, FeatureSnapshot],
+    ) -> None:
+        intent, decision = runner._open_book[position.trade_id]  # type: ignore[attr-defined]
+        submitted = runner._apply_review(
+            self._roll_evaluation(),
+            intent=intent,
+            decision=decision,
+            position=position,  # type: ignore[arg-type]
+            snapshots=snapshots,
+            review_id="REV-ROLL",
+        )
+        assert submitted is True
+
+    @pytest.mark.parametrize(
+        "opener",
+        ["open_bull_put_credit", "open_bull_call_debit", "open_iron_condor", "open_call_butterfly"],
+    )
+    def test_roll_close_plan_uses_per_leg_quantities(
+        self, tmp_path: Path, opener: str
+    ) -> None:
+        import tests.structures as structures
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / f"roll-{opener}.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = getattr(structures, opener)(store, clock)
+            intent, decision = runner._open_book[position.trade_id]
+            plan = runner._exit_plan(intent, decision, position, snapshots)
+            assert plan is not None
+            qty_by_leg = {
+                leg.leg_id: leg.quantity_contracts for leg in position.legs
+            }
+            for order in plan.orders:
+                assert order.command.quantity_contracts == qty_by_leg[order.leg_id]
+        finally:
+            store.close()
+
+    def test_close_only_review_stays_propose_roll_not_roll(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from trading.domain.enums import RollSwitchStatus
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "roll-label.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            self._close_via_roll(runner, position, snapshots)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            assert lifecycle.roll_switch_transition is not None
+            assert lifecycle.roll_switch_transition.kind is ReviewAction.ROLL
+            assert lifecycle.roll_switch_transition.status in {
+                RollSwitchStatus.CLOSE_COMPLETE,
+                RollSwitchStatus.REPLACEMENT_PENDING_L2,
+            }
+            closed = runner.trade_manager.get_position(position.trade_id)
+            assert closed is not None and closed.state is TradeState.CLOSED
+        finally:
+            store.close()
+
+    def test_replacement_rejection_does_not_complete_roll(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.domain.enums import RollSwitchStatus
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "roll-reject.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            self._close_via_roll(runner, position, snapshots)
+            legs = tuple(snapshots.values())
+            blocked = replace(
+                _request(
+                    strategy_id="debit_spread",
+                    candidates=legs,
+                    mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                    family_id=FamilyId.bull_call_debit,
+                    macro=_macro(MacroBias.BULLISH),
+                ),
+                execute=False,
+            )
+            outcome = runner.submit_roll_switch_replacement(position.trade_id, blocked)
+            assert outcome.approved is False
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            assert lifecycle.roll_switch_transition is not None
+            assert (
+                lifecycle.roll_switch_transition.status
+                is RollSwitchStatus.REPLACEMENT_REJECTED
+            )
+        finally:
+            store.close()
+
+    def test_replacement_l2_approval_completes_roll(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.domain.enums import RollSwitchStatus
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "roll-approve.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            self._close_via_roll(runner, position, snapshots)
+            legs = tuple(snapshots.values())
+            replacement = _request(
+                strategy_id="debit_spread",
+                candidates=legs,
+                mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                family_id=FamilyId.bull_call_debit,
+                macro=_macro(MacroBias.BULLISH),
+            )
+            outcome = runner.submit_roll_switch_replacement(
+                position.trade_id, replacement
+            )
+            assert outcome.approved is True
+            assert outcome.replacement_trade_id is not None
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            assert lifecycle.roll_switch_transition is not None
+            assert lifecycle.roll_switch_transition.status is RollSwitchStatus.COMPLETE
+        finally:
+            store.close()
+
+    def test_unknown_exit_blocks_replacement(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.domain.enums import RollSwitchStatus
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "roll-unknown.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            self._close_via_roll(runner, position, snapshots)
+            runner._write_lifecycle(
+                position.trade_id,
+                roll_switch_transition=begin_roll_switch_transition(
+                    kind=ReviewAction.ROLL,
+                    review_id="REV-UNK",
+                    as_of=clock.now_utc(),
+                ).model_copy(update={"status": RollSwitchStatus.CLOSE_PENDING}),
+            )
+            runner._ensure_entries_blocked(
+                ReasonCode.UNKNOWN_ORDER_STATUS,
+                "exit order status is unknown; replacement is blocked until reconciliation",
+            )
+            legs = tuple(snapshots.values())
+            replacement = _request(
+                strategy_id="debit_spread",
+                candidates=legs,
+                mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                family_id=FamilyId.bull_call_debit,
+                macro=_macro(MacroBias.BULLISH),
+            )
+            outcome = runner.submit_roll_switch_replacement(
+                position.trade_id, replacement
+            )
+            assert outcome.approved is False
+            assert ReasonCode.UNKNOWN_ORDER_STATUS in outcome.reason_codes
+        finally:
+            store.close()
+
+    def test_restart_during_exit_pending_resumes_close(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_put_credit
+        from tests.test_four_mode_session_integration import _runner
+        from trading.domain.contracts.order_plan import OrderPlan
+        from trading.domain.enums import RollSwitchStatus
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "roll-restart.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            intent, decision = runner._open_book[position.trade_id]
+            runner.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.OK,
+                    detail="partial roll close",
+                    updated_policy=position.exit_policy,
+                ),
+            )
+            pending = runner.trade_manager.get_position(position.trade_id)
+            assert pending is not None
+            plan = runner._exit_plan(intent, decision, pending, snapshots)
+            assert plan is not None and len(plan.orders) >= 2
+            first_plan = OrderPlan.model_validate(
+                {**plan.model_dump(), "orders": (plan.orders[0],)}
+            )
+            runner._write_lifecycle(
+                position.trade_id,
+                roll_switch_transition=begin_roll_switch_transition(
+                    kind=ReviewAction.ROLL,
+                    review_id="REV-RESTART",
+                    as_of=clock.now_utc(),
+                ),
+            )
+            submit = runner._services.oms.submit_plan(
+                first_plan,
+                strategy_id=intent.strategy_id,
+                account_id=runner._account.config.account_id,
+            )
+            for event in submit.events:
+                runner._services.trade_manager.apply_exit_order_event(
+                    event,
+                    capital_reservation_id=decision.capital_reservation_id,
+                    remaining_stays_open=True,
+                )
+            runner._write_lifecycle(position.trade_id, exit_order_ids=())
+            mid = runner.trade_manager.get_position(position.trade_id)
+            assert mid is not None and mid.state is TradeState.OPEN
+
+            clock.set(clock.now_utc() + timedelta(seconds=30))
+            resumed = _runner(store, clock)
+            resumed.recover_lifecycle()
+            for snapshot in snapshots.values():
+                resumed._services.broker.publish_quote(
+                    snapshot.contract.symbol, snapshot.market
+                )
+            book = resumed._open_book[position.trade_id]
+            intent, decision = book
+            pending = resumed.trade_manager.get_position(position.trade_id)
+            assert pending is not None
+            resumed.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.OK,
+                    detail="resume remaining roll close",
+                    updated_policy=pending.exit_policy,
+                ),
+            )
+            pending = resumed.trade_manager.get_position(position.trade_id)
+            assert pending is not None
+            resumed._submit_exit(intent, decision, pending, snapshots)
+            closed = resumed.trade_manager.get_position(position.trade_id)
+            assert closed is not None
+            assert closed.state is TradeState.CLOSED
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            assert lifecycle.roll_switch_transition is not None
+            assert lifecycle.roll_switch_transition.status in {
+                RollSwitchStatus.CLOSE_COMPLETE,
+                RollSwitchStatus.REPLACEMENT_PENDING_L2,
+            }
         finally:
             store.close()

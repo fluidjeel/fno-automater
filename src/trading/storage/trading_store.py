@@ -280,12 +280,19 @@ class TradingStore:
                     (reservation.idempotency_key,),
                 ).fetchone()
                 if idem_row is not None:
-                    payload = json.loads(idem_row["payload"])
-                    return CapitalReservation.model_validate(payload)
+                    existing = CapitalReservation.model_validate(
+                        json.loads(idem_row["payload"])
+                    )
+                    if existing.state.holds_capital:
+                        return existing
+                    reservation = reservation.model_copy(
+                        update={"reservation_id": existing.reservation_id}
+                    )
             existing = self._get_reservation_row(reservation.reservation_id)
             if existing is not None:
-                payload = json.loads(existing["payload"])
-                return CapitalReservation.model_validate(payload)
+                current = CapitalReservation.model_validate(json.loads(existing["payload"]))
+                if current.state.holds_capital:
+                    return current
             held = self._sum_active_reservation_amount(
                 margin_available.currency,
                 mode_id=reservation.mode_id.value
