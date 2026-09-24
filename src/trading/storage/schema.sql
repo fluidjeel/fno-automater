@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS campaign_ledger (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS fill_charges (
+    fill_idempotency_key TEXT PRIMARY KEY,
+    trade_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_fill_charges_trade_id
+    ON fill_charges (trade_id);
+
 CREATE TABLE IF NOT EXISTS review_slot_runs (
     slot_id TEXT NOT NULL,
     session_date TEXT NOT NULL,

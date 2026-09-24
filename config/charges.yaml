@@ -1,0 +1,20 @@
+# Layer 2 statutory charge schedule for NSE index options (Fyers/NSE).
+# Used to persist per-fill charge components in PAPER; LIVE uses contract notes.
+# Changing any rate starts a new policy lineage (checksum).
+
+schema_version: "1"
+policy_version: "1"
+default_contracts_per_lot: 75
+
+brokerage_per_order:
+  amount: "20"
+  currency: INR
+
+# Premium turnover rates (fraction of price × contracts).
+stt_sell_fraction: "0.0015"
+nse_transaction_fraction: "0.000355299"
+clearing_fraction: "0.00009"
+sebi_turnover_fraction: "0.000001"
+ipft_options_fraction: "0.000005"
+stamp_duty_buy_fraction: "0.00003"
+gst_fraction: "0.18"

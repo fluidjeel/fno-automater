@@ -11,27 +11,41 @@ Open risk is ``reserved_capital + margin_used``. Pending entry holds live in
 ``margin_used``. Committed reservations are not added again as reserved — they
 are represented by the open position's margin so totals never double-count.
 
-Accounting caveat (unresolved): ``realized_pnl_today`` equals
-``realized_gross_pnl_today`` until broker charges are persisted on fill events.
-Do not treat that equality as complete net accounting.
+``realized_pnl_today`` is conservative net (min of confirmed and estimated).
+``estimated_net_today`` is model-derived only. Daily-loss enforcement uses
+the conservative value so understated fees cannot mask a breach.
 """
 
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from threading import Lock
 from typing import Any, Final, Self
 
 from pydantic import Field, model_validator
 
 from trading.domain.contracts.base import StrictModel
+from trading.domain.contracts.fill_charges import FillChargeRecord
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.order import OrderEvent
 from trading.domain.enums import ModeId, ReservationState, TradeState
 from trading.domain.primitives import Currency, Money, Rounding
-from trading.portfolio.fill_ledger import trade_fill_cash_flow
+from trading.config.risk_policy import load_risk_policy
+from trading.portfolio.campaign_drawdown import estimate_trade_charges
+from trading.portfolio.conservative_net import conservative_realized_net, estimated_net
+from trading.portfolio.fill_ledger import (
+    index_fill_charges,
+    index_order_events,
+    order_fill_dedupe_key,
+    trade_confirmed_charges,
+    trade_fill_cash_flow,
+)
+
+_index_order_events = index_order_events
+_order_dedupe_key = order_fill_dedupe_key
 from trading.storage.trading_store import TradingEventType, TradingStore
 
 __all__ = [
@@ -42,14 +56,17 @@ __all__ = [
 ]
 
 DEFAULT_TOTAL_EQUITY: Final = Money.of("700000", Currency.INR)
+_DEFAULT_RISK_POLICY_PATH: Final = (
+    Path(__file__).resolve().parents[3] / "config" / "risk.yaml"
+)
 
 
 class ModeLedger(StrictModel):
     """Capital ledger for one mode (Invariant: no cross-mode borrow).
 
-    ``realized_gross_pnl_today`` is signed fill-ledger cash flow before broker
-    charges. ``realized_pnl_today`` is net realized; it equals gross until
-    order events carry charge fields.
+    ``realized_gross_pnl_today`` is signed fill-ledger cash flow before charges.
+    ``realized_pnl_today`` is conservative net for enforcement.
+    ``estimated_net_today`` is model-derived and not broker-confirmed.
     """
 
     mode_id: ModeId
@@ -58,6 +75,9 @@ class ModeLedger(StrictModel):
         default_factory=lambda: Money.zero(Currency.INR)
     )
     realized_pnl_today: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
+    estimated_net_today: Money = Field(
+        default_factory=lambda: Money.zero(Currency.INR)
+    )
     unrealized_pnl: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     reserved_capital: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     margin_used: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
@@ -80,6 +100,7 @@ class ModeLedger(StrictModel):
             zero = Money.zero(curr)
             data.setdefault("realized_gross_pnl_today", zero)
             data.setdefault("realized_pnl_today", zero)
+            data.setdefault("estimated_net_today", zero)
             data.setdefault("unrealized_pnl", zero)
             data.setdefault("reserved_capital", zero)
             data.setdefault("margin_used", zero)
@@ -94,6 +115,7 @@ class ModeLedger(StrictModel):
         for field_name in (
             "realized_gross_pnl_today",
             "realized_pnl_today",
+            "estimated_net_today",
             "unrealized_pnl",
             "reserved_capital",
             "margin_used",
@@ -338,8 +360,20 @@ class FourModeBook:
         }
 
         _accumulate_reservations(store, intent_to_mode, balances["reserved"])
-        orders_by_id = _index_order_events(store)
-        _accumulate_positions(lifecycles, orders_by_id, as_of_date, currency, balances)
+        orders_by_id = index_order_events(store)
+        charges_by_key = index_fill_charges(store)
+        charges_per_lot = load_risk_policy(
+            _DEFAULT_RISK_POLICY_PATH
+        ).config.charges_per_lot.to_money()
+        _accumulate_positions(
+            lifecycles,
+            orders_by_id,
+            charges_by_key,
+            charges_per_lot,
+            as_of_date,
+            currency,
+            balances,
+        )
 
         final_ledgers = _assemble_final_ledgers(base_allocations, balances, currency)
         return FourModeBook(
@@ -363,7 +397,11 @@ def _init_mode_balances(
         "reserved": {},
         "margin": {},
         "realized_gross_today": {},
+        "realized_net_today": {},
+        "estimated_net_today": {},
         "prior_realized_gross": {},
+        "prior_realized_net": {},
+        "prior_estimated_net": {},
         "unrealized": {},
     }
     for m in mode_ids:
@@ -392,26 +430,11 @@ def _accumulate_reservations(
             reserved_by_mode[m_id] = reserved_by_mode[m_id] + res.amount
 
 
-def _index_order_events(store: TradingStore) -> dict[str, OrderEvent]:
-    """Latest event per idempotency key; replayed duplicates stay idempotent."""
-    indexed: dict[str, OrderEvent] = {}
-    for stored in store.read_events():
-        if stored.event_type is not TradingEventType.ORDER_EVENT:
-            continue
-        evt = stored.deserialize()
-        if not isinstance(evt, OrderEvent):
-            continue
-        indexed[_order_dedupe_key(evt)] = evt
-    return indexed
-
-
-def _order_dedupe_key(event: OrderEvent) -> str:
-    return event.identity.idempotency_key or event.identity.internal_order_id
-
-
 def _accumulate_positions(
     lifecycles: tuple[PositionLifecycleRecord, ...],
     orders_by_id: dict[str, OrderEvent],
+    charges_by_key: dict[str, FillChargeRecord],
+    charges_per_lot: Money,
     as_of_date: date,
     currency: Currency,
     balances: dict[str, dict[ModeId, Money]],
@@ -440,14 +463,41 @@ def _accumulate_positions(
             trade_gross = _calculate_closed_trade_gross_pnl(
                 record, orders_by_id, currency
             )
+            confirmed = trade_confirmed_charges(
+                record.trade_id,
+                orders_by_id,
+                charges_by_key,
+                currency,
+            )
+            model_charges = estimate_trade_charges(
+                record, orders_by_id, charges_per_lot=charges_per_lot
+            )
+            trade_net = conservative_realized_net(
+                trade_gross,
+                confirmed_charges=confirmed,
+                estimated_charges=model_charges,
+            )
+            trade_estimated = estimated_net(trade_gross, model_charges)
             close_date = record.as_of.date()
             if close_date == as_of_date:
                 balances["realized_gross_today"][m_id] = (
                     balances["realized_gross_today"][m_id] + trade_gross
                 )
+                balances["realized_net_today"][m_id] = (
+                    balances["realized_net_today"][m_id] + trade_net
+                )
+                balances["estimated_net_today"][m_id] = (
+                    balances["estimated_net_today"][m_id] + trade_estimated
+                )
             elif close_date < as_of_date:
                 balances["prior_realized_gross"][m_id] = (
                     balances["prior_realized_gross"][m_id] + trade_gross
+                )
+                balances["prior_realized_net"][m_id] = (
+                    balances["prior_realized_net"][m_id] + trade_net
+                )
+                balances["prior_estimated_net"][m_id] = (
+                    balances["prior_estimated_net"][m_id] + trade_estimated
                 )
 
 
@@ -458,9 +508,10 @@ def _assemble_final_ledgers(
 ) -> dict[ModeId, ModeLedger]:
     final_ledgers: dict[ModeId, ModeLedger] = {}
     for m, alloc_base in base_alloc.items():
-        start_alloc = alloc_base + balances["prior_realized_gross"][m]
+        start_alloc = alloc_base + balances["prior_realized_net"][m]
         realized_gross_today = balances["realized_gross_today"][m]
-        realized_net_today = _net_realized_from_gross(realized_gross_today, currency)
+        realized_net_today = balances["realized_net_today"][m]
+        estimated_net_today = balances["estimated_net_today"][m]
         reserved = balances["reserved"][m]
         margin = balances["margin"][m]
         unrealized = balances["unrealized"][m]
@@ -472,6 +523,7 @@ def _assemble_final_ledgers(
             allocated_capital=start_alloc,
             realized_gross_pnl_today=realized_gross_today,
             realized_pnl_today=realized_net_today,
+            estimated_net_today=estimated_net_today,
             unrealized_pnl=unrealized,
             reserved_capital=reserved,
             margin_used=margin,
@@ -479,11 +531,6 @@ def _assemble_final_ledgers(
             drawdown=drawdown,
         )
     return final_ledgers
-
-
-def _net_realized_from_gross(gross: Money, currency: Currency) -> Money:
-    """Net realized P&L; equals gross until broker charges are on order events."""
-    return gross.quantized(Rounding.HALF_EVEN)
 
 
 def _calculate_closed_trade_gross_pnl(

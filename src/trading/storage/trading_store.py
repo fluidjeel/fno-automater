@@ -38,6 +38,7 @@ from trading.domain.contracts import (
 )
 from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.contracts.campaign import CampaignRecord
+from trading.domain.contracts.fill_charges import FillChargeRecord
 from trading.domain.enums import (
     DeskRole,
     Exchange,
@@ -75,6 +76,7 @@ class TradingEventType(StrEnum):
     CAPITAL_RESERVATION = "capital_reservation"
     POSITION_LIFECYCLE = "position_lifecycle"
     CAMPAIGN_LEDGER = "campaign_ledger"
+    FILL_CHARGE = "fill_charge"
     ENTRY_FREEZE = "entry_freeze"
     CYCLE_EVIDENCE = "cycle_evidence"
 
@@ -86,6 +88,7 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
     TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
     TradingEventType.CAMPAIGN_LEDGER: CampaignRecord,
+    TradingEventType.FILL_CHARGE: FillChargeRecord,
     TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
     TradingEventType.CYCLE_EVIDENCE: PaperCycleEvidence,
 }
@@ -536,6 +539,77 @@ class TradingStore:
             ).fetchall()
         return tuple(
             CampaignRecord.model_validate(json.loads(row["payload"])) for row in rows
+        )
+
+    def upsert_fill_charge(
+        self,
+        record: FillChargeRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> FillChargeRecord:
+        """Persist one fill charge row; duplicate fill identity is idempotent."""
+        stamp = _utc_iso(recorded_at or record.recorded_at)
+        with self._lock:
+            existing = self._conn.execute(
+                "SELECT payload FROM fill_charges WHERE fill_idempotency_key = ?",
+                (record.fill_idempotency_key,),
+            ).fetchone()
+        if existing is not None:
+            prior = FillChargeRecord.model_validate(json.loads(existing["payload"]))
+            if (
+                prior.inputs.filled_quantity >= record.inputs.filled_quantity
+                and prior.order_event_id == record.order_event_id
+            ):
+                return prior
+        append_event_id = (
+            f"{event_id}::{record.inputs.filled_quantity}::{record.policy_version}"
+        )
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO fill_charges "
+                "(fill_idempotency_key, trade_id, payload, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(fill_idempotency_key) DO UPDATE SET "
+                "trade_id = excluded.trade_id, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    record.fill_idempotency_key,
+                    record.trade_id,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.FILL_CHARGE,
+                    payload=record,
+                    event_id=append_event_id,
+                ),
+                stamp,
+            )
+        return record
+
+    def get_fill_charge(self, fill_idempotency_key: str) -> FillChargeRecord | None:
+        """Load one fill charge by the same key used for cash-flow dedupe."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM fill_charges WHERE fill_idempotency_key = ?",
+                (fill_idempotency_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return FillChargeRecord.model_validate(json.loads(row["payload"]))
+
+    def list_fill_charges(self) -> tuple[FillChargeRecord, ...]:
+        """Return every persisted fill charge snapshot."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM fill_charges ORDER BY fill_idempotency_key ASC"
+            ).fetchall()
+        return tuple(
+            FillChargeRecord.model_validate(json.loads(row["payload"])) for row in rows
         )
 
     def upsert_protection_state(self, record: ProtectionStateRecord) -> None:
@@ -1136,6 +1210,17 @@ class TradingStore:
                     "mode_id TEXT NOT NULL, "
                     "payload TEXT NOT NULL, "
                     "updated_at TEXT NOT NULL)"
+                )
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS fill_charges ("
+                    "fill_idempotency_key TEXT PRIMARY KEY, "
+                    "trade_id TEXT NOT NULL, "
+                    "payload TEXT NOT NULL, "
+                    "updated_at TEXT NOT NULL)"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_fill_charges_trade_id "
+                    "ON fill_charges (trade_id)"
                 )
                 self._conn.execute("COMMIT")
             except Exception:

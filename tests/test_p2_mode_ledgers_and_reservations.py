@@ -475,13 +475,14 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
     assert m1.reserved_capital == _money("2500")
     assert m1.available_capital == _money("67500")
 
-    # Verify M2: ₹140,000 allocation, ₹0 active reservations, realized loss ₹1,500
+    # Verify M2: gross loss ₹1,500; conservative net includes model charges.
     m2 = reconstructed.get_ledger(ModeId.M2_DIRECTIONAL)
     assert m2.allocated_capital == _money("196000")
     assert m2.reserved_capital == _money("0")
-    assert m2.realized_pnl_today == _money("-1500")
-    assert m2.equity == _money("194500")
-    assert m2.available_capital == _money("194500")
+    assert m2.realized_gross_pnl_today == _money("-1500")
+    assert m2.realized_pnl_today.amount < m2.realized_gross_pnl_today.amount
+    assert m2.equity == m2.allocated_capital + m2.realized_pnl_today
+    assert m2.available_capital == m2.equity
 
     # Verify M3: ₹210,000 allocation, margin used ₹35,000 -> available = ₹175,000
     m3 = reconstructed.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)

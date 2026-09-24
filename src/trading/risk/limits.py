@@ -107,6 +107,8 @@ def build_sizing_limits(
     daily_cap = (equity * account_risk.daily_loss_cap_fraction).quantized(
         Rounding.FLOOR
     )
+    # Conservative net (min of confirmed and estimated charges) so understated
+    # fees cannot mask a daily-loss breach.
     realized = portfolio.exposure.realized_pnl_today
     daily_loss_remaining = (daily_cap + realized).quantized(Rounding.FLOOR)
     if daily_loss_remaining.is_negative:
@@ -164,7 +166,10 @@ def evaluate_campaign_limit(
     *,
     recalculated_max_loss: Money,
 ) -> LimitEvaluation:
-    """Fail closed when a roll campaign has breached or would breach its loss cap."""
+    """Fail closed when a roll campaign has breached or would breach its loss cap.
+
+    Uses conservative campaign net (min of broker-confirmed and model-estimated).
+    """
     if campaign_id is None or campaign_ledger is None:
         return LimitEvaluation(
             passed=True,

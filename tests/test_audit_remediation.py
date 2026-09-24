@@ -426,7 +426,6 @@ def _close_open_position(
 def _reconstruct_m3_gross(store: TradingStore, session_date: date) -> Decimal:
     book = FourModeBook.reconstruct_from_store(store, session_date)
     ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
-    assert ledger.realized_pnl_today == ledger.realized_gross_pnl_today
     return ledger.realized_gross_pnl_today.amount
 
 
@@ -542,7 +541,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
                 assert frozen.quantity_contracts == current.quantity_contracts
             book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
             ledger = book.get_ledger(mode_id)
-            assert ledger.realized_gross_pnl_today == ledger.realized_pnl_today
+            assert ledger.realized_pnl_today.amount <= ledger.realized_gross_pnl_today.amount
         finally:
             store.close()
 
@@ -660,7 +659,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
             book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
             ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
             assert ledger.realized_gross_pnl_today.amount == Decimal("-22.50")
-            assert ledger.realized_pnl_today.amount == Decimal("-22.50")
+            assert ledger.realized_pnl_today.amount < ledger.realized_gross_pnl_today.amount
             budget = ledger.daily_loss_budget(fraction)
             zero = Money.zero(Currency.INR)
             expected = max(budget + ledger.realized_pnl_today, zero)

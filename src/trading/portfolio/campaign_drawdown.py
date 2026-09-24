@@ -5,12 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from trading.domain.contracts.campaign import CampaignRecord
+from trading.domain.contracts.fill_charges import FillChargeRecord
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.order import OrderEvent
 from trading.domain.enums import ModeId, OrderState
 from trading.domain.primitives import Currency, Money, Rounding
-from trading.portfolio.fill_ledger import trade_fill_cash_flow
+from trading.portfolio.conservative_net import (
+    confirmed_net,
+    conservative_realized_net,
+    estimated_net,
+)
+from trading.portfolio.fill_ledger import (
+    index_fill_charges,
+    index_order_events,
+    trade_confirmed_charges,
+    trade_fill_cash_flow,
+)
 from trading.storage.trading_store import TradingStore
 from typing import TYPE_CHECKING
 
@@ -21,9 +32,25 @@ __all__ = [
     "CampaignDrawdownLedger",
     "CampaignDrawdownRecord",
     "CampaignLedger",
+    "TradeAccounting",
     "campaign_loss_limit",
+    "conservative_campaign_net",
     "estimate_trade_charges",
+    "realized_gross_for_trade",
+    "trade_accounting",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class TradeAccounting:
+    """Gross, durable charges and model estimate for one closed trade."""
+
+    realized_gross: Money
+    confirmed_charges: Money
+    estimated_charges: Money
+    realized_net: Money
+    estimated_net: Money
+    conservative_net: Money
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +140,7 @@ class CampaignLedger:
             cumulative_realized_gross=zero,
             cumulative_charges=zero,
             cumulative_realized_net=zero,
+            cumulative_estimated_net=zero,
             high_water_mark_net=zero,
             drawdown=zero,
             loss_limit=loss_limit,
@@ -135,25 +163,45 @@ class CampaignLedger:
         *,
         campaign_id: str,
         trade_id: str,
-        realized_gross: Money,
-        charges: Money,
+        accounting: TradeAccounting,
     ) -> CampaignRecord:
         """Append one closed trade; duplicate closes are idempotent."""
         record = self._require(campaign_id)
         if trade_id in record.recorded_closes:
             return record
         currency = record.cumulative_realized_gross.currency
-        gross = (record.cumulative_realized_gross + realized_gross).quantized(
+        gross = (record.cumulative_realized_gross + accounting.realized_gross).quantized(
             Rounding.HALF_EVEN
         )
-        total_charges = (record.cumulative_charges + charges).quantized(
-            Rounding.HALF_EVEN
+        total_charges = (
+            record.cumulative_charges + accounting.confirmed_charges
+        ).quantized(Rounding.HALF_EVEN)
+        net = confirmed_net(gross, total_charges)
+        cumulative_estimated = (
+            record.cumulative_estimated_net + accounting.estimated_net
+        ).quantized(Rounding.HALF_EVEN)
+        enforcement_net = conservative_campaign_net(
+            CampaignRecord(
+                campaign_id=record.campaign_id,
+                mode_id=record.mode_id,
+                trade_ids=record.trade_ids,
+                recorded_closes=record.recorded_closes,
+                cumulative_realized_gross=gross,
+                cumulative_charges=total_charges,
+                cumulative_realized_net=net,
+                cumulative_estimated_net=cumulative_estimated,
+                high_water_mark_net=record.high_water_mark_net,
+                drawdown=record.drawdown,
+                loss_limit=record.loss_limit,
+                entries_blocked=record.entries_blocked,
+            )
         )
-        net = (gross - total_charges).quantized(Rounding.HALF_EVEN)
         hwm = max(record.high_water_mark_net, net)
-        drawdown = max(hwm - net, Money.zero(currency))
+        drawdown = max(hwm - enforcement_net, Money.zero(currency))
         entries_blocked = self._loss_limit_breached(
-            net=net, loss_limit=record.loss_limit, additional_risk=Money.zero(currency)
+            net=enforcement_net,
+            loss_limit=record.loss_limit,
+            additional_risk=Money.zero(currency),
         )
         updated = record.model_copy(
             update={
@@ -161,6 +209,7 @@ class CampaignLedger:
                 "cumulative_realized_gross": gross,
                 "cumulative_charges": total_charges,
                 "cumulative_realized_net": net,
+                "cumulative_estimated_net": cumulative_estimated,
                 "high_water_mark_net": hwm,
                 "drawdown": drawdown,
                 "entries_blocked": entries_blocked or record.entries_blocked,
@@ -180,7 +229,7 @@ class CampaignLedger:
         if record.entries_blocked:
             return True
         return self._loss_limit_breached(
-            net=record.cumulative_realized_net,
+            net=conservative_campaign_net(record),
             loss_limit=record.loss_limit,
             additional_risk=additional_risk,
         )
@@ -229,13 +278,49 @@ def campaign_loss_limit(
     ).quantized(Rounding.FLOOR)
 
 
+def conservative_campaign_net(record: CampaignRecord) -> Money:
+    """Campaign enforcement net: min(confirmed, estimated) after gross."""
+    return min(record.cumulative_realized_net, record.cumulative_estimated_net)
+
+
+def trade_accounting(
+    record: PositionLifecycleRecord,
+    orders_by_id: dict[str, OrderEvent],
+    charges_by_key: dict[str, FillChargeRecord],
+    *,
+    charges_per_lot: Money,
+) -> TradeAccounting:
+    """Reconstruct gross, durable charges and model estimate for one trade."""
+    loss = record.risk_decision.recalculated_max_loss
+    currency = loss.currency if loss is not None else Currency.INR
+    gross = trade_fill_cash_flow(record.trade_id, orders_by_id, currency)
+    confirmed = trade_confirmed_charges(
+        record.trade_id, orders_by_id, charges_by_key, currency
+    )
+    estimated_charges = estimate_trade_charges(
+        record, orders_by_id, charges_per_lot=charges_per_lot
+    )
+    return TradeAccounting(
+        realized_gross=gross,
+        confirmed_charges=confirmed,
+        estimated_charges=estimated_charges,
+        realized_net=confirmed_net(gross, confirmed),
+        estimated_net=estimated_net(gross, estimated_charges),
+        conservative_net=conservative_realized_net(
+            gross,
+            confirmed_charges=confirmed,
+            estimated_charges=estimated_charges,
+        ),
+    )
+
+
 def estimate_trade_charges(
     record: PositionLifecycleRecord,
     orders_by_id: dict[str, OrderEvent],
     *,
     charges_per_lot: Money,
 ) -> Money:
-    """Estimate round-trip charges until broker fees are on fill events."""
+    """Model-derived round-trip charges; not broker-confirmed."""
     currency = charges_per_lot.currency
     approved = record.risk_decision.approved_legs
     if not approved:

@@ -18,6 +18,7 @@ from trading.ai.entry import maybe_log_entry_shadow
 from trading.ai.packets import build_delta_packet
 from trading.ai.position import maybe_log_position_shadow
 from trading.broker.paper import PaperBroker
+from trading.config.charge_policy import LoadedChargePolicy, load_charge_policy
 from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, MissingMonitorResolution
@@ -120,9 +121,10 @@ from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_
 from trading.portfolio.campaign_drawdown import (
     CampaignLedger,
     campaign_loss_limit,
-    estimate_trade_charges,
-    realized_gross_for_trade,
+    trade_accounting,
 )
+from trading.portfolio.fill_charge_recorder import backfill_fill_charges, record_fill_charge
+from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
     replacement_blocked_reason,
@@ -325,6 +327,7 @@ class PaperRunner:
         clock: Clock,
         id_factory: IdFactory,
         fill_model: FillModelConfig | None = None,
+        charge_policy: LoadedChargePolicy | None = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         paper_data_requirements: PaperDataRequirements | None = None,
     ) -> None:
@@ -340,6 +343,7 @@ class PaperRunner:
             )
         self._account = account_config
         self._risk_policy = risk_policy
+        self._charge_policy = charge_policy or load_charge_policy()
         self._clock = clock
         self._ids = id_factory
         self._execution_mode = execution_mode
@@ -704,6 +708,7 @@ class PaperRunner:
         )
         self._last_recovery = result
         self._lifecycle_recovered = True
+        self._backfill_fill_charges()
         self._restore_campaign_ledger()
         return result
 
@@ -1500,6 +1505,7 @@ class PaperRunner:
             if event.state is OrderState.UNKNOWN:
                 self._freeze_unknown_exit(position.trade_id)
                 return submit.events
+            self._maybe_record_fill_charges(event, decision=decision)
             self._services.trade_manager.apply_exit_order_event(
                 event,
                 capital_reservation_id=decision.capital_reservation_id,
@@ -1768,18 +1774,18 @@ class PaperRunner:
         campaign_id = self._trade_campaign.get(trade_id) or lifecycle.campaign_id
         if campaign_id is None:
             return
-        orders = _index_order_events(self._services.store)
-        gross = realized_gross_for_trade(lifecycle, orders)
-        charges = estimate_trade_charges(
+        orders = index_order_events(self._services.store)
+        charges_by_key = index_fill_charges(self._services.store)
+        accounting = trade_accounting(
             lifecycle,
             orders,
+            charges_by_key,
             charges_per_lot=self._risk_policy.config.charges_per_lot.to_money(),
         )
         self._campaign_ledger.record_close(
             campaign_id=campaign_id,
             trade_id=trade_id,
-            realized_gross=gross,
-            charges=charges,
+            accounting=accounting,
         )
         self._campaign_close_recorded.add(trade_id)
         self._persist_campaign_record(campaign_id)
@@ -2641,6 +2647,7 @@ class PaperRunner:
                 continue
             if event.state not in {OrderState.FILLED, OrderState.PARTIAL}:
                 continue
+            self._maybe_record_fill_charges(event, decision=risk)
             position = self._services.trade_manager.apply_order_event(
                 event,
                 intent=intent,
@@ -2726,6 +2733,40 @@ class PaperRunner:
             if quote is not None:
                 self._services.broker.publish_quote(leg.contract.symbol, quote)
 
+    def _maybe_record_fill_charges(
+        self,
+        event: OrderEvent,
+        *,
+        decision: RiskDecision,
+    ) -> None:
+        lot_size = self._charge_policy.config.default_contracts_per_lot
+        if decision.approved_legs:
+            lot_size = decision.approved_legs[0].lot_size.contracts_per_lot
+        record_fill_charge(
+            self._services.store,
+            event,
+            policy=self._charge_policy.config,
+            contracts_per_lot=lot_size,
+            recorded_at=self._clock.now_utc(),
+        )
+
+    def _backfill_fill_charges(self) -> None:
+        orders = index_order_events(self._services.store)
+        contracts_by_trade: dict[str, int] = {}
+        default_lot = self._charge_policy.config.default_contracts_per_lot
+        for lifecycle in self._services.store.list_position_lifecycle():
+            if lifecycle.risk_decision.approved_legs:
+                contracts_by_trade[lifecycle.trade_id] = (
+                    lifecycle.risk_decision.approved_legs[0].lot_size.contracts_per_lot
+                )
+        backfill_fill_charges(
+            self._services.store,
+            orders,
+            policy=self._charge_policy.config,
+            contracts_per_lot_by_trade=contracts_by_trade,
+            default_contracts_per_lot=default_lot,
+        )
+
 
 def _stamp_roll_switch_replacement_request(
     request: PaperStrategyRequest,
@@ -2761,18 +2802,7 @@ def _stamp_roll_switch_replacement_request(
     )
 
 
-def _index_order_events(store: TradingStore) -> dict[str, OrderEvent]:
-    """Latest event per idempotency key for fill-ledger reconstruction."""
-    indexed: dict[str, OrderEvent] = {}
-    for stored in store.read_events():
-        if stored.event_type is not TradingEventType.ORDER_EVENT:
-            continue
-        evt = stored.deserialize()
-        if not isinstance(evt, OrderEvent):
-            continue
-        key = evt.identity.idempotency_key or evt.identity.internal_order_id
-        indexed[key] = evt
-    return indexed
+_index_order_events = index_order_events
 
 
 def _decision_quotes(
