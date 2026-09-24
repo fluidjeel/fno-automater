@@ -6,6 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from decimal import Decimal
@@ -171,6 +172,8 @@ class PaperSessionConfig(BaseModel):
     )
     protection: ProtectionConfig = Field(default_factory=ProtectionConfig)
     cas_event_driven: CasEventDrivenConfig = Field(default_factory=CasEventDrivenConfig)
+    # P0 audit remediation: block new PAPER exposure while exits/recovery stay on.
+    new_entries_enabled: bool = True
 
 
 class SessionNotifier(Protocol):
@@ -261,6 +264,46 @@ class PaperSession:
         self._cycle_count = 0
         self._eod_sent = False
         self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
+        self._m1_ingress: object | None = None
+        self._latest_market_state: object | None = None
+
+    @property
+    def session_config(self) -> PaperSessionConfig:
+        """Validated session configuration loaded for this process."""
+        return self._config
+
+    @property
+    def runner(self) -> PaperRunner:
+        """Underlying paper runner (exits, recovery, risk)."""
+        return self._runner
+
+    def attach_m1_ingress(self, ingress: object) -> None:
+        """Register the production M1 provider-event ingress."""
+        self._m1_ingress = ingress
+
+    def on_provider_quote(
+        self,
+        symbol: str,
+        quote: MarketQuote,
+        *,
+        receive_time: datetime | None = None,
+        quote_time: datetime | None = None,
+        disconnected: bool = False,
+    ) -> PaperCycleResult | None:
+        """Production entry point: provider quote → ``submit_m1_event``."""
+        ingress = self._m1_ingress
+        if ingress is None:
+            from trading.runtime.m1_event_ingress import M1EventIngress
+
+            ingress = M1EventIngress(session=self, now_utc=self._clock.now_utc)
+            self._m1_ingress = ingress
+        return ingress.on_quote(  # type: ignore[attr-defined]
+            symbol,
+            quote,
+            receive_time=receive_time,
+            quote_time=quote_time,
+            disconnected=disconnected,
+        )
 
     @property
     def sentinel(self) -> StopSentinel:
@@ -301,6 +344,7 @@ class PaperSession:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
         self.sync_sentinel()
         if self._protection is not None:
+            self._protection.set_m1_quote_handler(self.on_provider_quote)
             self._protection.refresh_subscriptions()
             self._protection.start()
         try:
@@ -308,6 +352,19 @@ class PaperSession:
         finally:
             if self._protection is not None:
                 self._protection.stop()
+
+    def _entry_requests(
+        self, requests: tuple[PaperStrategyRequest, ...]
+    ) -> tuple[PaperStrategyRequest, ...]:
+        """Hold new entries while keeping reconciliation, reviews and exits live.
+
+        ``execute=False`` still evaluates strategies and records intents, so the
+        candidate funnel stays auditable, but Layer 2 never submits an entry.
+        Exits, protection and recovery do not consult this flag.
+        """
+        if self._config.new_entries_enabled:
+            return requests
+        return tuple(replace(item, execute=False) for item in requests)
 
     def _run_loop(self, *, once: bool) -> int:
         while True:
@@ -337,6 +394,7 @@ class PaperSession:
             holder["event"] = None
         now = self._clock.now_utc()
         requests, snapshots = self._builder(now)
+        requests = self._entry_requests(requests)
         result: PaperCycleResult | None = None
         if requests:
             result = self._runner.run_cycle(requests)
@@ -379,7 +437,7 @@ class PaperSession:
             requests, snapshots = self._builder(now)
             m1 = tuple(
                 item
-                for item in requests
+                for item in self._entry_requests(requests)
                 if item.forced_mode_id is ModeId.M1_CAS
             )
             result = self._runner.run_cycle(m1) if m1 else None
@@ -408,6 +466,7 @@ class PaperSession:
                 "local_time": local.isoformat(),
                 "cycle_count": self._cycle_count,
                 "had_requests": had_requests,
+                "new_entries_enabled": self._config.new_entries_enabled,
                 "system_state": result.system_state.value if result else None,
                 "entries_blocked": result.entries_blocked if result else None,
                 "route_winner": route.paper_winner if route is not None else None,

@@ -32,6 +32,11 @@ __all__ = [
 ]
 
 
+_SUBMIT_STOP_STATES = frozenset(
+    {OrderState.REJECTED, OrderState.CANCELLED, OrderState.UNKNOWN}
+)
+
+
 class OmsError(Exception):
     """Base error for OMS failures."""
 
@@ -100,13 +105,20 @@ class OmsEngine:
 
         events: list[OrderEvent] = []
         for order in plan.orders:
-            events.append(
-                self._submit_one(
-                    order,
-                    strategy_id=strategy_id,
-                    account_id=account_id,
-                )
+            event = self._submit_one(
+                order,
+                strategy_id=strategy_id,
+                account_id=account_id,
             )
+            events.append(event)
+            if event.state in _SUBMIT_STOP_STATES:
+                # Plans are ordered so that every prefix is a position that is
+                # safe to hold: entries buy protection before selling the legs
+                # it covers, exits buy back short liabilities before releasing
+                # the longs. Submitting past a failed leg is what turns a
+                # defined-risk structure into an uncovered short, so stop here
+                # and leave the covered prefix for the caller to reconcile.
+                break
         return SubmitResult(plan_id=plan.plan_id, events=tuple(events))
 
     def latest_event(self, idempotency_key: str) -> OrderEvent | None:

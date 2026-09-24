@@ -6,10 +6,12 @@ Invariant 22: it does not write live configuration.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from trading.ai.decision_log import DecisionLog
 from trading.ai.entry import maybe_log_entry_shadow
@@ -92,6 +94,7 @@ from trading.portfolio import (
     build_portfolio_view,
 )
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
+from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.review_schedule import ReviewSlot, next_review_slot_id
@@ -114,6 +117,8 @@ from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.trade.review import ReviewEngine, ReviewEvaluation
 from trading.trade.review_roll_switch import family_supports_roll_switch
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "LifecycleAlert",
     "PaperCarryGateResult",
@@ -134,6 +139,21 @@ class LifecycleAlert:
     trade_id: str
     reason_code: ReasonCode
     detail: str
+
+
+def _liability_first(orders: Sequence[PlannedOrder]) -> tuple[PlannedOrder, ...]:
+    """Close short liabilities before selling the longs that cover them.
+
+    A structure exit is executed as separate orders, so every prefix of the
+    sequence is a position the account can be left holding if a later order is
+    delayed, rejected, unknown or partially filled. Buying back a short first
+    keeps each prefix covered; selling the protective long first would leave a
+    transient uncovered short. Order within each group is preserved so replay
+    stays deterministic.
+    """
+    covering = [order for order in orders if order.command.side is Side.BUY]
+    releasing = [order for order in orders if order.command.side is not Side.BUY]
+    return (*covering, *releasing)
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +324,8 @@ class PaperRunner:
         reservations = CapitalReservationService(
             store, clock=clock, id_factory=id_factory
         )
+        session_date = clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
+        mode_book = FourModeBook.reconstruct_from_store(store, session_date)
         self._services = _Services(
             store=store,
             broker=broker,
@@ -321,6 +343,7 @@ class PaperRunner:
                 margin_preview=broker,
                 clock=clock,
                 id_factory=id_factory,
+                mode_book=mode_book,
             ),
             planner=OrderPlanPlanner(clock=clock, id_factory=id_factory),
             oms=OmsEngine(
@@ -977,17 +1000,8 @@ class PaperRunner:
                 unrealized_r=Decimal("0"),
                 question=f"Review slot {slot.slot_id.value} action",
             )
-            maybe_log_position_shadow(
-                packet,
-                slot_id=slot.slot_id,
-                deterministic_action=evaluation.action,
-                decision_log=self._decision_log,
-                enabled=True,
-                run_id=f"RUN-REV-{slot.slot_id.value}",
-                environment=self._account.config.environment,
-                now=now,
-            )
-
+            # Deterministic exit/tighten must not wait on AI/shadow. Shadow is
+            # advisory-only and any timeout/failure is logged without blocking.
             submitted = self._apply_review(
                 evaluation,
                 intent=intent,
@@ -995,6 +1009,24 @@ class PaperRunner:
                 position=position,
                 snapshots=snapshots,
             )
+            try:
+                maybe_log_position_shadow(
+                    packet,
+                    slot_id=slot.slot_id,
+                    deterministic_action=evaluation.action,
+                    decision_log=self._decision_log,
+                    enabled=True,
+                    run_id=f"RUN-REV-{slot.slot_id.value}",
+                    environment=self._account.config.environment,
+                    now=now,
+                )
+            except Exception:
+                logger.exception(
+                    "position shadow logging failed after deterministic review "
+                    "trade_id=%s slot=%s",
+                    position.trade_id,
+                    slot.slot_id.value,
+                )
             review = _stamp_review(
                 evaluation,
                 trade_id=position.trade_id,
@@ -1109,7 +1141,7 @@ class PaperRunner:
             return ()
         return self._submit_exit(intent, decision, pending, snapshots)
 
-    def _exit_plan(
+    def _exit_plan(  # noqa: PLR0912 - one explicit per-leg exit order table
         self,
         intent: TradeIntent,
         decision: RiskDecision,
@@ -1189,7 +1221,7 @@ class PaperRunner:
             risk_decision_id=decision.decision_id,
             correlation_id=intent.correlation_id,
             policy_version=decision.policy_version,
-            orders=tuple(orders),
+            orders=_liability_first(orders),
             protective_orders=(),
             created_at=now,
             expires_at=now + timedelta(minutes=5),
@@ -1269,6 +1301,13 @@ class PaperRunner:
         self._write_lifecycle(position.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(position.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
+            if (
+                intent.mode_id is not None
+                and decision.recalculated_max_loss is not None
+            ):
+                self._services.gateway.note_mode_close(
+                    intent.mode_id, decision.recalculated_max_loss
+                )
             self._open_book.pop(position.trade_id, None)
         return submit.events
 
@@ -2235,6 +2274,11 @@ class PaperRunner:
                 )
             self._open_book[trade_id] = (intent, risk)
         if filled:
+            if intent.mode_id is not None and risk.recalculated_max_loss is not None:
+                self._services.gateway.note_mode_fill(
+                    intent.mode_id,
+                    margin=risk.recalculated_max_loss,
+                )
             self._write_lifecycle(trade_id)
         return submit.events
 

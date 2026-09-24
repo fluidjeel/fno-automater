@@ -179,7 +179,16 @@ def _option(
             option_type=option_type,
             expiry=EXPIRY,
         ),
-        market=f.quote(bid=f.price(bid), ask=f.price(ask), bid_size=500, ask_size=500),
+        # A traded price is required: the conservative fill model only fills a
+        # limit the market has traded through, so a quote without `last` can
+        # never fill the long wings.
+        market=f.quote(
+            bid=f.price(bid),
+            ask=f.price(ask),
+            last=f.price(ask),
+            bid_size=500,
+            ask_size=500,
+        ),
         features={
             "lot_size": Decimal(65),
             "top_of_book_observed": Decimal(1),

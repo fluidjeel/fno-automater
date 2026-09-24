@@ -275,12 +275,20 @@ def _simulated_event(
     )
 
 
-def _load_validated_session() -> PaperSessionConfig:
+def _load_validated_session(*, allow_new_entries: bool = True) -> PaperSessionConfig:
+    """Validated deployed session config.
+
+    The deployed file currently holds new entries (audit P0 hold). These tests
+    prove M1 *capability*, so they opt back in explicitly; the hold itself is
+    asserted separately in ``tests/test_audit_remediation.py``.
+    """
     session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
     validated, _warnings = validate_startup_configuration(
         session_cfg, MODES, enforce_g3_shadow=True
     )
     assert validated.mode_stances["M1_CAS"] is ExecutionMode.PAPER
+    if allow_new_entries:
+        validated = validated.model_copy(update={"new_entries_enabled": True})
     return validated
 
 
