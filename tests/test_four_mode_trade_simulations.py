@@ -452,7 +452,7 @@ def test_m4_sim_2_long_call_butterfly_fill(
     assert result.outcomes[0].order_events
 
 
-def test_m4_sim_3_cas_latency_gate_passes() -> None:
+def test_m4_sim_3_unlabelled_latency_does_not_pass_g3() -> None:
     config = CasEventDrivenConfig(enabled=True, max_entry_latency_ms=2000)
     report = measure_cas_entry_latency((80, 120, 150), config=config)
-    assert report.passes_session_gate
+    assert not report.passes_session_gate

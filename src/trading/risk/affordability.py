@@ -25,6 +25,7 @@ from typing import Any
 from trading.config.risk_policy import RiskPolicyConfig, load_risk_policy
 from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.domain.clock import Clock, WallClock
+from trading.domain.contracts.mode_policy import load_modes_config
 from trading.domain.enums import ModeId, ReasonCode, SizingBindingConstraint
 from trading.domain.primitives import Currency, Money, Rounding
 
@@ -125,57 +126,21 @@ class OneLotAffordabilityReport:
 def _build_default_mode_specs(
     total_equity: Money = Money.of("700000", Currency.INR),
 ) -> dict[ModeId, ModeCapitalSpec]:
-    """Default §10.1 starting capital configuration."""
-    m1_cap = total_equity * Decimal("0.10")
-    m1 = ModeCapitalSpec(
-        mode_id=ModeId.M1_CAS,
-        capital_share=Decimal("0.10"),
-        reference_capital=m1_cap,
-        max_loss_per_trade_fraction=Decimal("0.05"),
-        per_trade_cap=m1_cap * Decimal("0.05"),
-        max_aggregate_open_loss_fraction=Decimal("0.10"),
-        daily_loss_budget_fraction=Decimal("0.15"),
-    )
-
-    m2_cap = total_equity * Decimal("0.20")
-    m2 = ModeCapitalSpec(
-        mode_id=ModeId.M2_DIRECTIONAL,
-        capital_share=Decimal("0.20"),
-        reference_capital=m2_cap,
-        max_loss_per_trade_fraction=Decimal("0.03"),
-        per_trade_cap=m2_cap * Decimal("0.03"),
-        max_aggregate_open_loss_fraction=Decimal("0.06"),
-        daily_loss_budget_fraction=Decimal("0.08"),
-    )
-
-    m3_cap = total_equity * Decimal("0.30")
-    m3 = ModeCapitalSpec(
-        mode_id=ModeId.M3_TACTICAL_POSITIONAL,
-        capital_share=Decimal("0.30"),
-        reference_capital=m3_cap,
-        max_loss_per_trade_fraction=Decimal("0.02"),
-        per_trade_cap=m3_cap * Decimal("0.02"),
-        max_aggregate_open_loss_fraction=Decimal("0.04"),
-        daily_loss_budget_fraction=Decimal("0.05"),
-    )
-
-    m4_cap = total_equity * Decimal("0.40")
-    m4 = ModeCapitalSpec(
-        mode_id=ModeId.M4_STRATEGIC_POSITIONAL,
-        capital_share=Decimal("0.40"),
-        reference_capital=m4_cap,
-        max_loss_per_trade_fraction=Decimal("0.01"),
-        per_trade_cap=m4_cap * Decimal("0.01"),
-        max_aggregate_open_loss_fraction=Decimal("0.03"),
-        daily_loss_budget_fraction=Decimal("0.04"),
-    )
-
-    return {
-        ModeId.M1_CAS: m1,
-        ModeId.M2_DIRECTIONAL: m2,
-        ModeId.M3_TACTICAL_POSITIONAL: m3,
-        ModeId.M4_STRATEGIC_POSITIONAL: m4,
-    }
+    """Capital specs from config/modes.yaml, scaled to the reference equity."""
+    modes = load_modes_config()
+    specs: dict[ModeId, ModeCapitalSpec] = {}
+    for policy in modes.modes.values():
+        capital = total_equity * policy.capital_share
+        specs[policy.mode_id] = ModeCapitalSpec(
+            mode_id=policy.mode_id,
+            capital_share=policy.capital_share,
+            reference_capital=capital,
+            max_loss_per_trade_fraction=policy.per_trade_loss_cap_fraction,
+            per_trade_cap=capital * policy.per_trade_loss_cap_fraction,
+            max_aggregate_open_loss_fraction=policy.max_open_loss_cap_fraction,
+            daily_loss_budget_fraction=policy.daily_budget_cap_fraction,
+        )
+    return specs
 
 
 def load_nifty_instrument_spec(repo_root: Path) -> tuple[int, Decimal, str]:
@@ -984,7 +949,12 @@ def render_markdown_report(report: OneLotAffordabilityReport) -> str:
             "## 4. Key Findings & Policy Directives",
             "",
             f"1. **Mode 1 (CAS):** Moderately OTM single-leg options in the policy delta band [0.20, 0.35] cost between ₹{m1_cost_min:,.2f} and ₹{m1_cost_max:,.2f} per 65-contract lot, fitting within the ₹{m1_cap:,.2f} per-trade cap (`AFFORDABLE`). ATM single-legs are rejected by strike policy.",
-            f"2. **Mode 2 (Directional):** Mode 2 mandate (§4.2) requires directional single-leg options in the 0.45–0.65 delta band with a following-week expiry. On this chain, the cheapest eligible strike in that mandate band costs ₹{m2_cheapest_cost:,.2f}, exceeding the ₹{m2_cap:,.2f} per-trade cap. Following-week expiry contracts carry even higher time value, making current-week costs a conservative lower bound. **Policy Directive: Do NOT cut delta to force a pass.** Cheap OTM strikes belong to Mode 1, not Mode 2. Mode 2 remains `MIN_LOT_EXCEEDS_BUDGET` until allocated capital, lot size, or premium environment permits.",
+            f"2. **Mode 2 (Directional):** The 0.45–0.65 absolute-delta band is unchanged. Cheapest in-band one-lot cost on this chain is ₹{m2_cheapest_cost:,.2f} against a per-trade cap of ₹{m2_cap:,.2f}. "
+            + (
+                "That cost fits the revised allocation. A later premium that pushes all-in cost above the cap returns `MIN_LOT_EXCEEDS_BUDGET`. Do NOT cut delta to force a pass."
+                if m2_evals and all(item.one_lot_fits_budget for item in m2_evals)
+                else "That cost exceeds the cap, so the status is `MIN_LOT_EXCEEDS_BUDGET`. Do NOT cut delta to force a pass."
+            ),
             f"3. **Mode 3 (Tactical Spreads):** All four vertical spreads (50-point width) cost between ₹{m3_cost_min:,.2f} and ₹{m3_cost_max:,.2f} per lot, well within the ₹{m3_cap:,.2f} per-trade cap (`AFFORDABLE`).",
             "4. **Mode 4 (Strategic Positional Basket):**",
             f"   - **Fits Cap ({len(m4_passed)} structures):** Verticals, short iron condor, short iron butterfly, long call butterfly, and long put butterfly fit comfortably under the ₹{m4_cap:,.2f} cap.",

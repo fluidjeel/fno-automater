@@ -39,12 +39,20 @@ class FyersMarketFeed:
         self._chain_greeks = chain_greeks
         self._history_oi_flag = history_oi_flag
 
-    def fetch_option_chain(self, symbol: str) -> RawMarketCapture:
-        """Return one option-chain snapshot for an underlying symbol."""
+    def fetch_option_chain(
+        self, symbol: str, *, expiry_epoch: int | None = None
+    ) -> RawMarketCapture:
+        """Return one option-chain snapshot for an underlying symbol.
+
+        ``expiry_epoch`` is the provider expiry timestamp from ``expiryData``.
+        Omitting it requests the provider default (nearest) chain.
+        """
         params: dict[str, str | int] = {
             "symbol": symbol,
             "strikecount": self._strike_count,
         }
+        if expiry_epoch is not None:
+            params["timestamp"] = expiry_epoch
         if self._chain_greeks:
             params["greeks"] = "1"
         return self._fetch(endpoint="options-chain-v3", params=params)

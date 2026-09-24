@@ -110,12 +110,24 @@ Repeats for the same fault are suppressed for 15 minutes.
   `cp config/paper_session_legacy.yaml config/paper_session.yaml` then
   `sudo systemctl restart fno-paper-session.service`.
 - Four-mode file (reference): `config/paper_session_four_mode.yaml`.
-- Mode policy: `config/modes.yaml`. Per-mode and per-family stances are independent;
-  a broken family can be set `SHADOW` without disabling the whole mode.
-- M1 CAS: `cas_event_driven.enabled` must be `true` and latency gate must pass
-  before `M1_CAS: PAPER`. Polled-loop CAS remains G3-blocked.
+- Mode policy: `config/modes.yaml`. M2 capital share is 28% and its per-trade
+  fraction is 4% (cap ₹7,840 on the ₹7L book). M1 is 5%, M3 is 2%, M4 is 1%.
+- Startup log line `Loaded mode stances after startup validation` is the loaded
+  stance. `M1_CAS: PAPER` stays PAPER even on a 60-second poll. A missing or
+  failing oracle-measured latency report emits a warning only; latency is a
+  measured PAPER limitation, not a promotion gate. M1 entries use
+  `submit_m1_event`; the poll clears pending events and does not submit M1.
+- Latency thresholds (chosen before measurement): quote age 500 ms, decision
+  2000 ms, execution 2000 ms, exit gap 2000 ms. Samples go to
+  `data/paper/m1_latency_report.json` when provider timestamps exist.
+- M1 scan windows are 09:20-15:00 and 15:00-15:25 IST. The cash auction
+  15:30-15:40 is not an option entry window.
+- M2 flattens at 15:20 IST unless the carry gate records `CARRY_APPROVED`.
+  Carry keeps the position in M2.
 - Pre-open checks on Oracle:
   `systemctl is-active fno-automated.service fno-data-tick.service`;
-  `uv run pytest tests/test_four_mode_session_integration.py -q`;
+  `uv run pytest tests/test_four_mode_session_integration.py tests/test_cas_event_path.py -q`;
   entry freeze query on `data/paper/trading.sqlite` (no row or `entries_blocked=0`).
+- A session with only abstentions is not an observed fill. Each abstention needs
+  a reason code in the cycle evidence.
 

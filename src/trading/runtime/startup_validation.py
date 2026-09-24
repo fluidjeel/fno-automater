@@ -11,6 +11,7 @@ from trading.domain.family_gates import (
     G1_EXCEEDS_BUDGET_FAMILIES,
     G2_UNPROVEN_FAMILIES,
 )
+from trading.runtime.cas_event_path import measured_report_passes
 from trading.runtime.session_routing import SessionRoutingProfile
 
 if TYPE_CHECKING:
@@ -113,50 +114,34 @@ def _validate_g3_cas_loop(
     *,
     enforce_g3_shadow: bool,
 ) -> tuple[PaperSessionConfig, list[str]]:
+    """Record M1 latency limitations for PAPER. Stances are not demoted here."""
+    _ = enforce_g3_shadow
     warnings: list[str] = []
-    new_stances = dict(session_config.strategy_stances)
-    demoted = False
-
-    new_mode_stances = dict(session_config.mode_stances)
     cas_event_enabled = session_config.cas_event_driven.enabled
+    report_ok = measured_report_passes(session_config.cas_event_driven)
+    is_slow_loop = (
+        session_config.poll_interval_seconds >= _MIN_CAS_POLL_INTERVAL_SECONDS
+    )
     for cas_key in ("cas_microstructure", "M1_CAS"):
         is_paper = (
             session_config.strategy_stances.get(cas_key) is ExecutionMode.PAPER
-            or new_mode_stances.get(cas_key) is ExecutionMode.PAPER
+            or session_config.mode_stances.get(cas_key) is ExecutionMode.PAPER
         )
-        is_slow_loop = (
-            session_config.poll_interval_seconds >= _MIN_CAS_POLL_INTERVAL_SECONDS
-        )
-        if is_paper and is_slow_loop and not cas_event_enabled:
-            if enforce_g3_shadow:
-                if cas_key in new_stances:
-                    new_stances[cas_key] = ExecutionMode.SHADOW
-                if cas_key in new_mode_stances:
-                    new_mode_stances[cas_key] = ExecutionMode.SHADOW
-                demoted = True
-                warnings.append(
-                    f"Gate G3 enforcement: Demoted {cas_key} from PAPER to SHADOW "
-                    f"because poll_interval_seconds="
-                    f"{session_config.poll_interval_seconds} >= "
-                    f"{_MIN_CAS_POLL_INTERVAL_SECONDS} and cas_event_driven "
-                    "is disabled."
-                )
-            else:
-                raise StartupValidationError(
-                    "Gate G3 violation: Mode 1 (cas_microstructure) cannot run "
-                    "PAPER on a polled loop with poll_interval_seconds="
-                    f"{session_config.poll_interval_seconds} (BLOCKED). "
-                    "Enable cas_event_driven or set stance SHADOW."
-                )
-
-    if demoted:
-        session_config = session_config.model_copy(
-            update={
-                "strategy_stances": new_stances,
-                "mode_stances": new_mode_stances,
-            }
-        )
-
+        if not is_paper or not is_slow_loop:
+            continue
+        if not cas_event_enabled:
+            warnings.append(
+                f"M1 ({cas_key}) PAPER on a {session_config.poll_interval_seconds}s "
+                "poll: cas_event_driven is disabled, so the poll does not submit "
+                "M1; use submit_m1_event for entries."
+            )
+            continue
+        if not report_ok:
+            warnings.append(
+                f"M1 ({cas_key}) PAPER: oracle-measured latency report is missing "
+                "or above the predeclared thresholds. PAPER continues; latency "
+                "is a measured limitation, not a promotion gate."
+            )
     return session_config, warnings
 
 

@@ -103,7 +103,7 @@ def _ctx(
 def test_registry_builds_long_option() -> None:
     strategy = build_strategy("positional_long_option")
     assert isinstance(strategy, LongOptionStrategy)
-    assert strategy.strategy_version == "long-option-v1"
+    assert strategy.strategy_version == "long-option-v2"
 
 
 def test_bullish_technical_emits_long_call() -> None:
@@ -216,11 +216,20 @@ def test_decision_before_calculation_time_is_rejected() -> None:
     assert decision.rejections[0].reason is ReasonCode.DATA_INVALID
 
 
-def test_short_expiry_option_is_ineligible() -> None:
-    ctx = _ctx(option=_option(days_to_expiry=3))
+def test_zero_or_one_dte_option_is_excluded() -> None:
+    ctx = _ctx(option=_option(days_to_expiry=1))
     decision = LongOptionStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections[0].reason is ReasonCode.CONTRACT_EXPIRED
+    assert decision.rejections[0].reason is ReasonCode.EXPIRY_0_1_DTE_EXCLUDED
+
+
+def test_following_week_dte_is_eligible() -> None:
+    decision = LongOptionStrategy().evaluate(_ctx(option=_option(days_to_expiry=4)))
+    assert decision.emits_intent
+    template = decision.intents[0].exit_template
+    assert template.trailing_activation_ticks == 40
+    assert template.trailing_distance_ticks == 20
+    assert template.time_exit is not None
 
 
 def test_low_open_interest_is_ineligible() -> None:

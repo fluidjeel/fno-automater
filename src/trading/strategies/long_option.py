@@ -13,8 +13,9 @@ No lookahead: only the injected ``now`` and snapshot timestamps are read.
 from __future__ import annotations
 
 import hashlib
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from trading.domain.contracts import (
     EntryPolicy,
@@ -45,18 +46,24 @@ from trading.strategies.macro import MacroBias
 __all__ = ["LongOptionStrategy"]
 
 STRATEGY_ID = "positional_long_option"
-STRATEGY_VERSION = "long-option-v1"
+STRATEGY_VERSION = "long-option-v2"
 
 # Versioned research parameters. These are uncalibrated and must not be treated
 # as validated risk policy; changing any of them changes STRATEGY_VERSION.
+# Minimum DTE is 2 so a following-week contract (often 2-6 calendar days) is
+# eligible. Calendar days 0 and 1 stay excluded.
 REQUESTED_RISK_INR = Decimal("10000")
-MIN_DAYS_TO_EXPIRY = 7
+MIN_DAYS_TO_EXPIRY = 2
 MIN_OPEN_INTEREST = 1000
 MAX_SNAPSHOT_AGE_SECONDS = 120
 MAX_ENTRY_SPREAD_FRACTION = Decimal("0.05")
 STOP_TICKS = 40
 TARGET_TICKS = 80
+TRAIL_ACTIVATION_TICKS = 40
+TRAIL_DISTANCE_TICKS = 20
+FLATTEN_IST = (15, 20)
 EXIT_BEFORE_EXPIRY_DAYS = 1
+_IST = ZoneInfo("Asia/Kolkata")
 ENTRY_TIMEOUT_SECONDS = 30
 INTENT_TTL_SECONDS = 300
 SESSION_LABEL = "NSE_FO"
@@ -156,7 +163,9 @@ class LongOptionStrategy:
         if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
             return ReasonCode.DATA_STALE
         if ctx.now < ctx.underlying.times.calculation_time:
-            return ReasonCode.DATA_INVALID  # decision instant precedes the data
+            return ReasonCode.DATA_INVALID
+        if ctx.now >= _flatten_at(ctx.now):
+            return ReasonCode.SETUP_COOLDOWN
         return self._option_eligibility_reason(option)
 
     def _option_eligibility_reason(self, option: FeatureSnapshot) -> ReasonCode | None:
@@ -167,7 +176,7 @@ class LongOptionStrategy:
         ):
             return ReasonCode.INSTRUMENT_UNKNOWN
         if derivatives.days_to_expiry < MIN_DAYS_TO_EXPIRY:
-            return ReasonCode.CONTRACT_EXPIRED
+            return ReasonCode.EXPIRY_0_1_DTE_EXCLUDED
         if (
             derivatives.open_interest is None
             or derivatives.open_interest < MIN_OPEN_INTEREST
@@ -250,9 +259,9 @@ class LongOptionStrategy:
                 stop_distance_ticks=STOP_TICKS,
                 target_distance_ticks=TARGET_TICKS,
                 break_even_trigger_ticks=None,
-                trailing_activation_ticks=None,
-                trailing_distance_ticks=None,
-                time_exit=None,
+                trailing_activation_ticks=TRAIL_ACTIVATION_TICKS,
+                trailing_distance_ticks=TRAIL_DISTANCE_TICKS,
+                time_exit=_flatten_at(now),
                 exit_before_expiry_days=EXIT_BEFORE_EXPIRY_DAYS,
                 invalidation_note=INVALIDATION_NOTE,
                 partial_fill_policy="CANCEL_REMAINDER",
@@ -271,6 +280,14 @@ class LongOptionStrategy:
             created_at=now,
             expires_at=now + timedelta(seconds=INTENT_TTL_SECONDS),
         )
+
+
+def _flatten_at(now: datetime) -> datetime:
+    """Intraday flatten instant. Carry approval clears this later."""
+    local = now.astimezone(_IST)
+    hour, minute = FLATTEN_IST
+    flatten = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return flatten.astimezone(now.tzinfo)
 
 
 def _derive_id(*parts: str) -> str:

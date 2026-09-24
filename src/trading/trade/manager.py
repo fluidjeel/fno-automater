@@ -307,6 +307,22 @@ class TradeManager:
         self._positions[trade_id] = updated
         return updated
 
+    def clear_intraday_time_exit(
+        self, trade_id: str, *, now: datetime
+    ) -> PositionState | None:
+        """Drop the intraday flatten after an approved Mode 2 carry.
+
+        Ownership and the stop/target/trail stay on the same position. The
+        time exit is the only field removed, so a rejected carry still flattens.
+        """
+        position = self._positions.get(trade_id)
+        if position is None:
+            return None
+        policy = position.exit_policy.model_copy(update={"time_exit": None})
+        updated = position.model_copy(update={"exit_policy": policy, "as_of": now})
+        self._positions[trade_id] = updated
+        return updated
+
     def get_position(self, trade_id: str) -> PositionState | None:
         return self._positions.get(trade_id)
 

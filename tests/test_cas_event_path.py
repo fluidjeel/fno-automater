@@ -62,17 +62,33 @@ def test_cas_event_trigger_requires_fresh_quote() -> None:
     assert ReasonCode.DATA_STALE in stale.reason_codes
 
 
-def test_cas_paper_requires_latency_gate() -> None:
+def test_cas_paper_permitted_without_measured_latency_report() -> None:
     config = CasEventDrivenConfig(enabled=True, max_entry_latency_ms=1000)
     report = measure_cas_entry_latency((50, 80, 1500), config=config)
     assert not report.passes_session_gate
-    ok = measure_cas_entry_latency((50, 80, 90), config=config)
-    assert ok.passes_session_gate
     permitted, mode = cas_event_paper_permitted(
         config=config,
-        latency_report=ok,
+        latency_report=report,
         stance=ExecutionMode.PAPER,
         attempts_today=0,
+    )
+    assert permitted
+    assert mode is ExecutionMode.PAPER
+    measured = measure_cas_entry_latency(
+        (50, 80, 90),
+        config=config,
+        provenance="oracle_measured",
+        quote_ages_ms=(40, 80, 100),
+        execution_latencies_ms=(30, 40, 50),
+        exit_monitor_gaps_ms=(100, 200, 300),
+    )
+    assert measured.passes_session_gate
+    permitted, mode = cas_event_paper_permitted(
+        config=config,
+        latency_report=measured,
+        stance=ExecutionMode.PAPER,
+        attempts_today=0,
+        event_provenance="oracle_measured",
     )
     assert permitted
     assert mode is ExecutionMode.PAPER

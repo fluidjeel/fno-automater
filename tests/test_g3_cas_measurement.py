@@ -148,8 +148,11 @@ def test_g3_policy_blocked_vs_legacy_config_enforcement(repo_root: Path) -> None
         session_config = yaml.safe_load(f)
 
     assert session_config["routing_profile"] == "four_mode"
-    assert session_config["mode_stances"]["M1_CAS"] == "SHADOW"
-    assert session_config["cas_event_driven"]["enabled"] is False
+    assert session_config["mode_stances"]["M1_CAS"] == "PAPER"
+    assert session_config["mode_stances"]["M2_DIRECTIONAL"] == "PAPER"
+    assert session_config["cas_event_driven"]["enabled"] is True
+    assert session_config["cas_event_driven"]["quote_max_age_ms"] == 500
+    assert session_config["cas_event_driven"]["max_entry_latency_ms"] == 2000
     legacy_path = repo_root / "config" / "paper_session_legacy.yaml"
     with legacy_path.open("r", encoding="utf-8") as f:
         legacy_config = yaml.safe_load(f)

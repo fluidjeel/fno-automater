@@ -144,6 +144,18 @@ def _stamp_carry_approved(
         exit_initiated=False,
         as_of=SLOT_1030,
     )
+    runner._services.trade_manager.clear_intraday_time_exit(trade_id, now=SLOT_1030)
+    book = runner._open_book.get(trade_id)
+    if book is not None:
+        intent, decision = book
+        carried = intent.model_copy(
+            update={
+                "exit_template": intent.exit_template.model_copy(
+                    update={"time_exit": None}
+                )
+            }
+        )
+        runner._open_book[trade_id] = (carried, decision)
     runner._write_lifecycle(trade_id, extra_carry=(record,))
     lifecycle = runner._services.store.get_position_lifecycle(trade_id)
     assert lifecycle is not None

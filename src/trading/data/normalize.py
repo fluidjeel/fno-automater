@@ -368,24 +368,36 @@ def normalize_fyers_ws_tick(
         repr(sorted(message.items())).encode(),
         digest_size=8,
     ).hexdigest()
+    exchange_ts = message.get("exch_feed_time")
+    if exchange_ts is None:
+        exchange_ts = message.get("last_traded_time")
+    source_time = (
+        _parse_epoch_seconds(exchange_ts, receive_time)
+        if exchange_ts is not None
+        else receive_time
+    )
     payload = {
         "symbol": symbol,
         "ltp": message.get("ltp"),
         "bid_price": message.get("bid_price"),
         "ask_price": message.get("ask_price"),
+        "bid_size": message.get("bid_size"),
+        "ask_size": message.get("ask_size"),
         "volume": message.get("vol_traded_today"),
         "open_price": message.get("open_price"),
         "high_price": message.get("high_price"),
         "low_price": message.get("low_price"),
         "prev_close_price": message.get("prev_close_price"),
+        "exchange_timestamp_observed": exchange_ts is not None,
+        "timestamp_basis": "exchange" if exchange_ts is not None else "receive_time",
     }
     return CanonicalMarketEvent(
         event_id=f"fyers-tick-{tick_id}",
         provider="fyers",
         symbol=symbol,
         event_type="TICK",
-        event_time=receive_time,
-        source_time=receive_time,
+        event_time=source_time,
+        source_time=source_time,
         receive_time=receive_time,
         provider_sequence=provider_sequence,
         payload=payload,

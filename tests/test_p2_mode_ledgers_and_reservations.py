@@ -224,9 +224,9 @@ def test_four_mode_book_partitioning() -> None:
     m4 = book.get_ledger(ModeId.M4_STRATEGIC_POSITIONAL)
 
     assert m1.allocated_capital == _money("70000")
-    assert m2.allocated_capital == _money("140000")
+    assert m2.allocated_capital == _money("196000")
     assert m3.allocated_capital == _money("210000")
-    assert m4.allocated_capital == _money("280000")
+    assert m4.allocated_capital == _money("224000")
 
     assert (
         m1.allocated_capital
@@ -242,7 +242,7 @@ def test_four_mode_book_no_cross_mode_borrow() -> None:
 
     # M1 has ₹70,000 available
     assert book.available_for(ModeId.M1_CAS) == _money("70000")
-    assert book.available_for(ModeId.M2_DIRECTIONAL) == _money("140000")
+    assert book.available_for(ModeId.M2_DIRECTIONAL) == _money("196000")
 
     # Reserve ₹60,000 in M1 -> succeeds
     assert book.try_reserve(ModeId.M1_CAS, _money("60000")) is True
@@ -253,8 +253,8 @@ def test_four_mode_book_no_cross_mode_borrow() -> None:
     assert book.available_for(ModeId.M1_CAS) == _money("10000")
 
     # M2's capital is completely untouched
-    assert book.available_for(ModeId.M2_DIRECTIONAL) == _money("140000")
-    assert book.try_reserve(ModeId.M2_DIRECTIONAL, _money("140000")) is True
+    assert book.available_for(ModeId.M2_DIRECTIONAL) == _money("196000")
+    assert book.try_reserve(ModeId.M2_DIRECTIONAL, _money("196000")) is True
     assert book.available_for(ModeId.M2_DIRECTIONAL) == _money("0")
     assert book.try_reserve(ModeId.M2_DIRECTIONAL, _money("1")) is False
 
@@ -441,11 +441,11 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
 
     # Verify M2: ₹140,000 allocation, ₹0 active reservations, realized loss ₹1,500
     m2 = reconstructed.get_ledger(ModeId.M2_DIRECTIONAL)
-    assert m2.allocated_capital == _money("140000")
+    assert m2.allocated_capital == _money("196000")
     assert m2.reserved_capital == _money("0")
     assert m2.realized_pnl_today == _money("-1500")
-    assert m2.equity == _money("138500")
-    assert m2.available_capital == _money("138500")
+    assert m2.equity == _money("194500")
+    assert m2.available_capital == _money("194500")
 
     # Verify M3: ₹210,000 allocation, margin used ₹35,000 -> available = ₹175,000
     m3 = reconstructed.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
@@ -455,8 +455,8 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
 
     # Verify M4: untouched clean ledger
     m4 = reconstructed.get_ledger(ModeId.M4_STRATEGIC_POSITIONAL)
-    assert m4.allocated_capital == _money("280000")
-    assert m4.available_capital == _money("280000")
+    assert m4.allocated_capital == _money("224000")
+    assert m4.available_capital == _money("224000")
 
 
 # ---------------------------------------------------------------------------

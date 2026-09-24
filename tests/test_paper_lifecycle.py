@@ -143,7 +143,7 @@ class TestRestartOpenPosition:
         assert opened.state is TradeState.OPEN
         persisted = store.get_position_lifecycle(opened.trade_id)
         assert persisted is not None
-        assert persisted.holding_style is HoldingStyle.POSITIONAL
+        assert persisted.holding_style is HoldingStyle.INTRADAY
         assert persisted.intent.strategy_version == opened.strategy_version
         assert persisted.position.exit_policy.policy_id == opened.exit_policy.policy_id
 
@@ -259,7 +259,7 @@ class TestSessionBoundary:
         persisted = store.get_position_lifecycle(opened.trade_id)
         assert persisted is not None
         assert persisted.position.state is TradeState.OPEN
-        assert persisted.holding_style is HoldingStyle.POSITIONAL
+        assert persisted.holding_style is HoldingStyle.INTRADAY
 
         clock.set(MORNING)
         next_session = _restart(store, clock, runner.broker)

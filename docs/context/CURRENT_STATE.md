@@ -1,57 +1,47 @@
 # Current State
 
 LAST_UPDATED: 2026-09-25
-CURRENT_MILESTONE: Four-Mode Session Integration — Oracle Deployed
-STATUS: FOUR_MODE_PAPER_ROUTED_NOT_OBSERVED_IN_MARKET
+CURRENT_MILESTONE: M1/M2 PAPER promotion
+STATUS: M1_PAPER_ENABLED_LATENCY_MEASURED_NOT_GATED
 
-## Confirmed decisions
+## Evidence labels
 
-- Binding C1: AuthorityMode.BOUNDED = config-promotion only; no LLM on live order path.
-- Four-mode producers route through `paper_session.py` when `routing_profile: four_mode`.
-- Legacy one-winner router preserved at `config/paper_session_legacy.yaml` for rollback.
-- Calendars remain `EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN` — off strict book.
-- M1 PAPER requires `cas_event_driven.enabled: true` and latency gate pass (G3); polled loop alone is insufficient.
+- TEST-PROVEN: local pytest including `tests/test_m1_paper_session_integration.py`.
+- DEPLOYED-PAPER: Oracle rsync tree; startup keeps `M1_CAS: PAPER`.
+- OBSERVED-IN-MARKET: not yet. Market was closed; no qualifying live signal captured.
 
-## Deployed (2026-09-25)
+## Mode stances (file and loaded)
 
-- Local commit: `47dcf15ffbdf6bb2cc0d7470c89c76746106aa1a` (rsync to Oracle; VM has no git).
-- Oracle active config: `config/paper_session.yaml` ← `paper_session_four_mode.yaml`.
-- Oracle integration tests: `tests/test_four_mode_session_integration.py`, `tests/test_cas_event_path.py` — green on VM.
-- Instrument master backfill run on Oracle (`trading data backfill instruments`, 2026-09-24 captures).
-- NIFTY lot size: **65**; NFO session `0915-1540|1815-1915` (from `NSE_FO.jsonl`).
-
-## Session routing (active)
-
-| Mode | Stance | Notes |
+| Mode | Config | Loaded after startup validation |
 | --- | --- | --- |
-| M1_CAS | SHADOW | `cas_event_driven.enabled: false` |
-| M2_DIRECTIONAL | SHADOW | G1 `MIN_LOT_EXCEEDS_BUDGET` at lot 65 |
-| M3_TACTICAL_POSITIONAL | PAPER | All four vertical families |
-| M4_STRATEGIC_POSITIONAL | PAPER | Affordable families only; straddle/strangle SHADOW |
+| M1_CAS | PAPER | PAPER |
+| M2_DIRECTIONAL | PAPER | PAPER |
+| M3/M4 | PAPER | PAPER |
 
-Rollback: `cp config/paper_session_legacy.yaml config/paper_session.yaml` on Oracle and restart `fno-paper-session`.
+Routing profile is `four_mode`. The 60-second poll clears pending M1 events and does not submit them. Entries use `submit_m1_event`.
+
+## M1 latency policy (PAPER only)
+
+Thresholds remain predeclared: quote age 500 ms, decision 2000 ms, execution 2000 ms, exit gap 2000 ms. Samples are recorded when provider timestamps exist. A missing or failing report emits a startup warning and runtime log line, but does not demote M1 to SHADOW. LIVE eligibility is unchanged.
+
+Scan windows: 09:20-15:00 continuous and 15:00-15:25 closing context. Cash auction 15:30-15:40 is excluded.
+
+## M2 allocation (capital event)
+
+Reference equity ₹7,00,000. M2 share 28%, per-trade 4%, cap ₹7,840. M4 share 32%, per-trade cap ₹2,240. Percentage order M1 5% > M2 4% > M3 2% > M4 1%. Open-risk sum ₹33,880 under the ₹35,000 global cap. Sep 20 chain: 23350 CE all-in ₹5,820.14 and PE ₹5,562.75 fit the cap. Live following-week refresh still blocked on Fyers 401.
 
 ## Verification
 
-- Phase P14 calendar registry + P16 doc reconciliation complete (calendars off strict book).
-- `tests/test_four_mode_session_integration.py` — M3 fill + restart duplicate suppression.
-- `tests/test_four_mode_trade_simulations.py` — 12 simulations (3 per mode M1-M4).
-- `tests/test_cas_event_path.py` — event trigger + latency gate.
-- G1 refreshed: `docs/reports/G1_ONE_LOT_AFFORDABILITY.md` (lot 65, 14/18 affordable).
-- Live trading blocked; PAPER only on M3/M4 until in-market fills observed.
+- Oracle deploy: `ruff`, `mypy`, full pytest green on the rsynced tree.
+- Startup validation on Oracle prints `M1_CAS: PAPER` with one latency-limitation warning.
+- G1 report: `docs/reports/G1_ONE_LOT_AFFORDABILITY.md`.
 
-## Blocking gaps (honest)
+## Blocking gaps
 
-- LIVE not approved. No market fills observed yet on four-mode route.
-- `fno-paper-session.service` inactive outside session window (supervisor starts PRE_MARKET).
-- M2 blocked by G1 until premium/capital environment changes.
-- M1 blocked until event-driven path enabled and session latency tests pass.
+- LIVE not approved. Calendars stay `EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN` (P16).
+- No in-market M1 trace or fill yet. Abstention-only sessions are acceptable if reasons are logged.
+- Fyers token 401 prevents a fresh following-week affordability read for M2.
 
 ## Next action
 
-Observe first four-mode PAPER session at open; use dashboard funnel + `trading evaluate operator-view`. Roll back to legacy if producer errors appear in `data/paper/session.log`.
-
-## Update rules
-
-- Keep this file below 120 lines.
-- Record facts with file/test evidence; do not paste logs or plans.
+During the cash session, capture feed-to-decision traces and any abstention reasons. Do not manufacture fills.

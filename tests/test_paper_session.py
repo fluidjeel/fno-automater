@@ -249,11 +249,11 @@ class TestCasPaperStance:
     def test_shipped_session_enables_m3_m4_paper_only(self) -> None:
         cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
         assert cfg.routing_profile.value == "four_mode"
-        assert cfg.mode_stances["M1_CAS"] is ExecutionMode.SHADOW
-        assert cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.SHADOW
+        assert cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
+        assert cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
         assert cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
         assert cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
-        assert cfg.cas_event_driven.enabled is False
+        assert cfg.cas_event_driven.enabled is True
         assert not any(
             mode.touches_real_capital for mode in cfg.mode_stances.values()
         )

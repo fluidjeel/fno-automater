@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
+from decimal import Decimal
 from typing import cast
 
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketState
@@ -158,7 +159,7 @@ def produce_family_requests(
             continue
         bound = bind_family(
             spec,
-            candidates,
+            _candidates_for_mode(candidates, mode_id=policy_row.mode_id),
             market=market,
             policy=policy,
             p1=p1,
@@ -211,3 +212,16 @@ def build_four_mode_requests(
             )
         )
     return tuple(requests)
+
+
+def _candidates_for_mode(
+    candidates: Sequence[FeatureSnapshot], *, mode_id: ModeId
+) -> tuple[FeatureSnapshot, ...]:
+    """Keep following-week chain rows on M2 so M3/M4 keep the near-chain set."""
+    if mode_id is ModeId.M2_DIRECTIONAL:
+        return tuple(candidates)
+    return tuple(
+        item
+        for item in candidates
+        if item.features.get("following_week_chain", Decimal(0)) != Decimal(1)
+    )

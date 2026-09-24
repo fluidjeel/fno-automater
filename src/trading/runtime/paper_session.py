@@ -27,7 +27,11 @@ from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.auth import run_telegram_auth
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed
 from trading.data.fyers.telegram import send_telegram_message, telegram_configured
-from trading.data.normalize import normalize_fyers_depth, normalize_fyers_quotes
+from trading.data.normalize import (
+    normalize_fyers_depth,
+    normalize_fyers_option_chain,
+    normalize_fyers_quotes,
+)
 from trading.data.pipeline import build_pipeline
 from trading.data.prices import depth_top_sizes, observed_book_sizes, optional_int_qty
 from trading.data.settings import FyersSettings
@@ -72,9 +76,13 @@ from trading.runtime.candidates import (
     front_month_future,
 )
 from trading.runtime.cas_event_path import (
+    ORACLE_MEASURED,
     CasEventDrivenConfig,
-    cas_event_paper_permitted,
+    M1ProviderEvent,
+    active_m1_window,
+    evaluate_m1_provider_event,
     measure_cas_entry_latency,
+    record_episode_attempt,
 )
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.event_risk import collect_event_risk
@@ -84,6 +92,7 @@ from trading.runtime.four_mode_producers import (
 )
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
+from trading.runtime.m2_chain import following_week_epoch
 from trading.runtime.notify import (
     format_eod_report,
     format_lifecycle_alert,
@@ -323,6 +332,9 @@ class PaperSession:
 
     def tick(self) -> PaperCycleResult | None:
         """One L1→L3→L2 cycle plus exits. Returns None when the builder is empty."""
+        holder = getattr(self._builder, "m1_holder", None)
+        if isinstance(holder, dict) and not holder.get("keep"):
+            holder["event"] = None
         now = self._clock.now_utc()
         requests, snapshots = self._builder(now)
         result: PaperCycleResult | None = None
@@ -351,6 +363,32 @@ class PaperSession:
             now=now, result=result, had_requests=bool(requests)
         )
         return result
+
+    def submit_m1_event(self, event: M1ProviderEvent) -> PaperCycleResult | None:
+        """Run only M1 through the session builder from one provider event.
+
+        The 60-second poll clears any pending event and does not submit M1.
+        """
+        holder = getattr(self._builder, "m1_holder", None)
+        if not isinstance(holder, dict):
+            return None
+        holder["keep"] = True
+        holder["event"] = event
+        try:
+            now = self._clock.now_utc()
+            requests, snapshots = self._builder(now)
+            m1 = tuple(
+                item
+                for item in requests
+                if item.forced_mode_id is ModeId.M1_CAS
+            )
+            result = self._runner.run_cycle(m1) if m1 else None
+            if snapshots:
+                self._runner.manage_exits(snapshots)
+            return result
+        finally:
+            holder["event"] = None
+            holder["keep"] = False
 
     def _write_session_heartbeat(
         self,
@@ -529,6 +567,10 @@ def run_paper_session(
     )
     for warning in startup_warnings:
         logging.getLogger(__name__).warning("Startup validation warning: %s", warning)
+    logging.getLogger(__name__).warning(
+        "Loaded mode stances after startup validation: %s",
+        {key: mode.value for key, mode in session_cfg.mode_stances.items()},
+    )
     pipeline_cfg = load_data_pipeline_config(
         repo_root / "config" / "data_pipeline.yaml"
     )
@@ -1069,8 +1111,12 @@ def _four_mode_request_builder(
         history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
     )
     cas_latency_samples: list[int] = []
+    cas_quote_ages: list[int] = []
+    cas_execution_latencies: list[int] = []
+    cas_exit_gaps: list[int] = []
     cas_attempts_today = 0
     cas_session_date: date | None = None
+    m1_holder: dict[str, object] = {"event": None, "keep": False}
 
     def build(
         now: datetime,
@@ -1141,6 +1187,17 @@ def _four_mode_request_builder(
                 option_candidates = _with_option_depth(
                     option_candidates, feed, paper_data
                 )
+            option_candidates, option_specs = _merge_following_week_chain(
+                option_candidates,
+                option_specs,
+                chain=chain,
+                catalog=catalog,
+                underlying=index_underlying,
+                as_of=now,
+                zone=zone,
+                feed=feed,
+                pipeline_symbol=underlying_cfg.symbol,
+            )
             instruments.update(option_specs)
             for candidate in option_candidates:
                 snapshots[candidate.contract.symbol] = candidate
@@ -1179,9 +1236,22 @@ def _four_mode_request_builder(
             p1=p1,
             master_symbols=master_symbols,
         )
+        event = m1_holder.get("event")
+        window = active_m1_window(now, session_cfg.cas_event_driven)
+        in_window = window is not None
+        quote_ages = tuple(cas_quote_ages)
+        execution_latencies = tuple(cas_execution_latencies)
+        exit_gaps = tuple(cas_exit_gaps)
+        provenance = "unlabelled"
+        if isinstance(event, M1ProviderEvent) and event.provenance == ORACLE_MEASURED:
+            provenance = ORACLE_MEASURED
         latency_report = measure_cas_entry_latency(
             tuple(cas_latency_samples),
             config=session_cfg.cas_event_driven,
+            provenance=provenance,
+            quote_ages_ms=quote_ages,
+            execution_latencies_ms=execution_latencies,
+            exit_monitor_gaps_ms=exit_gaps,
         )
         adjusted: list[ProducedFamilyRequest] = []
         for item in produced:
@@ -1191,18 +1261,89 @@ def _four_mode_request_builder(
             m1_stance = session_cfg.mode_stances.get(
                 ModeId.M1_CAS.value, ExecutionMode.SHADOW
             )
-            permitted, mode = cas_event_paper_permitted(
+            gate = evaluate_m1_provider_event(
+                item=item,
+                event=event if isinstance(event, M1ProviderEvent) else None,
+                option_candidates=option_candidates,
                 config=session_cfg.cas_event_driven,
-                latency_report=latency_report,
                 stance=m1_stance,
                 attempts_today=cas_attempts_today,
+                in_window=in_window,
+                latency_report=latency_report,
+                session_date=session_day.isoformat(),
+                episode_ledger=repo_root / "data" / "paper" / "m1_episodes.json",
+                mode_capital=modes_config.modes[ModeId.M1_CAS].capital_share
+                * Decimal("700000"),
             )
-            execute = permitted and item.bound.binding.eligible
-            if execute:
-                cas_attempts_today += 1
-                cas_latency_samples.append(
-                    session_cfg.cas_event_driven.quote_max_age_ms
+            if gate.latency_limitation:
+                logging.getLogger(__name__).warning(
+                    "M1 latency limitation (PAPER continues): %s",
+                    gate.latency_limitation,
                 )
+            episode_id = ""
+            if isinstance(event, M1ProviderEvent):
+                episode_id = event.episode_id or item.spec.family_id.value
+            execute = gate.execute
+            mode = gate.execution_mode
+            if execute and isinstance(event, M1ProviderEvent):
+                cas_attempts_today += 1
+                record_episode_attempt(
+                    repo_root / "data" / "paper" / "m1_episodes.json",
+                    session_date=session_day.isoformat(),
+                    episode_id=episode_id,
+                )
+                if event.provenance == ORACLE_MEASURED and event.event_time is not None:
+                    cas_latency_samples.append(
+                        max(
+                            0,
+                            int(
+                                (event.decided_at - event.receive_time).total_seconds()
+                                * 1000
+                            ),
+                        )
+                    )
+                    if event.quote_time is not None and event.submitted_at is not None:
+                        cas_quote_ages.append(
+                            max(
+                                0,
+                                int(
+                                    (
+                                        event.submitted_at - event.quote_time
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                            )
+                        )
+                    if (
+                        event.execution_completed_at is not None
+                        and event.submitted_at is not None
+                    ):
+                        cas_execution_latencies.append(
+                            max(
+                                0,
+                                int(
+                                    (
+                                        event.execution_completed_at - event.submitted_at
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                            )
+                        )
+                    if (
+                        event.exit_quote_at is not None
+                        and event.previous_exit_quote_at is not None
+                    ):
+                        cas_exit_gaps.append(
+                            max(
+                                0,
+                                int(
+                                    (
+                                        event.exit_quote_at - event.previous_exit_quote_at
+                                    ).total_seconds()
+                                    * 1000
+                                ),
+                            )
+                        )
             adjusted.append(
                 item.__class__(
                     spec=item.spec,
@@ -1222,6 +1363,7 @@ def _four_mode_request_builder(
         )
         return requests, snapshots
 
+    build.m1_holder = m1_holder  # type: ignore[attr-defined]
     return build
 
 
@@ -1249,3 +1391,63 @@ def _vix_history(
             continue
         daily[record.as_of.astimezone(_IST).date()] = Decimal(level)
     return tuple(daily[key] for key in sorted(daily))
+
+
+_FOLLOWING_WEEK_STRIKES = 8
+
+
+def _merge_following_week_chain(
+    option_candidates: tuple[FeatureSnapshot, ...],
+    option_specs: dict[str, InstrumentSpec],
+    *,
+    chain: CanonicalMarketEvent,
+    catalog: InstrumentSpecStore,
+    underlying: FeatureSnapshot,
+    as_of: datetime,
+    zone: ZoneInfo,
+    feed: FyersMarketFeed,
+    pipeline_symbol: str,
+) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec]]:
+    """Add the following-week chain when the loaded chain is a nearer expiry."""
+    already = {
+        item.contract.expiry
+        for item in option_candidates
+        if item.contract.expiry is not None
+    }
+    epoch = following_week_epoch(
+        chain,
+        as_of=as_of.astimezone(zone).date(),
+        calendar=get_calendar_port(),
+        already_listed=already,
+    )
+    if epoch is None:
+        return option_candidates, option_specs
+    try:
+        capture = feed.fetch_option_chain(pipeline_symbol, expiry_epoch=epoch)
+    except (FyersApiError, OSError):
+        logging.getLogger(__name__).warning(
+            "following-week chain fetch failed; M2 will abstain if that expiry is absent"
+        )
+        return option_candidates, option_specs
+    event = normalize_fyers_option_chain(
+        capture,
+        symbol=pipeline_symbol,
+        normalization_version="1",
+        raw_ref="m2-following-week",
+    )
+    extra, extra_specs = build_option_candidates(
+        event,
+        catalog,
+        underlying=underlying,
+        as_of=as_of,
+        zone=zone,
+        strikes_each_side=_FOLLOWING_WEEK_STRIKES,
+    )
+    marked: list[FeatureSnapshot] = []
+    for snap in extra:
+        features = dict(snap.features)
+        features["following_week_chain"] = Decimal(1)
+        marked.append(snap.model_copy(update={"features": features}))
+    merged_specs = dict(option_specs)
+    merged_specs.update(extra_specs)
+    return option_candidates + tuple(marked), merged_specs

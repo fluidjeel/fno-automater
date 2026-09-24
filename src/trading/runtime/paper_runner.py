@@ -823,6 +823,19 @@ class PaperRunner:
                 decision_id=self._ids.new_id("CRG"),
             )
             record = _stamp_carry(outcome, carry_id=self._ids.new_id("CRR"), now=now)
+            if outcome.action is CarryGateAction.CARRY_APPROVED:
+                self._services.trade_manager.clear_intraday_time_exit(
+                    position.trade_id, now=now
+                )
+                carried = intent.model_copy(
+                    update={
+                        "mode_id": ModeId.M2_DIRECTIONAL,
+                        "exit_template": intent.exit_template.model_copy(
+                            update={"time_exit": None}
+                        ),
+                    }
+                )
+                self._open_book[position.trade_id] = (carried, decision)
             if outcome.exit_initiated:
                 exit_events.extend(
                     self._initiate_carry_rejection_exit(

@@ -64,16 +64,16 @@ def test_evaluate_affordability_all_modes_and_families(repo_root: Path) -> None:
     assert m1_spec.per_trade_cap == Money.of("3500", Currency.INR)
 
     m2_spec = report.mode_specs[ModeId.M2_DIRECTIONAL]
-    assert m2_spec.reference_capital == Money.of("140000", Currency.INR)
-    assert m2_spec.per_trade_cap == Money.of("4200", Currency.INR)
+    assert m2_spec.reference_capital == Money.of("196000", Currency.INR)
+    assert m2_spec.per_trade_cap == Money.of("7840", Currency.INR)
 
     m3_spec = report.mode_specs[ModeId.M3_TACTICAL_POSITIONAL]
     assert m3_spec.reference_capital == Money.of("210000", Currency.INR)
     assert m3_spec.per_trade_cap == Money.of("4200", Currency.INR)
 
     m4_spec = report.mode_specs[ModeId.M4_STRATEGIC_POSITIONAL]
-    assert m4_spec.reference_capital == Money.of("280000", Currency.INR)
-    assert m4_spec.per_trade_cap == Money.of("2800", Currency.INR)
+    assert m4_spec.reference_capital == Money.of("224000", Currency.INR)
+    assert m4_spec.per_trade_cap == Money.of("2240", Currency.INR)
 
     # Check Mode 1 (CAS): moderately OTM options fit within ₹3,500
     m1_evals = [e for e in report.evaluations if e.mode_id == ModeId.M1_CAS]
@@ -82,14 +82,12 @@ def test_evaluate_affordability_all_modes_and_families(repo_root: Path) -> None:
     assert all(e.one_lot_fits_budget is True for e in m1_evals)
     assert all(e.reason_code is ReasonCode.OK for e in m1_evals)
 
-    # Check Mode 2 (Directional): delta 0.45-0.65 band misses ₹4,200 cap (no delta cutting allowed)
+    # Mode 2 uses the revised cap. The checked-in chain must fit without leaving the delta band.
     m2_evals = [e for e in report.evaluations if e.mode_id == ModeId.M2_DIRECTIONAL]
     assert len(m2_evals) == 2
-    assert all(e.status is AffordabilityStatus.MIN_LOT_EXCEEDS_BUDGET for e in m2_evals)
-    assert all(e.one_lot_fits_budget is False for e in m2_evals)
-    assert all(e.reason_code is ReasonCode.MIN_LOT_EXCEEDS_BUDGET for e in m2_evals)
-    assert all(e.binding_constraint is SizingBindingConstraint.RISK for e in m2_evals)
-    assert all(e.total_cost_per_lot.amount > e.per_trade_cap.amount for e in m2_evals)
+    assert all(e.status is AffordabilityStatus.AFFORDABLE for e in m2_evals)
+    assert all(e.one_lot_fits_budget is True for e in m2_evals)
+    assert all(e.reason_code is ReasonCode.OK for e in m2_evals)
 
     # Check Mode 3 (Tactical Positional Spreads): all 4 verticals fit ₹4,200
     m3_evals = [
@@ -167,13 +165,13 @@ def test_m4_straddle_and_strangle_exceed_budget(repo_root: Path) -> None:
     straddle = m4_evals["long_straddle"]
     assert straddle.status is AffordabilityStatus.MIN_LOT_EXCEEDS_BUDGET
     assert straddle.total_cost_per_lot.amount > Decimal("10000")
-    assert straddle.per_trade_cap == Money.of("2800", Currency.INR)
+    assert straddle.per_trade_cap == Money.of("2240", Currency.INR)
 
     strangle = m4_evals["long_strangle"]
     assert strangle.status is AffordabilityStatus.MIN_LOT_EXCEEDS_BUDGET
     assert strangle.total_cost_per_lot.amount > Decimal("3500")
     assert strangle.total_cost_per_lot.amount > strangle.per_trade_cap.amount
-    assert strangle.per_trade_cap == Money.of("2800", Currency.INR)
+    assert strangle.per_trade_cap == Money.of("2240", Currency.INR)
 
 
 def test_isolated_synthetic_chain_unit_test() -> None:

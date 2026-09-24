@@ -376,6 +376,11 @@ class PaperBroker:
             margin_delta = self._margin_delta(command, command.quantity_contracts)
         funds = self._state.funds
         if closing:
+            # A missing margin preview prices the close off the exit limit.
+            # That is not the margin posted at entry, so release only what
+            # is still in use.
+            if margin_delta.amount > funds.margin_used.amount:
+                margin_delta = funds.margin_used
             self._state.funds = funds.model_copy(
                 update={
                     "as_of": event.received_at,

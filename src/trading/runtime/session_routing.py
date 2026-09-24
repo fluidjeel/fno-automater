@@ -115,8 +115,9 @@ def bind_family(
         "market": market,
         "policy": policy,
         "p1": p1,
-        "master_symbols": master_symbols,
     }
+    if spec.mode_id in {ModeId.M1_CAS, ModeId.M2_DIRECTIONAL}:
+        kwargs["master_symbols"] = master_symbols
     if spec.mode_id is ModeId.M1_CAS:
         return spec.binder(candidates, **kwargs)
     if spec.mode_id is ModeId.M2_DIRECTIONAL:

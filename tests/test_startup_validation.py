@@ -8,6 +8,7 @@ import pytest
 
 from trading.domain.contracts.mode_policy import load_modes_config
 from trading.domain.enums import ExecutionMode
+from trading.runtime.cas_event_path import CasEventDrivenConfig
 from trading.runtime.paper_session import (
     PaperSessionConfig,
     load_paper_session_config,
@@ -61,22 +62,23 @@ class TestStartupValidation:
         assert validated_cfg == cfg
         assert warnings == []
 
-    def test_g3_blocked_raises_when_not_enforce(self) -> None:
+    def test_g3_slow_poll_warns_without_demoting_cas(self) -> None:
         cfg = _sample_config(
             poll_interval_seconds=60,
             strategy_stances={
                 "positional_long_option": ExecutionMode.PAPER,
                 "cas_microstructure": ExecutionMode.PAPER,
             },
+            cas_event_driven=CasEventDrivenConfig(enabled=True),
         )
-        with pytest.raises(StartupValidationError) as exc_info:
-            validate_startup_configuration(cfg, enforce_g3_shadow=False)
-        assert "Gate G3 violation: Mode 1 (cas_microstructure) cannot run PAPER" in str(
-            exc_info.value
+        validated_cfg, warnings = validate_startup_configuration(
+            cfg, enforce_g3_shadow=False
         )
-        assert "poll_interval_seconds=60 (BLOCKED)" in str(exc_info.value)
+        assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+        assert len(warnings) == 1
+        assert "measured limitation" in warnings[0]
 
-    def test_g3_blocked_m1_cas_key_raises_when_not_enforce(self) -> None:
+    def test_g3_m1_cas_key_keeps_paper_on_slow_poll(self) -> None:
         cfg = _sample_config(
             poll_interval_seconds=60,
             strategy_stances={
@@ -84,32 +86,30 @@ class TestStartupValidation:
                 "M1_CAS": ExecutionMode.PAPER,
             },
         )
-        with pytest.raises(StartupValidationError) as exc_info:
-            validate_startup_configuration(cfg, enforce_g3_shadow=False)
-        assert "Gate G3 violation" in str(exc_info.value)
+        validated_cfg, warnings = validate_startup_configuration(
+            cfg, enforce_g3_shadow=False
+        )
+        assert validated_cfg.strategy_stances["M1_CAS"] is ExecutionMode.PAPER
+        assert warnings
 
-    def test_g3_enforce_demotes_cas_to_shadow_with_warning(self) -> None:
+    def test_g3_enforce_flag_does_not_demote_cas(self) -> None:
         cfg = _sample_config(
             poll_interval_seconds=60,
             strategy_stances={
                 "positional_long_option": ExecutionMode.PAPER,
                 "cas_microstructure": ExecutionMode.PAPER,
             },
+            cas_event_driven=CasEventDrivenConfig(enabled=True),
         )
         validated_cfg, warnings = validate_startup_configuration(
             cfg, enforce_g3_shadow=True
         )
-        assert (
-            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.SHADOW
-        )
-        assert (
-            validated_cfg.strategy_stances["positional_long_option"]
-            is ExecutionMode.PAPER
-        )
+        assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+        assert validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
         assert len(warnings) == 1
-        assert "Demoted cas_microstructure from PAPER to SHADOW" in warnings[0]
+        assert "measured limitation" in warnings[0]
 
-    def test_g3_fast_poll_does_not_demote_cas(self) -> None:
+    def test_g3_fast_poll_does_not_warn_cas(self) -> None:
         cfg = _sample_config(
             poll_interval_seconds=10,
             strategy_stances={
@@ -239,7 +239,7 @@ class TestStartupValidation:
         ):
             validate_startup_configuration(cfg)
 
-    def test_shipped_paper_session_config_with_enforce_demotes_m1_cas(self) -> None:
+    def test_shipped_paper_session_config_keeps_m1_paper(self) -> None:
         session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
         session_cfg = session_cfg.model_copy(
             update={
@@ -253,13 +253,13 @@ class TestStartupValidation:
         validated_cfg, warnings = validate_startup_configuration(
             session_cfg, modes_cfg, enforce_g3_shadow=True
         )
-        assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.SHADOW
+        assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
         assert validated_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
         assert validated_cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
         assert len(warnings) == 1
-        assert "Demoted M1_CAS from PAPER to SHADOW" in warnings[0]
+        assert "measured limitation" in warnings[0]
 
-    def test_shipped_paper_session_config_without_enforce_raises_g3(self) -> None:
+    def test_shipped_paper_session_config_without_enforce_still_paper(self) -> None:
         session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
         session_cfg = session_cfg.model_copy(
             update={
@@ -270,7 +270,8 @@ class TestStartupValidation:
             }
         )
         modes_cfg = load_modes_config(ROOT / "config" / "modes.yaml")
-        with pytest.raises(StartupValidationError, match="Gate G3 violation"):
-            validate_startup_configuration(
-                session_cfg, modes_cfg, enforce_g3_shadow=False
-            )
+        validated_cfg, warnings = validate_startup_configuration(
+            session_cfg, modes_cfg, enforce_g3_shadow=False
+        )
+        assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
+        assert warnings

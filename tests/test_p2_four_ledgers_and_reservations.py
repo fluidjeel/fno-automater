@@ -101,9 +101,9 @@ class TestModeLedgerArithmetic:
 
         # Verify individual shares (10/20/30/40 → ₹70k/140k/210k/280k)
         assert m1.allocated_capital == _inr("70000")
-        assert m2.allocated_capital == _inr("140000")
+        assert m2.allocated_capital == _inr("196000")
         assert m3.allocated_capital == _inr("210000")
-        assert m4.allocated_capital == _inr("280000")
+        assert m4.allocated_capital == _inr("224000")
 
     def test_reference_capital_is_min_of_allocation_and_conservative_equity(
         self,

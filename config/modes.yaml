@@ -24,8 +24,11 @@ modes:
   M2_DIRECTIONAL:
     mode_id: M2_DIRECTIONAL
     mandate: "Highest directional-and-timing conviction single-leg buying with active evaluation every trading day."
-    capital_share: "0.20"
-    per_trade_loss_cap_fraction: "0.03"
+    # Capital event 2026-09-25: share 0.20 → 0.28 and per-trade fraction 0.03 → 0.04
+    # so one 65-lot following-week contract near the observed ₹5,563 premium fits.
+    # Ordering of percentage risk stays M1 5% > M2 4% > M3 2% > M4 1%.
+    capital_share: "0.28"
+    per_trade_loss_cap_fraction: "0.04"
     max_open_loss_cap_fraction: "0.06"
     daily_budget_cap_fraction: "0.08"
     allowed_families:
@@ -62,7 +65,7 @@ modes:
   M4_STRATEGIC_POSITIONAL:
     mode_id: M4_STRATEGIC_POSITIONAL
     mandate: "Strategic positional portfolio maintaining qualified longer-running market exposure across vertical spreads and multi-leg structures."
-    capital_share: "0.40"
+    capital_share: "0.32"
     per_trade_loss_cap_fraction: "0.01"
     max_open_loss_cap_fraction: "0.03"
     daily_budget_cap_fraction: "0.04"

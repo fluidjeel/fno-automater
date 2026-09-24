@@ -31,8 +31,6 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 import tests.factories as f
 from trading.domain.contracts import (
     DerivativesContext,
@@ -61,9 +59,9 @@ from trading.identification import (
     load_identification_policy,
 )
 from trading.identification.calendar import get_calendar_port
+from trading.runtime.cas_event_path import CasEventDrivenConfig
 from trading.runtime.paper_session import PaperSessionConfig
 from trading.runtime.startup_validation import (
-    StartupValidationError,
     validate_startup_configuration,
 )
 from trading.strategies import (
@@ -499,32 +497,26 @@ def test_m1_intent_has_exactly_one_buy_leg_no_shorts() -> None:
 # ===========================================================================
 
 
-def test_g3_blocks_m1_paper_on_60s_poll_raises_error() -> None:
-    """validate_startup_configuration must raise StartupValidationError when
-    cas_microstructure=PAPER and poll_interval_seconds=60 (enforce_g3_shadow=False).
-    """
-    config = _session_config()  # poll=60, cas=PAPER by default
-    with pytest.raises(StartupValidationError, match="Gate G3 violation"):
-        validate_startup_configuration(config, enforce_g3_shadow=False)
+def test_g3_slow_poll_warns_without_blocking_m1_paper() -> None:
+    """validate_startup_configuration keeps M1 PAPER and records latency limitation."""
+    config = _session_config(
+        cas_event_driven=CasEventDrivenConfig(enabled=True),
+    )
+    validated_config, warnings = validate_startup_configuration(
+        config, enforce_g3_shadow=False
+    )
+    assert validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert warnings
 
 
-# ===========================================================================
-# Test 7 — G3 enforcement: shadow demotion path
-# ===========================================================================
-
-
-def test_g3_demotes_cas_to_shadow_when_enforce_flag_set() -> None:
-    """When enforce_g3_shadow=True, the stance is silently changed to SHADOW
-    and a warning is emitted rather than raising.
-    """
-    config = _session_config()  # poll=60, cas=PAPER
+def test_g3_enforce_flag_does_not_demote_cas() -> None:
+    """enforce_g3_shadow=True no longer demotes M1 on a slow poll."""
+    config = _session_config(cas_event_driven=CasEventDrivenConfig(enabled=True))
     validated_config, warnings = validate_startup_configuration(
         config, enforce_g3_shadow=True
     )
-    assert (
-        validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.SHADOW
-    ), "cas_microstructure must be demoted to SHADOW"
-    assert any("G3" in w for w in warnings), f"Expected a G3 warning; got: {warnings}"
+    assert validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert any("measured limitation" in item for item in warnings)
 
 
 def test_g3_does_not_block_m1_shadow_on_60s_poll() -> None:

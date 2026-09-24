@@ -92,8 +92,8 @@ def test_load_modes_config() -> None:
 
     m2 = config.modes[ModeId.M2_DIRECTIONAL]
     assert m2.mode_id == ModeId.M2_DIRECTIONAL
-    assert m2.capital_share == Decimal("0.20")
-    assert m2.per_trade_loss_cap_fraction == Decimal("0.03")
+    assert m2.capital_share == Decimal("0.28")
+    assert m2.per_trade_loss_cap_fraction == Decimal("0.04")
     assert m2.max_open_loss_cap_fraction == Decimal("0.06")
     assert m2.daily_budget_cap_fraction == Decimal("0.08")
     assert m2.allowed_families == (FamilyId.long_call, FamilyId.long_put)
@@ -115,7 +115,7 @@ def test_load_modes_config() -> None:
 
     m4 = config.modes[ModeId.M4_STRATEGIC_POSITIONAL]
     assert m4.mode_id == ModeId.M4_STRATEGIC_POSITIONAL
-    assert m4.capital_share == Decimal("0.40")
+    assert m4.capital_share == Decimal("0.32")
     assert m4.per_trade_loss_cap_fraction == Decimal("0.01")
     assert m4.max_open_loss_cap_fraction == Decimal("0.03")
     assert m4.daily_budget_cap_fraction == Decimal("0.04")

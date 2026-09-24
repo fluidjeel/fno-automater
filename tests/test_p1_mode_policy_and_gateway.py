@@ -47,6 +47,7 @@ from trading.domain.enums import (
 )
 from trading.domain.ids import SequentialIdFactory
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
+from trading.runtime.cas_event_path import CasEventDrivenConfig
 from trading.runtime.paper_session import (
     PaperSessionConfig,
     load_paper_session_config,
@@ -268,15 +269,15 @@ def test_p1_mode_id_enum_and_policy_contract(tmp_path: Path) -> None:
 
     # Capital share breakdown
     assert cfg.modes[ModeId.M1_CAS].capital_share == Decimal("0.10")
-    assert cfg.modes[ModeId.M2_DIRECTIONAL].capital_share == Decimal("0.20")
+    assert cfg.modes[ModeId.M2_DIRECTIONAL].capital_share == Decimal("0.28")
     assert cfg.modes[ModeId.M3_TACTICAL_POSITIONAL].capital_share == Decimal("0.30")
-    assert cfg.modes[ModeId.M4_STRATEGIC_POSITIONAL].capital_share == Decimal("0.40")
+    assert cfg.modes[ModeId.M4_STRATEGIC_POSITIONAL].capital_share == Decimal("0.32")
     assert sum(m.capital_share for m in cfg.modes.values()) == Decimal("1.00")
 
     # Per-trade fractions
     assert cfg.modes[ModeId.M1_CAS].per_trade_loss_cap_fraction == Decimal("0.05")
     assert cfg.modes[ModeId.M2_DIRECTIONAL].per_trade_loss_cap_fraction == Decimal(
-        "0.03"
+        "0.04"
     )
     assert cfg.modes[
         ModeId.M3_TACTICAL_POSITIONAL
@@ -693,19 +694,20 @@ def test_p1_startup_validation_enforces_g1_g2_g3() -> None:
         ):
             validate_startup_configuration(cfg)
 
-    # 4. G3 polled loop violation without enforce_g3_shadow raises StartupValidationError
+    # 4. G3 slow poll warns but keeps M1 PAPER on the paper book
     cfg_g3_cas = _sample_session_config(
         poll_interval_seconds=60,
         strategy_stances={
             "positional_long_option": ExecutionMode.PAPER,
             "cas_microstructure": ExecutionMode.PAPER,
         },
+        cas_event_driven=CasEventDrivenConfig(enabled=True),
     )
-    with pytest.raises(
-        StartupValidationError,
-        match=r"Gate G3 violation: Mode 1 \(cas_microstructure\) cannot run PAPER on a polled loop with poll_interval_seconds=60",
-    ):
-        validate_startup_configuration(cfg_g3_cas, enforce_g3_shadow=False)
+    validated, warnings = validate_startup_configuration(
+        cfg_g3_cas, enforce_g3_shadow=False
+    )
+    assert validated.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert any("measured limitation" in item for item in warnings)
 
     cfg_g3_m1 = _sample_session_config(
         poll_interval_seconds=60,
@@ -714,8 +716,10 @@ def test_p1_startup_validation_enforces_g1_g2_g3() -> None:
             "M1_CAS": ExecutionMode.PAPER,
         },
     )
-    with pytest.raises(StartupValidationError, match=r"Gate G3 violation"):
-        validate_startup_configuration(cfg_g3_m1, enforce_g3_shadow=False)
+    validated_m1, _warnings = validate_startup_configuration(
+        cfg_g3_m1, enforce_g3_shadow=False
+    )
+    assert validated_m1.strategy_stances["M1_CAS"] is ExecutionMode.PAPER
 
     # 5. Unknown family or strategy in strategy_stances raises StartupValidationError
     cfg_unknown = _sample_session_config(
@@ -748,9 +752,8 @@ def test_p1_startup_validation_enforces_g1_g2_g3() -> None:
     assert warnings == []
 
 
-def test_p1_g3_boundary_demotion_preserves_legacy_config() -> None:
-    """Asserts enforce_g3_shadow=True converts CAS to SHADOW on 60s poll while legacy config remains untouched."""
-    # 1. In-memory demotion preserves original input configuration object
+def test_p1_g3_boundary_warns_without_demotion() -> None:
+    """Asserts slow-poll M1 PAPER stays PAPER while emitting a latency warning."""
     input_cfg = _sample_session_config(
         poll_interval_seconds=60,
         strategy_stances={
@@ -760,56 +763,46 @@ def test_p1_g3_boundary_demotion_preserves_legacy_config() -> None:
             "defined_risk_multileg": ExecutionMode.SHADOW,
             "commodity_futures_trend": ExecutionMode.SHADOW,
         },
+        cas_event_driven=CasEventDrivenConfig(enabled=True),
     )
 
     validated_cfg, warnings = validate_startup_configuration(
         input_cfg, enforce_g3_shadow=True
     )
 
-    # Demoted runtime copy
-    assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.SHADOW
-    assert (
-        validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
-    )
+    assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
     assert validated_cfg.strategy_stances["debit_spread"] is ExecutionMode.PAPER
     assert len(warnings) == 1
-    assert "Demoted cas_microstructure from PAPER to SHADOW" in warnings[0]
-    assert "poll_interval_seconds=60 >= 60" in warnings[0]
+    assert "measured limitation" in warnings[0]
 
-    # Input object remains completely untouched
     assert input_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
 
-    # 2. File-on-disk integrity test with four-mode config/paper_session.yaml
     paper_session_file = ROOT / "config" / "paper_session.yaml"
     modes_file = ROOT / "config" / "modes.yaml"
     assert paper_session_file.is_file(), "config/paper_session.yaml must exist on disk"
 
     raw_disk_content_before = paper_session_file.read_text(encoding="utf-8")
-    assert "M1_CAS: SHADOW" in raw_disk_content_before
+    assert "M1_CAS: PAPER" in raw_disk_content_before
+    assert "M2_DIRECTIONAL: PAPER" in raw_disk_content_before
 
     loaded_disk_cfg = load_paper_session_config(paper_session_file)
-    assert loaded_disk_cfg.mode_stances["M1_CAS"] is ExecutionMode.SHADOW
+    assert loaded_disk_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
+    assert loaded_disk_cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
 
-    demoted_cfg = loaded_disk_cfg.model_copy(
-        update={
-            "mode_stances": {
-                **loaded_disk_cfg.mode_stances,
-                "M1_CAS": ExecutionMode.PAPER,
-            }
-        }
-    )
     modes_cfg = load_modes_config(modes_file)
     runtime_session_cfg, startup_warnings = validate_startup_configuration(
-        demoted_cfg,
+        loaded_disk_cfg,
         modes_cfg,
         enforce_g3_shadow=True,
     )
 
-    assert runtime_session_cfg.mode_stances["M1_CAS"] is ExecutionMode.SHADOW
+    assert runtime_session_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
+    assert runtime_session_cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
     assert runtime_session_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
     assert len(startup_warnings) == 1
-    assert "Demoted M1_CAS from PAPER to SHADOW" in startup_warnings[0]
+    assert "measured limitation" in startup_warnings[0]
 
     raw_disk_content_after = paper_session_file.read_text(encoding="utf-8")
     assert raw_disk_content_after == raw_disk_content_before
-    assert "M1_CAS: SHADOW" in raw_disk_content_after
+    assert "M1_CAS: PAPER" in raw_disk_content_after
