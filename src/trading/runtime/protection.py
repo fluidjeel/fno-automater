@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -78,8 +78,18 @@ class ProtectionCoordinator:
         self._last_heartbeat_write = None
         self._last_quote_at = None
         self._dedupe = {}
+        self._m1_quote_handler: Callable[[str, MarketQuote, datetime], object | None] | None = (
+            None
+        )
         scripted.set_handler(self._on_quote)
         rest.set_handler(self._on_quote)
+
+    def set_m1_quote_handler(
+        self,
+        handler: Callable[[str, MarketQuote, datetime], object | None] | None,
+    ) -> None:
+        """Register the production M1 ingress callback for provider quotes."""
+        self._m1_quote_handler = handler
 
     @property
     def pending_alerts(self) -> tuple[LifecycleAlert, ...]:
@@ -177,6 +187,8 @@ class ProtectionCoordinator:
         self._pending_alerts.extend(result.alerts)
         self._last_quote_at = received_at
         self.refresh_subscriptions()
+        if self._m1_quote_handler is not None:
+            self._m1_quote_handler(symbol, quote, received_at)
 
     def _maybe_write_heartbeat(self) -> None:
         now = self.clock.now_utc()

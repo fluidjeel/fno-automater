@@ -824,10 +824,18 @@ class PaperRunner:
             recovery_healthy = not (
                 position.protection_degraded or position.software_stop_unavailable
             )
+            from trading.trade.carry_gate import resolve_carry_market
+
+            carry_market = market or resolve_carry_market(
+                intent,
+                session_date=session_date,
+                as_of=now,
+                cached=market,
+            )
             inputs = build_m2_carry_gate_input(
                 position=position,
                 intent=intent,
-                market=market,
+                market=carry_market,
                 session_date=session_date,
                 mode_reference_capital=mode_reference_capital,
                 config=config,

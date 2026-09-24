@@ -40,6 +40,7 @@ from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.data.storage.snapshot_store import SnapshotStore
 from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec
+from trading.domain.contracts.identification import MarketState
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
@@ -265,7 +266,7 @@ class PaperSession:
         self._eod_sent = False
         self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
         self._m1_ingress: object | None = None
-        self._latest_market_state: object | None = None
+        self._latest_market_state: MarketState | None = None
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -394,6 +395,9 @@ class PaperSession:
             holder["event"] = None
         now = self._clock.now_utc()
         requests, snapshots = self._builder(now)
+        latest = getattr(self._builder, "latest_market_state", None)
+        if isinstance(latest, MarketState):
+            self._latest_market_state = latest
         requests = self._entry_requests(requests)
         result: PaperCycleResult | None = None
         if requests:
@@ -541,7 +545,7 @@ class PaperSession:
         self._runner.run_m2_carry_gate(
             snapshots,
             session_date=local.date(),
-            market=None,
+            market=self._latest_market_state,
             mode_reference_capital=reference_capital,
             event_blackout=False,
             portfolio_entries_blocked=False,
@@ -1420,9 +1424,11 @@ def _four_mode_request_builder(
             experiment_prefix=session_cfg.experiment_prefix,
             now=now,
         )
+        build.latest_market_state = market_state  # type: ignore[attr-defined]
         return requests, snapshots
 
     build.m1_holder = m1_holder  # type: ignore[attr-defined]
+    build.latest_market_state = None  # type: ignore[attr-defined]
     return build
 
 

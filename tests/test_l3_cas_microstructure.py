@@ -32,6 +32,8 @@ from trading.strategies import (
 )
 from trading.strategies.cas_microstructure import (
     CAS_HOLDING_SECONDS,
+    CAS_WINDOW_END_IST,
+    IST,
     FEATURE_AUCTION_IMBALANCE,
     FEATURE_MICROPRICE_EDGE_BPS,
     FEATURE_QUOTE_INSTABILITY,
@@ -172,11 +174,31 @@ def test_neutral_emits_nothing() -> None:
 
 
 def test_mandatory_time_exit_is_short_and_dated_from_now() -> None:
-    intent = _intent(_ctx((_option(OptionType.CALL),)))
-    assert intent.exit_template.time_exit == CAS_NOW + timedelta(
+    """A mid-session entry holds the full CAS horizon from ``now``."""
+    # 06:00 UTC is 11:30 IST; now + 900s stays well inside the session.
+    midday = datetime(2026, 9, 14, 6, 0, tzinfo=UTC)
+    intent = _intent(
+        _ctx(
+            (_option(OptionType.CALL, instant=midday),),
+            underlying=_underlying("24100", "24000", instant=midday),
+            now=midday,
+        ),
+    )
+    assert intent.exit_template.time_exit == midday + timedelta(
         seconds=CAS_HOLDING_SECONDS
     )
     assert intent.constraints.max_holding_days == MAX_HOLDING_DAYS
+
+
+def test_time_exit_is_clamped_to_the_1525_cutoff() -> None:
+    """A late entry must not schedule a time exit past the 15:25 IST cutoff."""
+    # CAS_NOW is 15:15 IST, so the unclamped horizon would land at 15:30 IST.
+    intent = _intent(_ctx((_option(OptionType.CALL),)))
+    unclamped = CAS_NOW + timedelta(seconds=CAS_HOLDING_SECONDS)
+    time_exit = intent.exit_template.time_exit
+    assert time_exit is not None
+    assert time_exit < unclamped
+    assert time_exit.astimezone(IST).time() == CAS_WINDOW_END_IST
 
 
 def test_feature_absence_is_a_gap_not_a_default() -> None:
@@ -217,9 +239,20 @@ def test_stale_snapshot_is_rejected() -> None:
     assert decision.rejections[0].reason is ReasonCode.DATA_STALE
 
 
-def test_outside_closing_window_is_rejected() -> None:
+@pytest.mark.parametrize(
+    "outside",
+    [
+        # 03:30 UTC is 09:00 IST: before the 09:20 continuous window opens.
+        datetime(2026, 9, 14, 3, 30, tzinfo=UTC),
+        # 09:55 UTC is 15:25 IST: the window end is exclusive.
+        datetime(2026, 9, 14, 9, 55, tzinfo=UTC),
+        # 10:05 UTC is 15:35 IST: inside the NSE cash auction, never M1's window.
+        datetime(2026, 9, 14, 10, 5, tzinfo=UTC),
+    ],
+)
+def test_outside_authoritative_window_is_rejected(outside: datetime) -> None:
     decision = CasMicrostructureStrategy().evaluate(
-        _ctx((_option(OptionType.CALL),), now=CAS_NOW - timedelta(hours=2))
+        _ctx((_option(OptionType.CALL, instant=outside),), now=outside)
     )
     assert not decision.emits_intent
     assert decision.rejections[0].reason is ReasonCode.OUTSIDE_SESSION

@@ -190,7 +190,18 @@ def evaluate_cas_event_trigger(
             reason_codes=(ReasonCode.DATA_GAP,),
             detail="depth_only profile requires observed book size",
         )
-    if edge_ticks < config.microprice_dislocation_ticks:
+    # quote_only: age is the hard gate. Size-balanced top-of-book cannot
+    # produce a multi-tick microprice edge on a one-tick spread, so do not
+    # require dislocation unless an imbalanced book is actually observed.
+    balanced_book = (
+        quote.bid_size is not None
+        and quote.ask_size is not None
+        and quote.bid_size == quote.ask_size
+    )
+    require_edge = config.profile != "quote_only" or (
+        depth_observed and not balanced_book
+    )
+    if require_edge and edge_ticks < config.microprice_dislocation_ticks:
         return CasEventEvaluation(
             triggered=False,
             profile=config.profile,
@@ -365,6 +376,35 @@ def evaluate_m1_provider_event(
         ),
         ledger_block=block,
     )
+    trigger_block: ReasonCode | None = None
+    if (
+        permitted
+        and isinstance(event, M1ProviderEvent)
+        and selected
+        and not event.disconnected
+    ):
+        event_at = event.quote_time or event.event_time
+        if event_at is None and not event.allow_simulated_fixture:
+            trigger_block = ReasonCode.DATA_GAP
+            permitted = False
+        else:
+            trigger = evaluate_cas_event_trigger(
+                selected[0],
+                config=config,
+                event_at=event_at or event.receive_time,
+                now=event.decided_at,
+            )
+            if not trigger.triggered:
+                trigger_block = (
+                    trigger.reason_codes[0]
+                    if trigger.reason_codes
+                    else ReasonCode.SETUP_COOLDOWN
+                )
+                permitted = False
+                if not detail:
+                    detail = trigger.detail
+    if trigger_block is not None and block is None:
+        block = trigger_block
     latency_limitation = None
     if permitted and not latency_report.passes_session_gate:
         latency_limitation = latency_report.detail

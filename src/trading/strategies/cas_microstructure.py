@@ -19,7 +19,7 @@ Two deterministic guards keep the horizon honest:
 from __future__ import annotations
 
 import hashlib
-from datetime import time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from trading.domain.contracts import (
@@ -89,13 +89,26 @@ INVALIDATION_NOTE = (
     "Close-auction microstructure position; the time exit ends the auction effect."
 )
 
-# The decision window is the closing window of the NSE session, expressed in IST.
+# Decision windows match CasEventDrivenConfig scan windows (ops): continuous
+# 09:20–15:00 and closing context 15:00–15:25. Cash auction 15:30–15:40 is out.
 IST = timezone(timedelta(hours=5, minutes=30))
-CAS_WINDOW_START_IST = time(15, 0)
-CAS_WINDOW_END_IST = time(15, 30)
+CAS_WINDOW_START_IST = time(9, 20)
+CAS_WINDOW_END_IST = time(15, 25)
+CAS_TIME_EXIT_DEADLINE_IST = time(15, 25)
 SATURDAY_WEEKDAY = 5
 
 _CURRENCY = Currency.INR
+
+
+def _m1_time_exit(now: datetime) -> datetime:
+    """Hold up to CAS_HOLDING_SECONDS, never past the 15:25 IST closing cutoff."""
+    local = now.astimezone(IST)
+    deadline_local = datetime.combine(
+        local.date(), CAS_TIME_EXIT_DEADLINE_IST, tzinfo=IST
+    )
+    candidate = now + timedelta(seconds=CAS_HOLDING_SECONDS)
+    deadline_utc = deadline_local.astimezone(now.tzinfo) if now.tzinfo else deadline_local
+    return min(candidate, deadline_utc)
 
 
 def _option_type_for(bias: MacroBias) -> OptionType:
@@ -233,7 +246,8 @@ class CasMicrostructureStrategy:
         local = ctx.now.astimezone(IST)
         if local.weekday() >= SATURDAY_WEEKDAY:
             return ReasonCode.OUTSIDE_SESSION
-        if not CAS_WINDOW_START_IST <= local.time() <= CAS_WINDOW_END_IST:
+        # Half-open end matches event-path scan windows (end exclusive at 15:25).
+        if not (CAS_WINDOW_START_IST <= local.time() < CAS_WINDOW_END_IST):
             return ReasonCode.OUTSIDE_SESSION
         calculation_time = ctx.underlying.times.calculation_time
         if ctx.now < calculation_time:
@@ -359,7 +373,7 @@ class CasMicrostructureStrategy:
                 break_even_trigger_ticks=None,
                 trailing_activation_ticks=self._trailing_activation_ticks,
                 trailing_distance_ticks=self._trailing_distance_ticks,
-                time_exit=now + timedelta(seconds=CAS_HOLDING_SECONDS),
+                time_exit=_m1_time_exit(now),
                 exit_before_expiry_days=EXIT_BEFORE_EXPIRY_DAYS,
                 invalidation_note=INVALIDATION_NOTE,
                 partial_fill_policy="CANCEL_REMAINDER",

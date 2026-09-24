@@ -107,9 +107,17 @@ def test_g3_entry_poll_vs_protection_poll_latency_separation(repo_root: Path) ->
 
 
 def test_g3_mechanism_separation_nfo_continuous_vs_cash_cas(repo_root: Path) -> None:
-    """Mode 1 operates in 15:00-15:30 NFO continuous market; NSE cash CAS is 15:30-15:40."""
-    assert time(15, 0) == CAS_WINDOW_START_IST
-    assert time(15, 30) == CAS_WINDOW_END_IST
+    """Mode 1 trades the NFO continuous market only; NSE cash CAS is 15:30-15:40.
+
+    The authoritative M1 schedule is continuous 09:20-15:00 plus closing context
+    15:00-15:25, matching CasEventDrivenConfig.scan_windows. M1's own
+    microstructure signal is therefore never the exchange's cash-market Closing
+    Auction Session, which begins at 15:30.
+    """
+    assert time(9, 20) == CAS_WINDOW_START_IST
+    assert time(15, 25) == CAS_WINDOW_END_IST
+    # The cash auction starts at 15:30, strictly after the M1 window closes.
+    assert CAS_WINDOW_END_IST < time(15, 30)
 
     session_config_path = repo_root / "config" / "paper_session.yaml"
     with session_config_path.open("r", encoding="utf-8") as f:

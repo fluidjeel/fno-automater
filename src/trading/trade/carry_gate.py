@@ -17,10 +17,21 @@ from trading.domain.contracts.carry import (
     M2CarryGateConfig,
     M2CarryGateInput,
 )
-from trading.domain.contracts.identification import MarketState, TrendState
+from trading.domain.contracts.identification import (
+    MacroStatus,
+    MarketState,
+    TrendState,
+    VolatilityState,
+)
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.position import PositionState
-from trading.domain.enums import CarryGateAction, FamilyId, ModeId, ReasonCode
+from trading.domain.enums import (
+    CarryGateAction,
+    DataQuality,
+    FamilyId,
+    ModeId,
+    ReasonCode,
+)
 from trading.domain.primitives import Money
 
 __all__ = [
@@ -29,6 +40,7 @@ __all__ = [
     "evaluate_m2_carry_gate",
     "load_carry_gate_config",
     "overnight_loss_budget",
+    "resolve_carry_market",
 ]
 
 Path = Any
@@ -55,6 +67,57 @@ def load_carry_gate_config(path: Path | None = None) -> M2CarryGateConfig:
     return M2CarryGateConfig.model_validate(raw)
 
 
+def resolve_carry_market(
+    intent: TradeIntent,
+    *,
+    session_date: date,
+    as_of: datetime,
+    cached: MarketState | None = None,
+) -> MarketState | None:
+    """Return a same-day market snapshot for carry thesis evaluation."""
+    if cached is not None:
+        calc_date = cached.calculated_at.astimezone(cached.calculated_at.tzinfo).date()
+        if calc_date == session_date:
+            return cached
+    features = intent.setup_features
+    if features is not None:
+        return MarketState(
+            market_state_id=features.market_state_id,
+            feature_version=features.identification_rule_version,
+            calculated_at=as_of,
+            source_snapshot_ids=(features.market_state_id,),
+            trend=features.trend,
+            volatility=features.volatility,
+            event_state=features.event_state,
+            macro_status=features.macro_status,
+            quality=DataQuality.VALID,
+            warmup_complete=True,
+            completed_bar_count=1,
+            session_count=1,
+        )
+    family = intent.family_id
+    if family == FamilyId.long_call.value:
+        trend = TrendState.UP
+    elif family == FamilyId.long_put.value:
+        trend = TrendState.DOWN
+    else:
+        return None
+    return MarketState(
+        market_state_id=f"carry-{intent.intent_id}",
+        feature_version="carry-inferred-v1",
+        calculated_at=as_of,
+        source_snapshot_ids=(intent.snapshot_id,),
+        trend=trend,
+        volatility=VolatilityState.NORMAL,
+        event_state="carry_gate",
+        macro_status=MacroStatus.ALIGNED,
+        quality=DataQuality.VALID,
+        warmup_complete=True,
+        completed_bar_count=1,
+        session_count=1,
+    )
+
+
 def overnight_loss_budget(
     mode_reference_capital: Money, config: M2CarryGateConfig
 ) -> Money:
@@ -72,8 +135,7 @@ def assess_m2_thesis(
     session_date: date,
 ) -> tuple[bool, bool]:
     """Return ``(thesis_evaluated_today, thesis_still_valid)`` for carry evidence."""
-    features = intent.setup_features
-    if features is None or market is None:
+    if market is None:
         return False, False
     evaluated_today = (
         market.calculated_at.astimezone(market.calculated_at.tzinfo).date()
