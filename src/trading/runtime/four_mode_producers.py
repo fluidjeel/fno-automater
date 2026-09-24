@@ -217,11 +217,15 @@ def build_four_mode_requests(
 def _candidates_for_mode(
     candidates: Sequence[FeatureSnapshot], *, mode_id: ModeId
 ) -> tuple[FeatureSnapshot, ...]:
-    """Keep following-week chain rows on M2 so M3/M4 keep the near-chain set."""
-    if mode_id is ModeId.M2_DIRECTIONAL:
-        return tuple(candidates)
-    return tuple(
-        item
-        for item in candidates
-        if item.features.get("following_week_chain", Decimal(0)) != Decimal(1)
-    )
+    """Filter the merged chain per mode.
+
+    Following-week rows carry ≥7-DTE expiries when the loaded chain is nearer;
+    M2, M3 and M4 all need them. M1 CAS trades the near chain only.
+    """
+    if mode_id is ModeId.M1_CAS:
+        return tuple(
+            item
+            for item in candidates
+            if item.features.get("following_week_chain", Decimal(0)) != Decimal(1)
+        )
+    return tuple(candidates)
