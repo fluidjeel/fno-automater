@@ -29,7 +29,9 @@ from tests.test_paper_runner import ROOT
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import DerivativesContext, FeatureSnapshot
 from trading.domain.contracts.common import ContractRef
-from trading.domain.enums import OptionType, Side, TradeState
+from trading.domain.enums import ModeId, OptionType, ReasonCode, Side, TradeState
+from trading.risk.mode_ledger import FourModeBook
+from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.domain.primitives import Currency, Money
 from trading.runtime.paper_runner import PaperRunner
 from trading.runtime.paper_session import PaperSession, load_paper_session_config
@@ -387,6 +389,274 @@ class TestP0FailedProtectionNeverLeavesAnUncoveredShort:
                     assert bucket["short"] <= bucket["long"], (
                         f"entry left an uncovered {kind} short: {bucket}"
                     )
+        finally:
+            store.close()
+
+
+def _close_open_position(
+    runner: PaperRunner,
+    position: object,
+    snapshots: dict[str, object],
+) -> tuple[tuple[object, ...], object]:
+    intent, decision = runner._open_book[position.trade_id]  # type: ignore[attr-defined]
+    runner.trade_manager.apply_exit_evaluation(
+        position.trade_id,  # type: ignore[attr-defined]
+        ExitEvaluation(
+            kind=ExitKind.STOP,
+            reason_code=ReasonCode.OK,
+            detail="SIMULATED audit close",
+            updated_policy=position.exit_policy,  # type: ignore[attr-defined]
+        ),
+    )
+    pending = runner.trade_manager.get_position(position.trade_id)  # type: ignore[attr-defined]
+    assert pending is not None
+    exits = runner._submit_exit(intent, decision, pending, snapshots)
+    return exits, intent
+
+
+def _reconstruct_m3_gross(store: TradingStore, session_date: date) -> Decimal:
+    book = FourModeBook.reconstruct_from_store(store, session_date)
+    ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
+    assert ledger.realized_pnl_today == ledger.realized_gross_pnl_today
+    return ledger.realized_gross_pnl_today.amount
+
+
+def _order_cash_flow(events: tuple[object, ...]) -> Decimal:
+    total = Decimal(0)
+    for event in events:
+        fill = event.average_fill_price  # type: ignore[attr-defined]
+        if fill is None:
+            continue
+        value = fill.value * Decimal(event.filled_quantity)  # type: ignore[attr-defined]
+        side = event.command.side  # type: ignore[attr-defined]
+        total += value if side is Side.SELL else -value
+    return total
+
+
+class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
+    """m3_m4_20260925 P0: close must not drop entry legs or corrupt restart P&L."""
+
+    def test_bull_put_close_keeps_entry_legs_and_fill_ledger_pnl(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from trading.storage.trading_store import TradingEventType
+        from trading.domain.contracts.order import OrderEvent
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "closed-pnl.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            entry_events = tuple(
+                stored.deserialize()
+                for stored in store.read_events()
+                if stored.event_type is TradingEventType.ORDER_EVENT
+            )
+            entry_events = tuple(
+                event
+                for event in entry_events
+                if isinstance(event, OrderEvent)
+                and event.identity.trade_id == position.trade_id
+                and event.state.name == "FILLED"
+            )
+            exits, intent = _close_open_position(runner, position, snapshots)
+            closed = runner.trade_manager.get_position(position.trade_id)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert closed is not None and closed.state is TradeState.CLOSED
+            assert lifecycle is not None
+            assert len(intent.legs) == 2
+            assert len(lifecycle.position.legs) == 2
+            assert lifecycle.position.entry_legs is not None
+            assert len(lifecycle.position.entry_legs) == 2
+
+            actual_gross = _order_cash_flow((*entry_events, *exits))
+            assert actual_gross == Decimal("-22.50")
+            assert _reconstruct_m3_gross(store, clock.now_utc().date()) == actual_gross
+        finally:
+            store.close()
+
+    def test_fresh_runner_reconstruction_matches_fill_ledger_gross(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from tests.test_four_mode_session_integration import _runner
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "restart-pnl.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            _close_open_position(runner, position, snapshots)
+            replacement = _runner(store, clock)
+            replacement.recover_lifecycle()
+            assert _reconstruct_m3_gross(store, clock.now_utc().date()) == Decimal(
+                "-22.50"
+            )
+        finally:
+            store.close()
+
+    @pytest.mark.parametrize(
+        ("opener", "mode_id", "leg_count"),
+        [
+            ("open_bull_put_credit", ModeId.M3_TACTICAL_POSITIONAL, 2),
+            ("open_bull_call_debit", ModeId.M3_TACTICAL_POSITIONAL, 2),
+            ("open_iron_condor", ModeId.M4_STRATEGIC_POSITIONAL, 4),
+            ("open_call_butterfly", ModeId.M4_STRATEGIC_POSITIONAL, 3),
+        ],
+    )
+    def test_structure_close_retains_immutable_entry_leg_history(
+        self,
+        tmp_path: Path,
+        opener: str,
+        mode_id: ModeId,
+        leg_count: int,
+    ) -> None:
+        import tests.structures as structures
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / f"{opener}.sqlite", clock=clock)
+        try:
+            open_fn = getattr(structures, opener)
+            runner, position, snapshots = open_fn(store, clock)
+            _close_open_position(runner, position, snapshots)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            assert len(lifecycle.position.legs) == leg_count
+            assert lifecycle.position.entry_legs is not None
+            assert len(lifecycle.position.entry_legs) == leg_count
+            for frozen, current in zip(
+                lifecycle.position.entry_legs,
+                lifecycle.position.legs,
+                strict=True,
+            ):
+                assert frozen.leg_id == current.leg_id
+                assert frozen.average_entry_price == current.average_entry_price
+                assert frozen.quantity_contracts == current.quantity_contracts
+            book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
+            ledger = book.get_ledger(mode_id)
+            assert ledger.realized_gross_pnl_today == ledger.realized_pnl_today
+        finally:
+            store.close()
+
+    def test_exit_pending_restart_does_not_double_count_partial_fills(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from tests.test_four_mode_session_integration import _runner
+        from trading.domain.contracts.order_plan import OrderPlan
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "partial-exit.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            intent, decision = runner._open_book[position.trade_id]
+            runner.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.OK,
+                    detail="partial close",
+                    updated_policy=position.exit_policy,
+                ),
+            )
+            pending = runner.trade_manager.get_position(position.trade_id)
+            assert pending is not None
+            plan = runner._exit_plan(intent, decision, pending, snapshots)
+            assert plan is not None and plan.orders
+            first_plan = OrderPlan.model_validate(
+                {**plan.model_dump(), "orders": (plan.orders[0],)}
+            )
+            submit = runner._services.oms.submit_plan(
+                first_plan,
+                strategy_id=intent.strategy_id,
+                account_id=runner._account.config.account_id,
+            )
+            for event in submit.events:
+                runner._services.trade_manager.apply_exit_order_event(
+                    event,
+                    capital_reservation_id=decision.capital_reservation_id,
+                    remaining_stays_open=True,
+                )
+            # Partial exits that return to OPEN must not leave stale exit ids.
+            runner._write_lifecycle(position.trade_id, exit_order_ids=())
+            mid = runner.trade_manager.get_position(position.trade_id)
+            assert mid is not None and mid.state is TradeState.OPEN
+            assert _reconstruct_m3_gross(store, clock.now_utc().date()) == Decimal(0)
+
+            clock.set(clock.now_utc() + timedelta(seconds=30))
+            replacement = _runner(store, clock)
+            replacement.recover_lifecycle()
+            assert _reconstruct_m3_gross(store, clock.now_utc().date()) == Decimal(0)
+
+            resumed = replacement.trade_manager.get_position(position.trade_id)
+            assert resumed is not None
+            for snapshot in snapshots.values():
+                replacement._services.broker.publish_quote(
+                    snapshot.contract.symbol, snapshot.market  # type: ignore[attr-defined]
+                )
+            _close_open_position(replacement, resumed, snapshots)
+            assert _reconstruct_m3_gross(store, clock.now_utc().date()) == Decimal(
+                "-22.50"
+            )
+        finally:
+            store.close()
+
+    def test_replayed_order_events_stay_idempotent_for_realized_gross(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from trading.domain.primitives import Currency
+        from trading.risk.mode_ledger import (
+            _index_order_events,
+            _order_dedupe_key,
+            _trade_fill_cash_flow,
+        )
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "replay.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            _close_open_position(runner, position, snapshots)
+            before = _reconstruct_m3_gross(store, clock.now_utc().date())
+            assert before == Decimal("-22.50")
+            indexed = _index_order_events(store)
+            replayed = dict(indexed)
+            for event in indexed.values():
+                if event.identity.trade_id != position.trade_id:
+                    continue
+                replayed[_order_dedupe_key(event)] = event
+            gross = _trade_fill_cash_flow(
+                position.trade_id, replayed, Currency.INR
+            ).amount
+            assert gross == before
+        finally:
+            store.close()
+
+    def test_daily_loss_budget_uses_reconstructed_net_after_restart(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_put_credit
+        from tests.test_four_mode_session_integration import _runner
+        from trading.domain.contracts.mode_policy import load_modes_config
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "daily-loss.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_put_credit(store, clock)
+            _close_open_position(runner, position, snapshots)
+            _runner(store, clock).recover_lifecycle()
+            modes = load_modes_config(ROOT / "config" / "modes.yaml")
+            fraction = modes.modes[
+                ModeId.M3_TACTICAL_POSITIONAL
+            ].daily_budget_cap_fraction
+            book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
+            ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
+            assert ledger.realized_gross_pnl_today.amount == Decimal("-22.50")
+            assert ledger.realized_pnl_today.amount == Decimal("-22.50")
+            budget = ledger.daily_loss_budget(fraction)
+            zero = Money.zero(Currency.INR)
+            expected = max(budget + ledger.realized_pnl_today, zero)
+            assert ledger.daily_loss_remaining(fraction) == expected
+            assert not ledger.daily_loss_breached(fraction)
         finally:
             store.close()
 

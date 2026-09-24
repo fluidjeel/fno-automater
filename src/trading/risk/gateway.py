@@ -191,6 +191,20 @@ class RiskGateway:
         """Four-mode capital book, if configured."""
         return self._mode_book
 
+    def note_mode_fill(
+        self,
+        mode_id: ModeId,
+        *,
+        margin: Money,
+        premium: Money | None = None,
+    ) -> None:
+        """Hook for mode-book fill accounting; wired in the fix-4 risk slice."""
+        _ = (mode_id, margin, premium)
+
+    def note_mode_close(self, mode_id: ModeId, amount: Money) -> None:
+        """Hook for mode-book close accounting; wired in the fix-4 risk slice."""
+        _ = (mode_id, amount)
+
     def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:
         """Return an approval with reserved capital or a machine-readable rejection."""
         now = self._clock.now_utc()

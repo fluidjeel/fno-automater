@@ -244,8 +244,9 @@ class TradeManager:
                 )
             remaining_legs = _legs_after_exit_fill(closing, event)
             if not remaining_legs:
+                archived = closing.entry_legs or closing.legs
                 closed = self._transition(
-                    closing,
+                    closing.model_copy(update={"legs": archived}),
                     TradeState.CLOSED,
                     trigger=Trigger.BROKER_EVENT,
                     now=now,
@@ -347,6 +348,10 @@ class TradeManager:
         pending = self._pending.get(trade_id)
         if pending is None or not _entry_complete(position, pending.plan):
             return
+        if position.entry_legs is None:
+            self._positions[trade_id] = position.model_copy(
+                update={"entry_legs": position.legs}
+            )
         if capital_reservation_id is not None and self._reservations is not None:
             self._reservations.commit(capital_reservation_id)
         self._pending.pop(trade_id, None)

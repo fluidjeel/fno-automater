@@ -74,6 +74,9 @@ class PositionState(VersionedModel):
     execution_mode: ExecutionMode
     state: TradeState
     legs: tuple[PositionLegState, ...]
+    # Immutable entry snapshot once all planned legs fill. Restored on CLOSED so
+    # lifecycle restart keeps per-leg entry cash flows after exit leg removal.
+    entry_legs: tuple[PositionLegState, ...] | None = None
     exit_policy: ExitPolicy
     protective_order_ids: tuple[NonEmptyStr, ...] = ()
     opened_at: UtcDatetime | None = None

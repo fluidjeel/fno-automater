@@ -379,6 +379,7 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
         execution_mode=ExecutionMode.PAPER,
         state=TradeState.CLOSED,
         legs=(entry_leg,),
+        entry_legs=(entry_leg,),
         exit_policy=f.exit_policy(trade_id="TRD-M2-CLOSED"),
         opened_at=NOW,
         as_of=NOW,
@@ -393,6 +394,40 @@ def test_four_mode_book_reconstruct_from_store(tmp_path: Path) -> None:
         as_of=NOW,
     )
     store.upsert_position_lifecycle(closed_lifecycle, event_id="EVT-M2-CLOSED")
+
+    entry_order = OrderEvent(
+        event_id="EVT-ENTRY-ORD-1",
+        identity=OrderIdentity(
+            internal_order_id="ORD-ENTRY-1",
+            client_order_id="CL-ENTRY-1",
+            idempotency_key="IDEMP-ENTRY-1",
+            intent_id="INT-M2-CLOSED",
+            risk_decision_id="DEC-ENTRY-1",
+            trade_id="TRD-M2-CLOSED",
+            correlation_id="COR-1",
+            experiment_id="EXP-1",
+            execution_mode=ExecutionMode.PAPER,
+        ),
+        command=OrderCommand(
+            contract=contract,
+            side=Side.BUY,
+            order_type=OrderType.MARKET,
+            time_in_force=TimeInForce.DAY,
+            quantity_contracts=75,
+        ),
+        state=OrderState.FILLED,
+        attempt_number=1,
+        acknowledged_quantity=75,
+        filled_quantity=75,
+        average_fill_price=_price("100.00"),
+        sent_at=NOW,
+        received_at=NOW,
+    )
+    store.append(
+        TradingEventType.ORDER_EVENT,
+        entry_order,
+        event_id="EVT-ENTRY-FILL",
+    )
 
     # Record the exit fill order event in store
     exit_order = OrderEvent(

@@ -33,10 +33,18 @@ DEFAULT_TOTAL_EQUITY: Final = Money.of("700000", Currency.INR)
 
 
 class ModeLedger(StrictModel):
-    """Capital ledger for one mode (Invariant: no cross-mode borrow)."""
+    """Capital ledger for one mode (Invariant: no cross-mode borrow).
+
+    ``realized_gross_pnl_today`` is signed fill-ledger cash flow before broker
+    charges. ``realized_pnl_today`` is net realized; it equals gross until
+    order events carry charge fields.
+    """
 
     mode_id: ModeId
     allocated_capital: Money
+    realized_gross_pnl_today: Money = Field(
+        default_factory=lambda: Money.zero(Currency.INR)
+    )
     realized_pnl_today: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     unrealized_pnl: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     reserved_capital: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
@@ -58,6 +66,7 @@ class ModeLedger(StrictModel):
                 except Exception:
                     curr = Currency.INR
             zero = Money.zero(curr)
+            data.setdefault("realized_gross_pnl_today", zero)
             data.setdefault("realized_pnl_today", zero)
             data.setdefault("unrealized_pnl", zero)
             data.setdefault("reserved_capital", zero)
@@ -71,6 +80,7 @@ class ModeLedger(StrictModel):
     def _validate_currencies(self) -> Self:
         curr = self.allocated_capital.currency
         for field_name in (
+            "realized_gross_pnl_today",
             "realized_pnl_today",
             "unrealized_pnl",
             "reserved_capital",
@@ -128,19 +138,19 @@ class ModeLedger(StrictModel):
         )
 
     def daily_loss_remaining(self, daily_budget_cap_fraction: Decimal) -> Money:
-        """Remaining daily loss budget, penalized by realized loss today."""
+        """Remaining daily loss budget, penalized by net realized loss today."""
         zero = Money.zero(self.allocated_capital.currency)
         budget = self.daily_loss_budget(daily_budget_cap_fraction)
-        if self.realized_pnl_today.is_negative:
-            return max(budget + self.realized_pnl_today, zero)
+        loss_today = self.realized_pnl_today
+        if loss_today.is_negative:
+            return max(budget + loss_today, zero)
         return budget
 
     def daily_loss_breached(self, daily_budget_cap_fraction: Decimal) -> bool:
-        """True if realized loss today reaches or exceeds daily loss budget."""
+        """True if net realized loss today reaches or exceeds daily loss budget."""
         budget = self.daily_loss_budget(daily_budget_cap_fraction)
-        return (
-            self.realized_pnl_today.is_negative and (-self.realized_pnl_today) >= budget
-        )
+        loss_today = self.realized_pnl_today
+        return loss_today.is_negative and (-loss_today) >= budget
 
     def can_reserve(self, amount: Money) -> bool:
         """True if requested amount <= available_capital."""
@@ -293,8 +303,8 @@ def _init_mode_balances(
     balances: dict[str, dict[ModeId, Money]] = {
         "reserved": {},
         "margin": {},
-        "realized_today": {},
-        "prior_realized": {},
+        "realized_gross_today": {},
+        "prior_realized_gross": {},
         "unrealized": {},
     }
     for m in mode_ids:
@@ -319,13 +329,20 @@ def _accumulate_reservations(
 
 
 def _index_order_events(store: TradingStore) -> dict[str, OrderEvent]:
-    orders_by_id: dict[str, OrderEvent] = {}
+    """Latest event per idempotency key; replayed duplicates stay idempotent."""
+    indexed: dict[str, OrderEvent] = {}
     for stored in store.read_events():
-        if stored.event_type is TradingEventType.ORDER_EVENT:
-            evt = stored.deserialize()
-            if isinstance(evt, OrderEvent):
-                orders_by_id[evt.identity.internal_order_id] = evt
-    return orders_by_id
+        if stored.event_type is not TradingEventType.ORDER_EVENT:
+            continue
+        evt = stored.deserialize()
+        if not isinstance(evt, OrderEvent):
+            continue
+        indexed[_order_dedupe_key(evt)] = evt
+    return indexed
+
+
+def _order_dedupe_key(event: OrderEvent) -> str:
+    return event.identity.idempotency_key or event.identity.internal_order_id
 
 
 def _accumulate_positions(
@@ -352,15 +369,17 @@ def _accumulate_positions(
             if margin_req is not None:
                 balances["margin"][m_id] = balances["margin"][m_id] + margin_req
         elif pos_state is TradeState.CLOSED:
-            trade_pnl = _calculate_closed_trade_pnl(record, orders_by_id, currency)
+            trade_gross = _calculate_closed_trade_gross_pnl(
+                record, orders_by_id, currency
+            )
             close_date = record.as_of.date()
             if close_date == as_of_date:
-                balances["realized_today"][m_id] = (
-                    balances["realized_today"][m_id] + trade_pnl
+                balances["realized_gross_today"][m_id] = (
+                    balances["realized_gross_today"][m_id] + trade_gross
                 )
             elif close_date < as_of_date:
-                balances["prior_realized"][m_id] = (
-                    balances["prior_realized"][m_id] + trade_pnl
+                balances["prior_realized_gross"][m_id] = (
+                    balances["prior_realized_gross"][m_id] + trade_gross
                 )
 
 
@@ -371,18 +390,20 @@ def _assemble_final_ledgers(
 ) -> dict[ModeId, ModeLedger]:
     final_ledgers: dict[ModeId, ModeLedger] = {}
     for m, alloc_base in base_alloc.items():
-        start_alloc = alloc_base + balances["prior_realized"][m]
-        realized_today = balances["realized_today"][m]
+        start_alloc = alloc_base + balances["prior_realized_gross"][m]
+        realized_gross_today = balances["realized_gross_today"][m]
+        realized_net_today = _net_realized_from_gross(realized_gross_today, currency)
         reserved = balances["reserved"][m]
         margin = balances["margin"][m]
         unrealized = balances["unrealized"][m]
-        equity = start_alloc + realized_today + unrealized
+        equity = start_alloc + realized_net_today + unrealized
         hwm = max(start_alloc, equity)
         drawdown = max(hwm - equity, Money.zero(currency))
         final_ledgers[m] = ModeLedger(
             mode_id=m,
             allocated_capital=start_alloc,
-            realized_pnl_today=realized_today,
+            realized_gross_pnl_today=realized_gross_today,
+            realized_pnl_today=realized_net_today,
             unrealized_pnl=unrealized,
             reserved_capital=reserved,
             margin_used=margin,
@@ -392,36 +413,41 @@ def _assemble_final_ledgers(
     return final_ledgers
 
 
-def _calculate_closed_trade_pnl(
+def _net_realized_from_gross(gross: Money, currency: Currency) -> Money:
+    """Net realized P&L; equals gross until broker charges are on order events."""
+    return gross.quantized(Rounding.HALF_EVEN)
+
+
+def _calculate_closed_trade_gross_pnl(
     record: PositionLifecycleRecord,
     orders_by_id: dict[str, OrderEvent],
     currency: Currency,
 ) -> Money:
-    """Calculate net cash flow P&L for a closed position across legs and exit fills."""
+    """Signed fill-ledger gross cash flow for one closed trade (pre-charges)."""
+    return _trade_fill_cash_flow(record.trade_id, orders_by_id, currency)
+
+
+def _trade_fill_cash_flow(
+    trade_id: str,
+    orders_by_id: dict[str, OrderEvent],
+    currency: Currency,
+) -> Money:
+    """Sum signed cash flows for each deduped fill belonging to one trade."""
     net_pnl_decimal = Decimal(0)
-    for leg in record.position.legs:
-        entry_val = leg.average_entry_price.value * Decimal(leg.quantity_contracts)
-        if leg.side is Side.BUY:
-            net_pnl_decimal -= entry_val
+    saw_fill = False
+    for order in orders_by_id.values():
+        if order.identity.trade_id != trade_id:
+            continue
+        if order.state not in {OrderState.FILLED, OrderState.PARTIAL}:
+            continue
+        if order.average_fill_price is None or order.filled_quantity <= 0:
+            continue
+        saw_fill = True
+        fill_val = order.average_fill_price.value * Decimal(order.filled_quantity)
+        if order.command.side is Side.SELL:
+            net_pnl_decimal += fill_val
         else:
-            net_pnl_decimal += entry_val
-
-    has_exit_fills = False
-    for order_id in record.exit_order_ids:
-        order = orders_by_id.get(order_id)
-        if (
-            order is not None
-            and order.state in {OrderState.FILLED, OrderState.PARTIAL}
-            and order.average_fill_price is not None
-        ):
-            has_exit_fills = True
-            fill_val = order.average_fill_price.value * Decimal(order.filled_quantity)
-            if order.command.side is Side.SELL:
-                net_pnl_decimal += fill_val
-            else:
-                net_pnl_decimal -= fill_val
-
-    if not has_exit_fills:
+            net_pnl_decimal -= fill_val
+    if not saw_fill:
         return Money.zero(currency)
-
     return Money.of(str(net_pnl_decimal), currency).quantized(Rounding.HALF_EVEN)
