@@ -1,8 +1,8 @@
-"""Audit remediation regressions (four_mode_20260925 + m3_m4_20260925).
+"""Positive product regressions for four_mode_20260925 + m3_m4_20260925.
 
-Each test names the audit finding it closes. Every test here must fail on the
-pre-fix tree and pass after, exercising production classes rather than
-reimplementing their logic.
+Each test asserts required production behaviour on the real session → Layer 2
+→ PAPER OMS → exit/restart path. Tests exercise production classes; they do not
+reimplement domain logic or expect pre-remediation defects.
 
 Invariant 8: open positions keep deterministic protection without AI.
 Invariant 14: capital is reserved before submission and released from
@@ -124,16 +124,16 @@ def _raise_timeout(calls: list[str]):
 
 
 class TestP0AiCannotBlockDeterministicExit:
-    """four_mode_20260925 §8.8 / m3_m4_20260925 P1: AI timeout blocked an exit."""
+    """four_mode_20260925 §8.8 / m3_m4_20260925 P1: deterministic exits survive AI timeout."""
 
     def test_session_tick_survives_shadow_timeout_and_keeps_protection(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Invariant 8: a shadow timeout must not abort the production tick.
+        """Invariant 8: a shadow timeout does not abort the production tick.
 
         Runs the real session path (PaperSession.tick -> _run_due_reviews ->
-        PaperRunner.run_review_slot). Before the fix the TimeoutError escaped
-        tick(), skipping the remaining exit/carry/heartbeat work for that cycle.
+        PaperRunner.run_review_slot) and expects protection and review evidence
+        to persist when shadow logging raises TimeoutError.
         """
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / "session-ai-timeout.sqlite", clock=clock)
@@ -177,11 +177,7 @@ class TestP0AiCannotBlockDeterministicExit:
     def test_review_full_exit_submits_despite_shadow_timeout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The audit's own scenario: a review FULL_EXIT under AI timeout.
-
-        Before the fix the TimeoutError propagated out of run_review_slot, the
-        position stayed OPEN and no SELL was ever sent.
-        """
+        """A review FULL_EXIT under AI timeout still closes and submits SELL legs."""
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / "review-ai-exit.sqlite", clock=clock)
         try:
@@ -259,7 +255,7 @@ def _assert_every_prefix_is_covered(position: object, plan: object) -> None:
 
 
 class TestP0LiabilityFirstExitSequencing:
-    """m3_m4_20260925 P0: the runner sold protection before covering shorts."""
+    """m3_m4_20260925 P0: exit plans cover shorts before releasing protection."""
 
     @staticmethod
     def _plan_for(runner: object, position: object, snapshots: dict[str, object]):
@@ -749,11 +745,6 @@ class TestP0EntryHoldKeepsExitsAvailable:
             assert runner.broker.list_orders() == ()
         finally:
             store.close()
-
-
-# Unresolved (fix 3 carry-forward): realized_pnl_today equals gross until broker
-# charges are persisted on fills. Product tests must not claim "complete net
-# accounting" while that placeholder remains.
 
 
 class TestP0OpenRiskCapsAndAtomicReservations:
