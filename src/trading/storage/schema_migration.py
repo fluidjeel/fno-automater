@@ -87,7 +87,11 @@ def apply_schema_migrations(
     connection.execute("BEGIN IMMEDIATE")
     try:
         _migrate_pre_900293f_schema(connection)
-        _record_migration(connection, MIGRATION_PRE_900293F_SCHEMA, applied_at=applied_at)
+        _record_migration(
+            connection,
+            MIGRATION_PRE_900293F_SCHEMA,
+            applied_at=applied_at,
+        )
         connection.execute("COMMIT")
     except Exception:
         connection.execute("ROLLBACK")

@@ -8,9 +8,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from pydantic import BaseModel
-
 import tests.factories as f
+from pydantic import BaseModel
 
 from trading.domain.contracts.campaign import CampaignRecord
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
