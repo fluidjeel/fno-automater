@@ -88,9 +88,15 @@ def _review_session(
     tmp_path: Path,
     sink: _Sink,
     snapshots: dict[str, FeatureSnapshot],
+    *,
+    new_entries_enabled: bool | None = None,
 ) -> PaperSession:
     """Real PaperSession whose builder supplies only exit/review snapshots."""
     session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
+    if new_entries_enabled is not None:
+        session_cfg = session_cfg.model_copy(
+            update={"new_entries_enabled": new_entries_enabled}
+        )
 
     def builder(
         _now: datetime,
@@ -666,11 +672,11 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
 
 
 class TestP0EntryHoldKeepsExitsAvailable:
-    """Audit hold: new PAPER entries suspended, exits/recovery preserved."""
+    """Entry-control behavior: deployed PAPER is enabled; a hold preserves exits."""
 
-    def test_deployed_session_config_holds_new_entries(self) -> None:
+    def test_deployed_session_config_enables_new_entries(self) -> None:
         cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
-        assert cfg.new_entries_enabled is False
+        assert cfg.new_entries_enabled is True
 
     def test_hold_keeps_the_exit_path_live_in_the_same_tick(
         self, tmp_path: Path
@@ -689,7 +695,12 @@ class TestP0EntryHoldKeepsExitsAvailable:
             )
             sink = _Sink()
             session = _review_session(
-                runner, clock, tmp_path, sink, {contract.symbol: stopped}
+                runner,
+                clock,
+                tmp_path,
+                sink,
+                {contract.symbol: stopped},
+                new_entries_enabled=False,
             )
             assert session.session_config.new_entries_enabled is False
             clock.set(SLOT_1030)
@@ -717,7 +728,7 @@ class TestP0EntryHoldKeepsExitsAvailable:
             }
             session_cfg = load_paper_session_config(
                 ROOT / "config" / "paper_session.yaml"
-            )
+            ).model_copy(update={"new_entries_enabled": False})
 
             def builder(
                 _now: datetime,
@@ -750,9 +761,9 @@ class TestP0EntryHoldKeepsExitsAvailable:
 class TestP0OpenRiskCapsAndAtomicReservations:
     """four_mode_20260925 P0: global/mode caps, try_reserve, restart open risk."""
 
-    def test_session_config_keeps_new_entries_frozen(self) -> None:
+    def test_session_config_enables_remediated_paper_entries(self) -> None:
         cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
-        assert cfg.new_entries_enabled is False
+        assert cfg.new_entries_enabled is True
 
     def test_global_and_mode_caps_are_enforced_in_layer2(self) -> None:
         from trading.config.risk_policy import load_risk_policy

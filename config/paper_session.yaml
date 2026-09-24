@@ -2,11 +2,10 @@
 # Rollback: cp config/paper_session_legacy.yaml config/paper_session.yaml
 schema_version: "1"
 routing_profile: four_mode
-# Audit hold (four_mode_20260925 + m3_m4_20260925 P0 findings): new PAPER
-# entries are suspended across all four modes. Reconciliation, reviews,
-# protection and exits continue. Re-enable per family only after its complete
-# entry/partial-fill/valuation/review/exit/restart evidence passes.
-new_entries_enabled: false
+# Four-mode PAPER entries enabled after audit remediation and Oracle migration,
+# restart, risk-ledger, charge-accounting and regression gates passed. Family
+# overrides below remain authoritative for SHADOW/SUSPENDED strategies.
+new_entries_enabled: true
 poll_interval_seconds: 60
 eod_local: "15:40"
 option_strikes_each_side: 2
