@@ -29,8 +29,7 @@ CREATE TABLE IF NOT EXISTS reservations (
     updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_reservations_idem
-    ON reservations (idempotency_key);
+-- idx_reservations_idem is created by schema_migration (legacy stores lack the column).
 
 CREATE TABLE IF NOT EXISTS system_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),

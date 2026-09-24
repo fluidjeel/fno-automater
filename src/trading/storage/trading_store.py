@@ -51,6 +51,11 @@ from trading.domain.enums import (
     SystemState,
 )
 from trading.domain.primitives import Currency, Money
+from trading.storage.schema_migration import (
+    apply_data_migrations,
+    apply_schema_migrations,
+    database_has_trading_events,
+)
 
 __all__ = [
     "AppendSpec",
@@ -181,6 +186,7 @@ class TradingStore:
         connection = sqlite3.connect(str(path), check_same_thread=False)
         store = cls(connection, clock)
         store._initialize()
+        apply_data_migrations(store)
         return store
 
     def close(self) -> None:
@@ -1184,54 +1190,11 @@ class TradingStore:
 
     def _initialize(self) -> None:
         self._conn.execute("PRAGMA journal_mode=WAL")
+        applied_at = self._clock.now_utc()
+        if database_has_trading_events(self._conn):
+            apply_schema_migrations(self._conn, applied_at=applied_at)
         self._conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        self._migrate_schema()
-
-    def _migrate_schema(self) -> None:
-        """Apply idempotent schema migrations for P2."""
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                self._add_column_if_missing("reservations", "mode_id", "TEXT")
-                self._add_column_if_missing("reservations", "idempotency_key", "TEXT")
-                self._add_column_if_missing("position_lifecycle", "mode_id", "TEXT")
-                self._add_column_if_missing("position_lifecycle", "campaign_id", "TEXT")
-                self._add_column_if_missing(
-                    "position_lifecycle", "policy_version", "TEXT"
-                )
-                # ensure index for idempotency key lookup
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_reservations_idem "
-                    "ON reservations (idempotency_key)"
-                )
-                self._conn.execute(
-                    "CREATE TABLE IF NOT EXISTS campaign_ledger ("
-                    "campaign_id TEXT PRIMARY KEY, "
-                    "mode_id TEXT NOT NULL, "
-                    "payload TEXT NOT NULL, "
-                    "updated_at TEXT NOT NULL)"
-                )
-                self._conn.execute(
-                    "CREATE TABLE IF NOT EXISTS fill_charges ("
-                    "fill_idempotency_key TEXT PRIMARY KEY, "
-                    "trade_id TEXT NOT NULL, "
-                    "payload TEXT NOT NULL, "
-                    "updated_at TEXT NOT NULL)"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_fill_charges_trade_id "
-                    "ON fill_charges (trade_id)"
-                )
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
-
-    def _add_column_if_missing(self, table: str, column: str, col_type: str) -> None:
-        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-        existing = {row["name"] for row in rows}
-        if column not in existing:
-            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        apply_schema_migrations(self._conn, applied_at=applied_at)
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:

@@ -28,6 +28,7 @@ audit/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+!tests/fixtures/oracle_trading_pre_900293f.sqlite
 
 # Secrets and broker tokens (never commit)
 .env
