@@ -15,11 +15,13 @@ from trading.domain.contracts.portfolio import PortfolioSnapshot, UnderlyingExpo
 from trading.domain.contracts.sizing import SizingLimits
 from trading.domain.enums import ModeId, ReasonCode, Side
 from trading.domain.primitives import Money, Rounding
+from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.risk.mode_ledger import FourModeBook, ModeLedger
 
 __all__ = [
     "LimitEvaluation",
     "build_sizing_limits",
+    "evaluate_campaign_limit",
     "evaluate_exposure_limits",
     "evaluate_pre_trade_limits",
     "floor_divide_money",
@@ -154,6 +156,42 @@ def open_trade_slots(portfolio: PortfolioSnapshot, account_risk: RiskLimits) -> 
     """Remaining concurrent trade slots before the account cap binds."""
     working = len(portfolio.positions) + len(portfolio.pending_orders)
     return max(account_risk.max_concurrent_trades - working, 0)
+
+
+def evaluate_campaign_limit(
+    campaign_id: str | None,
+    campaign_ledger: CampaignLedger | None,
+    *,
+    recalculated_max_loss: Money,
+) -> LimitEvaluation:
+    """Fail closed when a roll campaign has breached or would breach its loss cap."""
+    if campaign_id is None or campaign_ledger is None:
+        return LimitEvaluation(
+            passed=True,
+            reason_codes=(ReasonCode.OK,),
+            applied_limits=(),
+        )
+    record = campaign_ledger.get(campaign_id)
+    if record is None:
+        return LimitEvaluation(
+            passed=True,
+            reason_codes=(ReasonCode.OK,),
+            applied_limits=(),
+        )
+    if record.entries_blocked or campaign_ledger.projected_loss_limit_breached(
+        campaign_id=campaign_id,
+        additional_risk=recalculated_max_loss,
+    ):
+        return LimitEvaluation(
+            passed=False,
+            reason_codes=(ReasonCode.CAMPAIGN_LOSS_LIMIT,),
+            applied_limits=("campaign_loss_limit",),
+        )
+    return LimitEvaluation(
+        passed=True,
+        reason_codes=(ReasonCode.OK,),
+        applied_limits=(),
+    )
 
 
 def evaluate_pre_trade_limits(

@@ -41,9 +41,11 @@ from trading.research.registry import is_experimental_off_strict_book
 from trading.risk.limits import (
     build_sizing_limits,
     evaluate_exposure_limits,
+    evaluate_campaign_limit,
     evaluate_pre_trade_limits,
     project_post_trade_exposure,
 )
+from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.risk.mode_ledger import FourModeBook
 from trading.risk.reservation import CapitalReservationService
 from trading.risk.sizing.butterfly import (
@@ -129,6 +131,7 @@ class RiskGatewayRequest:
     event_risk_state: EventRiskState | None = None
     paper_requirements: PaperDataRequirements | None = None
     broker_state_ok: bool = True
+    campaign_id: str | None = None
     # ADESK-A4: when supplied, PART 6 hard caps run after pre-trade limits.
     exposure_report: ExposureReport | None = None
 
@@ -179,6 +182,7 @@ class RiskGateway:
             self._mode_book = None
         self._mode_fill_recorded: set[str] = set()
         self._mode_close_recorded: set[str] = set()
+        self._campaign_ledger: CampaignLedger | None = None
         self._long_option_sizer = LongOptionSizingEngine()
         self._debit_spread_sizer = DebitSpreadSizingEngine()
         self._credit_spread_sizer = CreditSpreadSizingEngine()
@@ -193,6 +197,10 @@ class RiskGateway:
     def mode_book(self) -> FourModeBook | None:
         """Four-mode capital book, if configured."""
         return self._mode_book
+
+    def set_campaign_ledger(self, campaign_ledger: CampaignLedger | None) -> None:
+        """Attach the durable campaign ledger used for roll loss caps."""
+        self._campaign_ledger = campaign_ledger
 
     def note_mode_fill(
         self,
@@ -517,6 +525,21 @@ class RiskGateway:
                 portfolio,
                 reason_codes=limit_check.reason_codes,
                 applied_limits=limit_check.applied_limits,
+                decided_at=now,
+                audit=audit,
+            )
+
+        campaign_check = evaluate_campaign_limit(
+            request.campaign_id,
+            self._campaign_ledger,
+            recalculated_max_loss=sizing.recalculated_max_loss,
+        )
+        if not campaign_check.passed:
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=campaign_check.reason_codes,
+                applied_limits=campaign_check.applied_limits,
                 decided_at=now,
                 audit=audit,
             )

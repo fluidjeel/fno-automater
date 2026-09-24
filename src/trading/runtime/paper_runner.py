@@ -117,6 +117,12 @@ from trading.trade.carry_gate import (
 )
 from trading.trade.exits import ExitEvaluation, ExitKind
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
+from trading.portfolio.campaign_drawdown import (
+    CampaignLedger,
+    campaign_loss_limit,
+    estimate_trade_charges,
+    realized_gross_for_trade,
+)
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
     replacement_blocked_reason,
@@ -214,6 +220,7 @@ class PaperStrategyRequest:
     shortlist: StrikeShortlist | None = None
     forced_mode_id: ModeId | None = None
     forced_family_id: FamilyId | None = None
+    campaign_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -392,6 +399,9 @@ class PaperRunner:
             unprotected_trade_ids=(),
             unreconciled_trade_ids=(),
         )
+        self._campaign_ledger = CampaignLedger()
+        self._trade_campaign: dict[str, str] = {}
+        self._campaign_close_recorded: set[str] = set()
 
     def run_cycle(self, requests: Sequence[PaperStrategyRequest]) -> PaperCycleResult:
         """Reconcile, evaluate each strategy, arbitrate, and submit approved orders."""
@@ -694,6 +704,7 @@ class PaperRunner:
         )
         self._last_recovery = result
         self._lifecycle_recovered = True
+        self._restore_campaign_ledger()
         return result
 
     def flush_lifecycle(self) -> None:
@@ -1202,7 +1213,12 @@ class PaperRunner:
                 transition=transition,
             )
         position = self._services.trade_manager.get_position(trade_id)
-        if position is None or position.state is not TradeState.CLOSED:
+        closed = (
+            position is not None and position.state is TradeState.CLOSED
+        ) or (
+            lifecycle is not None and lifecycle.position.state is TradeState.CLOSED
+        )
+        if not closed:
             return PaperRollSwitchReplacementResult(
                 approved=False,
                 reason_codes=(ReasonCode.UNRECONCILED_POSITION,),
@@ -1225,9 +1241,26 @@ class PaperRunner:
         self._write_lifecycle(
             trade_id, roll_switch_transition=pending_transition
         )
-        result = self.run_cycle(
-            (_stamp_roll_switch_replacement_request(request, pending_transition),)
-        )
+        stamped = _stamp_roll_switch_replacement_request(request, pending_transition)
+        if lifecycle.campaign_id is not None:
+            stamped = PaperStrategyRequest(
+                strategy_id=stamped.strategy_id,
+                underlying=stamped.underlying,
+                candidates=stamped.candidates,
+                instruments=stamped.instruments,
+                event_risk_state=stamped.event_risk_state,
+                experiment_id=stamped.experiment_id,
+                execution_mode=stamped.execution_mode,
+                macro=stamped.macro,
+                execute=stamped.execute,
+                setup_features=stamped.setup_features,
+                route_decision=stamped.route_decision,
+                shortlist=stamped.shortlist,
+                forced_mode_id=stamped.forced_mode_id,
+                forced_family_id=stamped.forced_family_id,
+                campaign_id=lifecycle.campaign_id,
+            )
+        result = self.run_cycle((stamped,))
         if not result.outcomes:
             return self._reject_roll_switch_replacement(
                 trade_id, transition=pending_transition
@@ -1242,6 +1275,10 @@ class PaperRunner:
                     "as_of": self._clock.now_utc(),
                 }
             )
+            if lifecycle.campaign_id is not None:
+                self._link_campaign_trade(
+                    lifecycle.campaign_id, replacement_trade_id
+                )
             self._write_lifecycle(
                 trade_id,
                 roll_switch_transition=completed,
@@ -1481,6 +1518,7 @@ class PaperRunner:
                     trade_id=position.trade_id,
                 )
             self._open_book.pop(position.trade_id, None)
+            self._record_campaign_close(position.trade_id)
             self._advance_roll_switch_after_close(position.trade_id)
         return submit.events
 
@@ -1622,6 +1660,14 @@ class PaperRunner:
         transition = roll_switch_transition
         if transition is None and existing is not None:
             transition = existing.roll_switch_transition
+        campaign_id = self._trade_campaign.get(trade_id)
+        if campaign_id is None and existing is not None:
+            campaign_id = existing.campaign_id
+        mode_id = intent.mode_id or (existing.mode_id if existing is not None else None)
+        if campaign_id is not None and position.campaign_id != campaign_id:
+            position = position.model_copy(update={"campaign_id": campaign_id})
+        if mode_id is not None and position.mode_id != mode_id:
+            position = position.model_copy(update={"mode_id": mode_id})
         record = PositionLifecycleRecord(
             trade_id=trade_id,
             position=position,
@@ -1633,12 +1679,124 @@ class PaperRunner:
             carry_records=(*prior_carry, *extra_carry),
             roll_switch_transition=transition,
             as_of=position.as_of,
+            mode_id=mode_id,
+            campaign_id=campaign_id,
+            policy_version=self._risk_policy.config.policy_version,
         )
         if existing is not None and _lifecycle_unchanged(existing, record):
             return
         self._services.store.upsert_position_lifecycle(
             record,
             event_id=self._ids.new_id("PLC"),
+        )
+
+    def _restore_campaign_ledger(self) -> None:
+        """Rebuild campaign loss state from durable store before entries resume."""
+        self._campaign_ledger = CampaignLedger.reconstruct_from_store(
+            self._services.store
+        )
+        self._services.gateway.set_campaign_ledger(self._campaign_ledger)
+        self._trade_campaign = {}
+        self._campaign_close_recorded = set()
+        for record in self._campaign_ledger.list_records():
+            for trade_id in record.recorded_closes:
+                self._campaign_close_recorded.add(trade_id)
+        for persisted in self._services.store.list_position_lifecycle():
+            if persisted.campaign_id is not None:
+                self._trade_campaign[persisted.trade_id] = persisted.campaign_id
+        for campaign_id in self._campaign_ledger.campaigns_blocking_entries():
+            self._ensure_entries_blocked(
+                ReasonCode.CAMPAIGN_LOSS_LIMIT,
+                f"campaign {campaign_id} loss limit breached; replacements blocked",
+            )
+
+    def _ensure_campaign_on_entry(
+        self,
+        trade_id: str,
+        *,
+        intent: TradeIntent,
+        request: PaperStrategyRequest,
+    ) -> None:
+        """Assign or inherit a durable campaign id for one opened trade."""
+        mode_id = intent.mode_id
+        if mode_id is None:
+            return
+        campaign_id = request.campaign_id or self._trade_campaign.get(trade_id)
+        mode_book = self._services.gateway.mode_book
+        if campaign_id is None:
+            if mode_book is None:
+                return
+            campaign_id = self._ids.new_id("CAMP")
+            loss_limit = campaign_loss_limit(mode_id, mode_book=mode_book)
+            self._campaign_ledger.begin_campaign(
+                campaign_id=campaign_id,
+                mode_id=mode_id,
+                loss_limit=loss_limit,
+                trade_id=trade_id,
+            )
+            self._persist_campaign_record(campaign_id)
+        elif self._campaign_ledger.get(campaign_id) is None:
+            if mode_book is None:
+                return
+            loss_limit = campaign_loss_limit(mode_id, mode_book=mode_book)
+            self._campaign_ledger.begin_campaign(
+                campaign_id=campaign_id,
+                mode_id=mode_id,
+                loss_limit=loss_limit,
+                trade_id=trade_id,
+            )
+            self._persist_campaign_record(campaign_id)
+        else:
+            self._link_campaign_trade(campaign_id, trade_id)
+        self._trade_campaign[trade_id] = campaign_id
+
+    def _link_campaign_trade(self, campaign_id: str, trade_id: str) -> None:
+        """Attach a replacement trade to an existing campaign without resetting P&L."""
+        if self._campaign_ledger.get(campaign_id) is None:
+            return
+        self._campaign_ledger.link_trade(campaign_id=campaign_id, trade_id=trade_id)
+        self._trade_campaign[trade_id] = campaign_id
+        self._persist_campaign_record(campaign_id)
+
+    def _record_campaign_close(self, trade_id: str) -> None:
+        """Accumulate realized gross, charges, and net into the durable campaign."""
+        if trade_id in self._campaign_close_recorded:
+            return
+        lifecycle = self._services.store.get_position_lifecycle(trade_id)
+        if lifecycle is None:
+            return
+        campaign_id = self._trade_campaign.get(trade_id) or lifecycle.campaign_id
+        if campaign_id is None:
+            return
+        orders = _index_order_events(self._services.store)
+        gross = realized_gross_for_trade(lifecycle, orders)
+        charges = estimate_trade_charges(
+            lifecycle,
+            orders,
+            charges_per_lot=self._risk_policy.config.charges_per_lot.to_money(),
+        )
+        self._campaign_ledger.record_close(
+            campaign_id=campaign_id,
+            trade_id=trade_id,
+            realized_gross=gross,
+            charges=charges,
+        )
+        self._campaign_close_recorded.add(trade_id)
+        self._persist_campaign_record(campaign_id)
+        record = self._campaign_ledger.get(campaign_id)
+        if record is not None and record.entries_blocked:
+            self._ensure_entries_blocked(
+                ReasonCode.CAMPAIGN_LOSS_LIMIT,
+                f"campaign {campaign_id} loss limit breached after close",
+            )
+
+    def _persist_campaign_record(self, campaign_id: str) -> None:
+        record = self._campaign_ledger.get(campaign_id)
+        if record is None:
+            return
+        self._services.store.upsert_campaign_record(
+            record,
+            event_id=self._ids.new_id("CAM"),
         )
 
     def _freeze_unknown_exit(self, trade_id: str) -> None:
@@ -2197,6 +2355,9 @@ class PaperRunner:
             setup_features=request.setup_features,
             route_decision=request.route_decision,
             shortlist=request.shortlist,
+            forced_mode_id=request.forced_mode_id,
+            forced_family_id=request.forced_family_id,
+            campaign_id=request.campaign_id,
         )
 
         if request.shortlist is not None:
@@ -2349,6 +2510,7 @@ class PaperRunner:
                     event_risk_state=request.event_risk_state,
                     paper_requirements=self._paper_data,
                     broker_state_ok=not entries_blocked,
+                    campaign_id=request.campaign_id,
                 )
             )
             self._services.store.append(
@@ -2506,6 +2668,11 @@ class PaperRunner:
             and not self._services.trade_manager.is_pending(trade_id)
         )
         if entry_complete:
+            self._ensure_campaign_on_entry(
+                trade_id,
+                intent=intent,
+                request=request,
+            )
             if intent.mode_id is not None and risk.recalculated_max_loss is not None:
                 self._services.gateway.note_mode_fill(
                     intent.mode_id,
@@ -2590,7 +2757,22 @@ def _stamp_roll_switch_replacement_request(
         shortlist=request.shortlist,
         forced_mode_id=request.forced_mode_id,
         forced_family_id=request.forced_family_id,
+        campaign_id=request.campaign_id,
     )
+
+
+def _index_order_events(store: TradingStore) -> dict[str, OrderEvent]:
+    """Latest event per idempotency key for fill-ledger reconstruction."""
+    indexed: dict[str, OrderEvent] = {}
+    for stored in store.read_events():
+        if stored.event_type is not TradingEventType.ORDER_EVENT:
+            continue
+        evt = stored.deserialize()
+        if not isinstance(evt, OrderEvent):
+            continue
+        key = evt.identity.idempotency_key or evt.identity.internal_order_id
+        indexed[key] = evt
+    return indexed
 
 
 def _decision_quotes(
@@ -2722,6 +2904,8 @@ def _lifecycle_unchanged(
         and existing.reviews == updated.reviews
         and existing.carry_records == updated.carry_records
         and existing.roll_switch_transition == updated.roll_switch_transition
+        and existing.campaign_id == updated.campaign_id
+        and existing.mode_id == updated.mode_id
     )
 
 

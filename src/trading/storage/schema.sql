@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS position_lifecycle (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS campaign_ledger (
+    campaign_id TEXT PRIMARY KEY,
+    mode_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS review_slot_runs (
     slot_id TEXT NOT NULL,
     session_date TEXT NOT NULL,

@@ -37,6 +37,7 @@ from trading.domain.contracts import (
     VersionedModel,
 )
 from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
+from trading.domain.contracts.campaign import CampaignRecord
 from trading.domain.enums import (
     DeskRole,
     Exchange,
@@ -73,6 +74,7 @@ class TradingEventType(StrEnum):
     RECONCILIATION_EVENT = "reconciliation_event"
     CAPITAL_RESERVATION = "capital_reservation"
     POSITION_LIFECYCLE = "position_lifecycle"
+    CAMPAIGN_LEDGER = "campaign_ledger"
     ENTRY_FREEZE = "entry_freeze"
     CYCLE_EVIDENCE = "cycle_evidence"
 
@@ -83,6 +85,7 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.RECONCILIATION_EVENT: ReconciliationEvent,
     TradingEventType.CAPITAL_RESERVATION: CapitalReservation,
     TradingEventType.POSITION_LIFECYCLE: PositionLifecycleRecord,
+    TradingEventType.CAMPAIGN_LEDGER: CampaignRecord,
     TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
     TradingEventType.CYCLE_EVIDENCE: PaperCycleEvidence,
 }
@@ -478,6 +481,61 @@ class TradingStore:
         return tuple(
             PositionLifecycleRecord.model_validate(json.loads(row["payload"]))
             for row in rows
+        )
+
+    def upsert_campaign_record(
+        self,
+        record: CampaignRecord,
+        *,
+        event_id: str,
+        recorded_at: datetime | None = None,
+    ) -> None:
+        """Persist one campaign ledger snapshot."""
+        stamp = _utc_iso(recorded_at or self._clock.now_utc())
+        with self._transaction():
+            self._conn.execute(
+                "INSERT INTO campaign_ledger "
+                "(campaign_id, mode_id, payload, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(campaign_id) DO UPDATE SET "
+                "mode_id = excluded.mode_id, "
+                "payload = excluded.payload, "
+                "updated_at = excluded.updated_at",
+                (
+                    record.campaign_id,
+                    record.mode_id.value,
+                    record.model_dump_json(),
+                    stamp,
+                ),
+            )
+            self._insert_event(
+                AppendSpec(
+                    event_type=TradingEventType.CAMPAIGN_LEDGER,
+                    payload=record,
+                    event_id=event_id,
+                ),
+                stamp,
+            )
+
+    def get_campaign_record(self, campaign_id: str) -> CampaignRecord | None:
+        """Load one campaign ledger snapshot."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM campaign_ledger WHERE campaign_id = ?",
+                (campaign_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return CampaignRecord.model_validate(json.loads(row["payload"]))
+
+    def list_campaign_records(self) -> tuple[CampaignRecord, ...]:
+        """Return every persisted campaign ledger snapshot."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT payload FROM campaign_ledger ORDER BY campaign_id ASC"
+            ).fetchall()
+        return tuple(
+            CampaignRecord.model_validate(json.loads(row["payload"])) for row in rows
         )
 
     def upsert_protection_state(self, record: ProtectionStateRecord) -> None:
@@ -1071,6 +1129,13 @@ class TradingStore:
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_reservations_idem "
                     "ON reservations (idempotency_key)"
+                )
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS campaign_ledger ("
+                    "campaign_id TEXT PRIMARY KEY, "
+                    "mode_id TEXT NOT NULL, "
+                    "payload TEXT NOT NULL, "
+                    "updated_at TEXT NOT NULL)"
                 )
                 self._conn.execute("COMMIT")
             except Exception:

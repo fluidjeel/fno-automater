@@ -29,14 +29,16 @@ from trading.domain.contracts.base import StrictModel
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.order import OrderEvent
-from trading.domain.enums import ModeId, OrderState, ReservationState, Side, TradeState
+from trading.domain.enums import ModeId, ReservationState, TradeState
 from trading.domain.primitives import Currency, Money, Rounding
+from trading.portfolio.fill_ledger import trade_fill_cash_flow
 from trading.storage.trading_store import TradingEventType, TradingStore
 
 __all__ = [
     "DEFAULT_TOTAL_EQUITY",
     "FourModeBook",
     "ModeLedger",
+    "trade_fill_cash_flow",
 ]
 
 DEFAULT_TOTAL_EQUITY: Final = Money.of("700000", Currency.INR)
@@ -490,30 +492,6 @@ def _calculate_closed_trade_gross_pnl(
     currency: Currency,
 ) -> Money:
     """Signed fill-ledger gross cash flow for one closed trade (pre-charges)."""
-    return _trade_fill_cash_flow(record.trade_id, orders_by_id, currency)
+    return trade_fill_cash_flow(record.trade_id, orders_by_id, currency)
 
 
-def _trade_fill_cash_flow(
-    trade_id: str,
-    orders_by_id: dict[str, OrderEvent],
-    currency: Currency,
-) -> Money:
-    """Sum signed cash flows for each deduped fill belonging to one trade."""
-    net_pnl_decimal = Decimal(0)
-    saw_fill = False
-    for order in orders_by_id.values():
-        if order.identity.trade_id != trade_id:
-            continue
-        if order.state not in {OrderState.FILLED, OrderState.PARTIAL}:
-            continue
-        if order.average_fill_price is None or order.filled_quantity <= 0:
-            continue
-        saw_fill = True
-        fill_val = order.average_fill_price.value * Decimal(order.filled_quantity)
-        if order.command.side is Side.SELL:
-            net_pnl_decimal += fill_val
-        else:
-            net_pnl_decimal -= fill_val
-    if not saw_fill:
-        return Money.zero(currency)
-    return Money.of(str(net_pnl_decimal), currency).quantized(Rounding.HALF_EVEN)

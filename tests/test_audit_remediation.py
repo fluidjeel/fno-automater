@@ -614,10 +614,10 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
     ) -> None:
         from tests.structures import open_bull_put_credit
         from trading.domain.primitives import Currency
+        from trading.portfolio.fill_ledger import trade_fill_cash_flow
         from trading.risk.mode_ledger import (
             _index_order_events,
             _order_dedupe_key,
-            _trade_fill_cash_flow,
         )
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -633,7 +633,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
                 if event.identity.trade_id != position.trade_id:
                     continue
                 replayed[_order_dedupe_key(event)] = event
-            gross = _trade_fill_cash_flow(
+            gross = trade_fill_cash_flow(
                 position.trade_id, replayed, Currency.INR
             ).amount
             assert gross == before
@@ -1455,5 +1455,301 @@ class TestP0RollSwitchPerLegAndReplacement:
                 RollSwitchStatus.CLOSE_COMPLETE,
                 RollSwitchStatus.REPLACEMENT_PENDING_L2,
             }
+        finally:
+            store.close()
+
+
+class TestP0CampaignDrawdownRollChain:
+    """Campaign P&L and loss limits survive roll/switch trade-id changes."""
+
+    @staticmethod
+    def _roll_evaluation():
+        from trading.trade.review import ReviewEvaluation
+
+        return ReviewEvaluation(
+            action=ReviewAction.PROPOSE_ROLL,
+            reason_code=ReasonCode.OK,
+            detail="campaign roll close",
+            submit_structure_close=True,
+            roll_switch_kind=ReviewAction.ROLL,
+        )
+
+    def _close_via_roll(
+        self,
+        runner: PaperRunner,
+        position: object,
+        snapshots: dict[str, FeatureSnapshot],
+    ) -> None:
+        intent, decision = runner._open_book[position.trade_id]  # type: ignore[attr-defined]
+        assert runner._apply_review(
+            self._roll_evaluation(),
+            intent=intent,
+            decision=decision,
+            position=position,  # type: ignore[arg-type]
+            snapshots=snapshots,
+            review_id="REV-CAMP",
+        )
+
+    def test_campaign_id_shared_across_roll_replacement(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-share.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            incumbent = store.get_position_lifecycle(position.trade_id)
+            assert incumbent is not None and incumbent.campaign_id is not None
+            self._close_via_roll(runner, position, snapshots)
+            replacement = _request(
+                strategy_id="debit_spread",
+                candidates=tuple(snapshots.values()),
+                mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                family_id=FamilyId.bull_call_debit,
+                macro=_macro(MacroBias.BULLISH),
+            )
+            outcome = runner.submit_roll_switch_replacement(
+                position.trade_id, replacement
+            )
+            assert outcome.approved is True
+            assert outcome.replacement_trade_id is not None
+            campaign = store.get_campaign_record(incumbent.campaign_id)
+            assert campaign is not None
+            assert position.trade_id in campaign.trade_ids
+            assert outcome.replacement_trade_id in campaign.trade_ids
+            replacement_lifecycle = store.get_position_lifecycle(
+                outcome.replacement_trade_id
+            )
+            assert replacement_lifecycle is not None
+            assert replacement_lifecycle.campaign_id == incumbent.campaign_id
+            assert campaign.cumulative_realized_gross.currency == campaign.cumulative_realized_net.currency
+            assert campaign.drawdown.amount >= 0
+        finally:
+            store.close()
+
+    def test_multiple_rolls_keep_one_campaign(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-multi.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            assert campaign_id is not None
+            trade_ids = [position.trade_id]
+            for _ in range(2):
+                current = runner.trade_manager.get_position(trade_ids[-1])
+                assert current is not None
+                self._close_via_roll(runner, current, snapshots)
+                outcome = runner.submit_roll_switch_replacement(
+                    trade_ids[-1],
+                    _request(
+                        strategy_id="debit_spread",
+                        candidates=tuple(snapshots.values()),
+                        mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                        family_id=FamilyId.bull_call_debit,
+                        macro=_macro(MacroBias.BULLISH),
+                    ),
+                )
+                assert outcome.approved is True
+                assert outcome.replacement_trade_id is not None
+                trade_ids.append(outcome.replacement_trade_id)
+                clock.set(clock.now_utc() + timedelta(seconds=30))
+            campaign = store.get_campaign_record(campaign_id)
+            assert campaign is not None
+            assert len(campaign.trade_ids) == 3
+            assert len(campaign.recorded_closes) == 2
+        finally:
+            store.close()
+
+    def test_restart_preserves_campaign_between_close_and_replacement(
+        self, tmp_path: Path
+    ) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_session_integration import _runner
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-restart.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            self._close_via_roll(runner, position, snapshots)
+            before = store.get_campaign_record(campaign_id)
+            assert before is not None
+            clock.set(clock.now_utc() + timedelta(seconds=30))
+            resumed = _runner(store, clock)
+            resumed.recover_lifecycle()
+            after = store.get_campaign_record(campaign_id)
+            assert after is not None
+            assert after.cumulative_realized_net == before.cumulative_realized_net
+            outcome = resumed.submit_roll_switch_replacement(
+                position.trade_id,
+                _request(
+                    strategy_id="debit_spread",
+                    candidates=tuple(snapshots.values()),
+                    mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                    family_id=FamilyId.bull_call_debit,
+                    macro=_macro(MacroBias.BULLISH),
+                ),
+            )
+            assert outcome.approved is True
+            assert outcome.replacement_trade_id is not None
+            linked = store.get_campaign_record(campaign_id)
+            assert linked is not None
+            assert outcome.replacement_trade_id in linked.trade_ids
+        finally:
+            store.close()
+
+    def test_restart_with_open_replacement_keeps_campaign(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_session_integration import _runner
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-open.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            self._close_via_roll(runner, position, snapshots)
+            outcome = runner.submit_roll_switch_replacement(
+                position.trade_id,
+                _request(
+                    strategy_id="debit_spread",
+                    candidates=tuple(snapshots.values()),
+                    mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                    family_id=FamilyId.bull_call_debit,
+                    macro=_macro(MacroBias.BULLISH),
+                ),
+            )
+            assert outcome.approved is True
+            replacement_id = outcome.replacement_trade_id
+            assert replacement_id is not None
+            before = store.get_campaign_record(campaign_id)
+            clock.set(clock.now_utc() + timedelta(seconds=30))
+            resumed = _runner(store, clock)
+            resumed.recover_lifecycle()
+            after = store.get_campaign_record(campaign_id)
+            assert after is not None
+            assert after.cumulative_realized_net == before.cumulative_realized_net
+            assert replacement_id in after.trade_ids
+            assert resumed.trade_manager.get_position(replacement_id) is not None
+        finally:
+            store.close()
+
+    def test_rejected_replacement_preserves_campaign_losses(self, tmp_path: Path) -> None:
+        from dataclasses import replace
+
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.domain.enums import RollSwitchStatus
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-reject.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            self._close_via_roll(runner, position, snapshots)
+            before = store.get_campaign_record(campaign_id)
+            assert before is not None
+            blocked = replace(
+                _request(
+                    strategy_id="debit_spread",
+                    candidates=tuple(snapshots.values()),
+                    mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                    family_id=FamilyId.bull_call_debit,
+                    macro=_macro(MacroBias.BULLISH),
+                ),
+                execute=False,
+            )
+            outcome = runner.submit_roll_switch_replacement(position.trade_id, blocked)
+            assert outcome.approved is False
+            after = store.get_campaign_record(campaign_id)
+            assert after is not None
+            assert after.cumulative_realized_net == before.cumulative_realized_net
+            assert after.cumulative_realized_gross == before.cumulative_realized_gross
+            assert after.entries_blocked is False
+            closed_lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert closed_lifecycle is not None
+            assert (
+                closed_lifecycle.roll_switch_transition is not None
+                and closed_lifecycle.roll_switch_transition.status
+                is RollSwitchStatus.REPLACEMENT_REJECTED
+            )
+        finally:
+            store.close()
+
+    def test_duplicate_close_recording_is_idempotent(self, tmp_path: Path) -> None:
+        from tests.structures import open_bull_call_debit
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-idem.sqlite", clock=clock)
+        try:
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            self._close_via_roll(runner, position, snapshots)
+            before = store.get_campaign_record(campaign_id)
+            runner._record_campaign_close(position.trade_id)
+            after = store.get_campaign_record(campaign_id)
+            assert before is not None and after is not None
+            assert after.cumulative_realized_net == before.cumulative_realized_net
+            assert after.recorded_closes.count(position.trade_id) == 1
+        finally:
+            store.close()
+
+    def test_campaign_loss_limit_blocks_replacement_after_deep_loss(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import tests.factories as f
+        from tests.structures import open_bull_call_debit
+        from tests.test_four_mode_trade_simulations import _macro, _request
+        from trading.strategies.macro import MacroBias
+
+        clock = FrozenClock(NOW + timedelta(seconds=60))
+        store = TradingStore.open(tmp_path / "camp-limit.sqlite", clock=clock)
+        try:
+            monkeypatch.setattr(
+                "trading.runtime.paper_runner.campaign_loss_limit",
+                lambda mode_id, *, mode_book: f.money("100"),
+            )
+            runner, position, snapshots = open_bull_call_debit(store, clock)
+            lifecycle = store.get_position_lifecycle(position.trade_id)
+            assert lifecycle is not None
+            campaign_id = lifecycle.campaign_id
+            self._close_via_roll(runner, position, snapshots)
+            campaign = store.get_campaign_record(campaign_id)
+            assert campaign is not None
+            assert campaign.entries_blocked is True
+            outcome = runner.submit_roll_switch_replacement(
+                position.trade_id,
+                _request(
+                    strategy_id="debit_spread",
+                    candidates=tuple(snapshots.values()),
+                    mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+                    family_id=FamilyId.bull_call_debit,
+                    macro=_macro(MacroBias.BULLISH),
+                ),
+            )
+            assert outcome.approved is False
+            assert (
+                ReasonCode.CAMPAIGN_LOSS_LIMIT in outcome.reason_codes
+                or ReasonCode.UNKNOWN_ORDER_STATUS in outcome.reason_codes
+            )
         finally:
             store.close()
