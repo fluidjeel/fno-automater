@@ -1,0 +1,12 @@
+[Unit]
+Description=FNO PAPER 09:16 readiness checklist and Telegram result
+After=network-online.target fno-data-tick.service fno-paper-session.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading ops post-open-check
+User=ubuntu
+Group=ubuntu

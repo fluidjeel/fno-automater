@@ -1346,6 +1346,17 @@ def _cmd_ops_ensure_paper(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ops_post_open_check(_args: argparse.Namespace) -> int:
+    """Run the one-time four-mode PAPER readiness checklist."""
+    from trading.ops.post_open_check import run_post_open_check
+
+    result = run_post_open_check(_repo_root())
+    for name, passed, detail in result.checks:
+        print(f"{name}: {'PASS' if passed else 'FAIL'} — {detail}")
+    print(f"telegram: {'SENT' if result.notified else 'NOT_SENT'}")
+    return 0 if result.passed else 1
+
+
 def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
     """Send a Telegram alert when systemd reports a unit failure."""
     from trading.ops.operator_alert import notify_operator
@@ -1972,6 +1983,12 @@ def main(argv: list[str] | None = None) -> int:
         help="ensure PAPER runtime units are active for the current market phase",
     )
     ensure_paper.set_defaults(func=_cmd_ops_ensure_paper)
+
+    post_open = ops_sub.add_parser(
+        "post-open-check",
+        help="run the 09:16 four-mode PAPER checklist and notify Telegram",
+    )
+    post_open.set_defaults(func=_cmd_ops_post_open_check)
 
     alert_failure = ops_sub.add_parser(
         "alert-unit-failure",

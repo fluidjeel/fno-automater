@@ -56,6 +56,11 @@ visudo -cf /etc/sudoers.d/fno-systemctl
 
 cp deploy/paper-session.timer /etc/systemd/system/fno-paper-session.timer
 
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-post-open-check.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-paper-post-open-check.service
+cp deploy/paper-post-open-check.timer /etc/systemd/system/fno-paper-post-open-check.timer
+
 systemctl daemon-reload
 systemctl enable --now fno-data-pipeline.timer
 systemctl enable --now fno-fyers-refresh.timer
@@ -66,6 +71,7 @@ systemctl enable --now fno-data-tick.service
 systemctl enable --now fno-automated.service
 systemctl enable fno-paper-session.service
 systemctl enable --now fno-paper-session.timer
+systemctl enable --now fno-paper-post-open-check.timer
 
 sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-watchdog.service \
   | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
@@ -82,4 +88,5 @@ echo "Research runner timer:   systemctl status fno-agent-research.timer"
 echo "Supervisor daemon:       systemctl status fno-automated.service"
 echo "Paper session:           systemctl status fno-paper-session.service"
 echo "Paper session timer:     systemctl status fno-paper-session.timer"
+echo "Post-open check timer:   systemctl status fno-paper-post-open-check.timer"
 echo "Paper watchdog timer:    systemctl status fno-paper-watchdog.timer"

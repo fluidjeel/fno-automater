@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PAPER readiness checklist at 09:16 IST
+
+[Timer]
+# 09:16 IST = 03:46 UTC.
+OnCalendar=Mon..Fri *-*-* 03:46:00
+Unit=fno-paper-post-open-check.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
