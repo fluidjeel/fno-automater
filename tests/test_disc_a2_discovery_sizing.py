@@ -15,8 +15,8 @@ from trading.config import load_config, load_risk_policy
 from trading.config.discovery import load_discovery_config
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import DerivativesContext, FeatureSnapshot, IntentLeg
-from trading.domain.contracts.risk import RiskDecision
 from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.risk import RiskDecision
 from trading.domain.enums import (
     FamilyId,
     ModeId,
