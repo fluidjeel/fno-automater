@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -202,7 +203,9 @@ class TestIronCondorProtectionFirst:
                 index for index, side in enumerate(entry_sides) if side is Side.SELL
             )
             assert all(side is Side.BUY for side in entry_sides[:first_sell])
-            TestP0LiabilityFirstExitSequencing()._check(runner, position, snapshots)
+            TestP0LiabilityFirstExitSequencing()._check(
+                runner, position, cast(dict[str, object], snapshots)
+            )
         finally:
             store.close()
 
