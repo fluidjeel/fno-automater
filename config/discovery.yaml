@@ -54,7 +54,6 @@ soft_reason_codes:
   - ECONOMIC_OVERLAP_SUPPRESSED
   - OPPOSING_EXPOSURE_REJECTED
   - M4_POSITION_CAP_REACHED
-  - DATA_DEGRADED
 selection:            # strict first, fallback only if nothing passes strict
   m2_delta:
     strict: ["0.45", "0.65"]

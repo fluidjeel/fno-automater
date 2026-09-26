@@ -117,11 +117,12 @@ from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.discovery_decision_recorder import (
     persist_cycle_decisions,
-    persist_data_feed_error,
     persist_exit_decision,
+    persist_session_feed_errors,
 )
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.review_schedule import ReviewSlot
+from trading.runtime.session_routing import ProducedFamilyRequest
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
@@ -582,6 +583,7 @@ class PaperRunner:
         *,
         as_of: datetime,
         market_state: MarketState | None = None,
+        produced: Sequence[ProducedFamilyRequest] | None = None,
     ) -> tuple[int, ...]:
         """Append one DISCOVERY_DECISION per evaluated (mode, family) pair."""
         cycle_id = self._ids.new_id("CYC")
@@ -597,6 +599,7 @@ class PaperRunner:
             entry_profile=self._entry_profile,
             discovery_config=self._discovery_config,
             market_state=market_state,
+            produced=tuple(produced) if produced is not None else None,
         )
 
     def persist_cycle_evidence(
@@ -662,17 +665,17 @@ class PaperRunner:
         """Latest protection-monitor snapshots for exit evaluation."""
         return dict(self._protection_snapshots)
 
-    def persist_data_feed_error(
+    def persist_session_feed_errors(
         self,
         *,
         as_of: datetime,
         detail: str,
         experiment_id: str,
-        family_id: str = "DATA_FEED",
-    ) -> int:
-        """Append one DATA-stage BLOCKED_HARD record for a feed failure."""
+        family_slots: tuple[tuple[ModeId, str], ...],
+    ) -> tuple[int, ...]:
+        """Append DATA-stage BLOCKED_HARD records for every affected mode/family."""
         cycle_id = self._ids.new_id("CYC")
-        return persist_data_feed_error(
+        return persist_session_feed_errors(
             self._services.store,
             self._ids,
             cycle_id=cycle_id,
@@ -681,7 +684,7 @@ class PaperRunner:
             code_version=self._code_version,
             detail=detail,
             experiment_id=experiment_id,
-            family_id=family_id,
+            family_slots=family_slots,
         )
 
     def persist_session_protection(self, state: object) -> None:

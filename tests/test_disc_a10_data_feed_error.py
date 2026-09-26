@@ -113,7 +113,6 @@ def _feed_error_rows(store: TradingStore) -> list[DiscoveryDecision]:
         if (
             isinstance(payload, DiscoveryDecision)
             and ReasonCode.DATA_FEED_ERROR in payload.reason_codes
-            and payload.family_id == "DATA_FEED"
         ):
             rows.append(payload)
     return rows
@@ -145,7 +144,12 @@ def test_builder_401_on_cycles_one_two_then_succeeds(
     assert result is not None
     assert calls["count"] == 3
     feed_rows = _feed_error_rows(store)
-    assert len(feed_rows) == 2
+    assert len(feed_rows) >= 2
+    modes = {row.mode_id for row in feed_rows}
+    assert ModeId.M1_CAS in modes
+    assert ModeId.M2_DIRECTIONAL in modes
+    assert ModeId.M3_TACTICAL_POSITIONAL in modes
+    assert ModeId.M4_STRATEGIC_POSITIONAL in modes
     for row in feed_rows:
         assert row.stage is DiscoveryStage.DATA
         assert row.decision is DiscoveryDecisionKind.BLOCKED_HARD

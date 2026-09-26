@@ -42,6 +42,7 @@ from trading.strategies.macro import MacroAssessment
 __all__ = [
     "FAMILY_PRODUCER_REGISTRY",
     "build_four_mode_requests",
+    "iter_recordable_family_slots",
     "producer_spec_for",
 ]
 
@@ -120,6 +121,34 @@ FAMILY_PRODUCER_REGISTRY: dict[tuple[ModeId, FamilyId], tuple[str, object]] = {
         bind_long_strangle,
     ),
 }
+
+
+def iter_recordable_family_slots(
+    modes_config: ModesConfig,
+    *,
+    mode_stances: Mapping[str, ExecutionMode],
+    family_stances: Mapping[str, ExecutionMode],
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    discovery_config: DiscoveryConfig | None = None,
+) -> tuple[tuple[ModeId, FamilyId], ...]:
+    """Expand routable (mode, family) pairs that have a registered producer."""
+    merged_family_stances = effective_family_stances(
+        family_stances,
+        entry_profile=entry_profile,
+        discovery_family_stances=(
+            discovery_config.family_stances if discovery_config is not None else None
+        ),
+    )
+    slots: list[tuple[ModeId, FamilyId]] = []
+    for policy_row, family_id, _stance in iter_mode_families(
+        modes_config,
+        mode_stances=mode_stances,
+        family_stances=merged_family_stances,
+    ):
+        if producer_spec_for(policy_row.mode_id, family_id) is None:
+            continue
+        slots.append((policy_row.mode_id, family_id))
+    return tuple(slots)
 
 
 def producer_spec_for(

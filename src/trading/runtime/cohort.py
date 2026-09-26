@@ -54,11 +54,13 @@ def persist_cohorts(
     output_dir.mkdir(parents=True, exist_ok=True)
     grouped: dict[str, list[CohortSignal]] = {}
     versions: dict[str, tuple[str, str, str, ExecutionMode]] = {}
+    evaluation_seq = 0
     for result in results:
         for outcome in result.outcomes:
             grouped.setdefault(outcome.strategy_id, []).extend(
-                _signals_for(outcome, as_of=as_of)
+                _signals_for(outcome, as_of=as_of, evaluation_seq=evaluation_seq)
             )
+            evaluation_seq += 1
             setup = outcome.setup_features
             versions[outcome.strategy_id] = (
                 outcome.strategy_version,
@@ -70,13 +72,16 @@ def persist_cohorts(
     for strategy_id, signals in grouped.items():
         if not signals:
             continue
+        unique_signals = _ensure_unique_signal_ids(signals)
         experiment_id = experiment_id_for(
             prefix,
             strategy_id,
             observation_start,
             discovery_fingerprint=discovery_fingerprint,
         )
-        aligned = tuple(_align_experiment(signal, experiment_id) for signal in signals)
+        aligned = tuple(
+            _align_experiment(signal, experiment_id) for signal in unique_signals
+        )
         version_tuple = versions.get(
             strategy_id,
             (strategy_id, "legacy", "legacy", ExecutionMode.PAPER),
@@ -128,8 +133,34 @@ def _align_experiment(signal: CohortSignal, experiment_id: str) -> CohortSignal:
     )
 
 
+def _blocked_signal_id(
+    outcome: PaperStrategyOutcome, *, as_of: datetime, evaluation_seq: int
+) -> str:
+    """Cycle-specific declined signal id; snapshot_id alone is not unique."""
+    mode = outcome.mode_id.value if outcome.mode_id is not None else "na"
+    family = outcome.family_id.value if outcome.family_id is not None else "na"
+    ts_ms = int(as_of.timestamp() * 1000)
+    return f"{outcome.snapshot_id}-{mode}-{family}-{ts_ms}-{evaluation_seq}-blocked"
+
+
+def _ensure_unique_signal_ids(signals: list[CohortSignal]) -> tuple[CohortSignal, ...]:
+    """Last-resort dedupe before CohortPackage validation."""
+    seen: set[str] = set()
+    unique: list[CohortSignal] = []
+    for index, signal in enumerate(signals):
+        signal_id = signal.signal_id
+        if signal_id in seen:
+            signal_id = f"{signal_id}-dup-{index}"
+        seen.add(signal_id)
+        if signal_id == signal.signal_id:
+            unique.append(signal)
+        else:
+            unique.append(signal.model_copy(update={"signal_id": signal_id}))
+    return tuple(unique)
+
+
 def _signals_for(
-    outcome: PaperStrategyOutcome, *, as_of: datetime
+    outcome: PaperStrategyOutcome, *, as_of: datetime, evaluation_seq: int
 ) -> list[CohortSignal]:
     signals: list[CohortSignal] = []
     if not outcome.intents:
@@ -140,7 +171,9 @@ def _signals_for(
         )
         signals.append(
             CohortSignal(
-                signal_id=f"{outcome.snapshot_id}-blocked",
+                signal_id=_blocked_signal_id(
+                    outcome, as_of=as_of, evaluation_seq=evaluation_seq
+                ),
                 snapshot_id=outcome.snapshot_id,
                 created_at=as_of,
                 declined=True,

@@ -2,13 +2,28 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A11_DONE (`EXP-DISC` experiment ids include discovery.yaml fingerprint; eligibility always INELIGIBLE for discovery cohorts; scorecard refuses DISCOVERY/STRICT mixing). `config/paper_session.yaml` now has `entry_profile: DISCOVERY` with straddle/strangle `PAPER`; Oracle re-sync and service restart still pending (DISC-A12).
+STATUS: DISC-A0..A11_DONE; review fixes landed (EOD cohort IDs, per-mode feed
+errors, full-family decision matrix); Oracle rsync + restart still pending
+(DISC-A12)
 
 ## Evidence labels
 
-- TEST-PROVEN: local pytest including `tests/test_disc_a11_cohort_identity.py`.
-- DEPLOYED-PAPER: Oracle rsync tree; startup keeps `M1_CAS: PAPER`.
-- OBSERVED-IN-MARKET: not yet. Market was closed; no qualifying live signal captured.
+- TEST-PROVEN: 1933+ pytest including discovery suite (`tests/test_disc_*.py`,
+  `tests/test_cohort_eod_duplicate_signals.py`).
+- DEPLOYED-PAPER: Oracle still on pre-review tree until rsync; local config has
+  `entry_profile: DISCOVERY`, `experiment_prefix: EXP-DISC`.
+- OBSERVED-IN-MARKET: not yet.
+
+## Discovery profile (local config)
+
+| Item | Value |
+| --- | --- |
+| `entry_profile` | `DISCOVERY` |
+| `experiment_prefix` | `EXP-DISC` |
+| Books | Four independent ₹7L per mode; daily compounding from prior realised net |
+| Fills | `touch-v1` with `conservative-v1` shadow verdict |
+| Straddle/strangle | `PAPER` under DISCOVERY |
+| Calendars | `SUSPENDED` (unchanged) |
 
 ## Mode stances (file and loaded)
 
@@ -18,32 +33,26 @@ STATUS: DISC-A11_DONE (`EXP-DISC` experiment ids include discovery.yaml fingerpr
 | M2_DIRECTIONAL | PAPER | PAPER |
 | M3/M4 | PAPER | PAPER |
 
-Routing profile is `four_mode`. The 60-second poll clears pending M1 events and does not submit them. Entries use `submit_m1_event`.
+Routing profile is `four_mode`. **M1 remains event-only until DISC-B1** — the
+60-second poll clears pending M1 events and does not submit them; only
+`submit_m1_event` runs M1. M2–M4 evaluate every poll under DISCOVERY.
 
-## M1 latency policy (PAPER only)
+## Prior milestones
 
-Thresholds remain predeclared: quote age 500 ms, decision 2000 ms, execution 2000 ms, exit gap 2000 ms. Samples are recorded when provider timestamps exist. A missing or failing report emits a startup warning and runtime log line, but does not demote M1 to SHADOW. LIVE eligibility is unchanged.
+Four-mode redesign P1–P16 complete (P14 calendars
+`EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN`). LIVE not approved.
 
-Scan windows: 09:20-15:00 continuous and 15:00-15:25 closing context. Cash auction 15:30-15:40 is excluded.
+## Blocking gaps before Monday
 
-## M2 allocation (capital event)
-
-Reference equity ₹7,00,000. M2 share 28%, per-trade 4%, cap ₹7,840. M4 share 32%, per-trade cap ₹2,240. Percentage order M1 5% > M2 4% > M3 2% > M4 1%. Open-risk sum ₹33,880 under the ₹35,000 global cap. Sep 20 chain: 23350 CE all-in ₹5,820.14 and PE ₹5,562.75 fit the cap. Live following-week refresh still blocked on Fyers 401.
-
-## Verification
-
-- `uv run ruff check`, `uv run mypy`, full pytest green on committed tree.
-- DISC-A9: `tests/test_disc_a9_discovery_decision.py` covers per-pair records, neutral reason text, trade snapshots, exit records, and store restart query.
-- DISC-A10: `tests/test_disc_a10_data_feed_error.py` covers 401 recovery, protection exits on builder failure, alert dedupe, and following-week partial failure.
-- Startup validation on Oracle prints `M1_CAS: PAPER` with one latency-limitation warning.
-- G1 report: `docs/reports/G1_ONE_LOT_AFFORDABILITY.md`.
-
-## Blocking gaps
-
-- LIVE not approved. Calendars stay `EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN` (P16).
-- No in-market M1 trace or fill yet. Abstention-only sessions are acceptable if reasons are logged.
-- Fyers token 401 prevents a fresh following-week affordability read for M2.
+1. Oracle deploy: rsync `9c9619d` + review fixes, restart `fno-paper-session`.
+2. Fyers token refresh before 09:00 IST Sunday/Monday.
+3. Post-deploy: startup banner `ENTRY PROFILE: DISCOVERY (temporary)`; heartbeat
+   `entry_profile: DISCOVERY`; decision records per mode/family each cycle.
+4. Sprint B (M1 poll, EOD discovery report, dashboard) not started.
 
 ## Next action
 
-During the cash session, capture feed-to-decision traces and any abstention reasons. Do not manufacture fills.
+Deploy to Oracle with `./deploy/deploy_oracle.sh --host ubuntu@92.4.94.79
+--key ../blue-green/keys/ssh-key-2026-09-12.key --with-secrets`, restart the
+paper session, refresh Fyers token, and verify one full market cycle records
+decisions for every routable family.

@@ -40,12 +40,15 @@ if TYPE_CHECKING:
         PaperStrategyOutcome,
         PaperStrategyRequest,
     )
+    from trading.runtime.session_routing import ProducedFamilyRequest
 
 __all__ = [
     "build_decision_record",
+    "build_produced_abstention_record",
     "persist_cycle_decisions",
     "persist_data_feed_error",
     "persist_exit_decision",
+    "persist_session_feed_errors",
     "query_decisions",
 ]
 
@@ -91,9 +94,61 @@ def persist_cycle_decisions(
     entry_profile: EntryProfile,
     discovery_config: DiscoveryConfig | None,
     market_state: MarketState | None = None,
+    produced: tuple[ProducedFamilyRequest, ...] | None = None,
 ) -> tuple[int, ...]:
     """Append one DISCOVERY_DECISION per evaluated (mode, family) pair."""
     sequences: list[int] = []
+    if produced:
+        outcome_by_key = {
+            (item.mode_id, item.family_id): item
+            for item in result.outcomes
+            if item.mode_id is not None and item.family_id is not None
+        }
+        request_by_key = {
+            (item.forced_mode_id, item.forced_family_id): item
+            for item in requests
+            if item.forced_mode_id is not None and item.forced_family_id is not None
+        }
+        for item in produced:
+            key = (item.spec.mode_id, item.spec.family_id)
+            request = request_by_key.get(key)
+            outcome = outcome_by_key.get(key)
+            if request is not None and outcome is not None:
+                record = build_decision_record(
+                    request,
+                    outcome,
+                    cycle_id=cycle_id,
+                    as_of=as_of,
+                    profile_version=profile_version,
+                    code_version=code_version,
+                    entry_profile=entry_profile,
+                    discovery_config=discovery_config,
+                    market_state=market_state,
+                    id_factory=id_factory,
+                    arbitration_result=result.arbitration_result,
+                )
+            else:
+                record = build_produced_abstention_record(
+                    item,
+                    cycle_id=cycle_id,
+                    as_of=as_of,
+                    profile_version=profile_version,
+                    code_version=code_version,
+                    entry_profile=entry_profile,
+                    discovery_config=discovery_config,
+                    market_state=market_state,
+                    id_factory=id_factory,
+                )
+            sequences.append(
+                store.append(
+                    TradingEventType.DISCOVERY_DECISION,
+                    record,
+                    event_id=record.decision_id,
+                    recorded_at=as_of,
+                )
+            )
+        return tuple(sequences)
+
     for request, outcome in zip(requests, result.outcomes, strict=True):
         record = build_decision_record(
             request,
@@ -129,9 +184,10 @@ def persist_data_feed_error(
     code_version: str,
     detail: str,
     experiment_id: str,
+    mode_id: ModeId,
     family_id: str = "DATA_FEED",
 ) -> int:
-    """Append one DATA-stage BLOCKED_HARD record for a session feed failure."""
+    """Append one DATA-stage BLOCKED_HARD record for a feed failure on one mode."""
     ctx = DecisionTextContext(detail=detail)
     reason_text = render_decision_text(
         decision=DiscoveryDecisionKind.BLOCKED_HARD,
@@ -142,7 +198,7 @@ def persist_data_feed_error(
         decision_id=id_factory.new_id("DDEC"),
         cycle_id=cycle_id,
         as_of=as_of,
-        mode_id=ModeId.M2_DIRECTIONAL,
+        mode_id=mode_id,
         family_id=family_id,
         strategy_id="paper_session",
         experiment_id=experiment_id,
@@ -160,6 +216,38 @@ def persist_data_feed_error(
         event_id=record.decision_id,
         recorded_at=as_of,
     )
+
+
+def persist_session_feed_errors(
+    store: TradingStore,
+    id_factory: IdFactory,
+    *,
+    cycle_id: str,
+    as_of: datetime,
+    profile_version: str,
+    code_version: str,
+    detail: str,
+    experiment_id: str,
+    family_slots: tuple[tuple[ModeId, str], ...],
+) -> tuple[int, ...]:
+    """Record a feed failure for every affected (mode, family) slot."""
+    sequences: list[int] = []
+    for mode_id, family_id in family_slots:
+        sequences.append(
+            persist_data_feed_error(
+                store,
+                id_factory,
+                cycle_id=cycle_id,
+                as_of=as_of,
+                profile_version=profile_version,
+                code_version=code_version,
+                detail=detail,
+                experiment_id=experiment_id,
+                mode_id=mode_id,
+                family_id=family_id,
+            )
+        )
+    return tuple(sequences)
 
 
 def persist_exit_decision(
@@ -257,6 +345,76 @@ def query_decisions(
             continue
         rows.append(payload)
     return tuple(rows)
+
+
+def build_produced_abstention_record(
+    produced: ProducedFamilyRequest,
+    *,
+    cycle_id: str,
+    as_of: datetime,
+    profile_version: str,
+    code_version: str,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
+    id_factory: IdFactory,
+    market_state: MarketState | None = None,
+) -> DiscoveryDecision:
+    """Build a record when a family was produced but never reached run_cycle."""
+    reason_codes = tuple(produced.bound.binding.reason_codes)
+    if not reason_codes:
+        if not produced.bound.binding.eligible:
+            reason_codes = (ReasonCode.INSTRUMENT_UNKNOWN,)
+        elif not produced.execute:
+            reason_codes = (ReasonCode.SETUP_COOLDOWN,)
+        else:
+            reason_codes = (ReasonCode.INSTRUMENT_UNKNOWN,)
+    stage = (
+        DiscoveryStage.BIND
+        if not produced.bound.candidates
+        else DiscoveryStage.STRATEGY
+    )
+    decision_kind = DiscoveryDecisionKind.NO_TRADE
+    for code in reason_codes:
+        if code is ReasonCode.OK:
+            continue
+        if not is_soft(code, entry_profile, discovery_config):
+            decision_kind = DiscoveryDecisionKind.BLOCKED_HARD
+            break
+    ctx = DecisionTextContext(
+        mode_id=produced.spec.mode_id.value,
+        family_id=produced.spec.family_id.value,
+    )
+    reason_text = render_decision_text(
+        decision=decision_kind,
+        reason_codes=reason_codes,
+        ctx=ctx,
+    )
+    inputs = DiscoveryDecisionInputs()
+    if market_state is not None:
+        inputs = DiscoveryDecisionInputs(
+            trend=market_state.trend.value,
+            return_15m=market_state.return_15m,
+            return_60m=market_state.return_60m,
+            trend_score=market_state.trend_score,
+            iv_bucket=market_state.volatility.value,
+            event_state=market_state.event_state,
+        )
+    return DiscoveryDecision(
+        decision_id=id_factory.new_id("DDEC"),
+        cycle_id=cycle_id,
+        as_of=as_of,
+        mode_id=produced.spec.mode_id,
+        family_id=produced.spec.family_id.value,
+        strategy_id=produced.spec.strategy_id,
+        experiment_id="EXP-UNKNOWN",
+        decision=decision_kind,
+        stage=stage,
+        reason_codes=reason_codes,
+        reason_text=reason_text,
+        profile_version=profile_version,
+        code_version=code_version,
+        inputs=inputs,
+    )
 
 
 def build_decision_record(

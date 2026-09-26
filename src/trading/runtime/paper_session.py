@@ -103,6 +103,7 @@ from trading.runtime.discovery_drawdown_alert import DrawdownAlertTracker
 from trading.runtime.event_risk import collect_event_risk
 from trading.runtime.four_mode_producers import (
     build_four_mode_requests,
+    iter_recordable_family_slots,
     produce_family_requests,
 )
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
@@ -461,11 +462,13 @@ class PaperSession:
             result = self._runner.run_cycle(requests)
             self._results.append(result)
             self._runner.persist_cycle_evidence(result, as_of=now)
+            produced = getattr(self._builder, "latest_produced", None)
             self._runner.persist_discovery_decisions(
                 result,
                 requests,
                 as_of=now,
                 market_state=self._latest_market_state,
+                produced=produced if isinstance(produced, tuple) else None,
             )
             for outcome in result.outcomes:
                 experiment_id = next(
@@ -498,16 +501,31 @@ class PaperSession:
         )
         return result
 
+    def _recordable_family_slots(self) -> tuple[tuple[ModeId, str], ...]:
+        """Every routable (mode, family) pair that should receive a decision row."""
+        modes_config = load_modes_config()
+        return tuple(
+            (mode_id, family_id.value)
+            for mode_id, family_id in iter_recordable_family_slots(
+                modes_config,
+                mode_stances=self._config.mode_stances,
+                family_stances=self._config.family_stances,
+                entry_profile=self._config.entry_profile,
+                discovery_config=self._discovery_config,
+            )
+        )
+
     def _handle_builder_feed_error(self, exc: BaseException, *, now: datetime) -> None:
         """Log, record, alert and continue without new entries after a feed failure."""
         logging.getLogger(__name__).error(
             "paper session builder feed error; skipping entries this cycle",
             exc_info=exc,
         )
-        self._runner.persist_data_feed_error(
+        self._runner.persist_session_feed_errors(
             as_of=now,
             detail=str(exc),
             experiment_id=self._config.experiment_prefix,
+            family_slots=self._recordable_family_slots(),
         )
         self._data_feed_alerts.record_failure(exc, notify=self._notifier.send)
         exit_snapshots = self._exit_snapshots_for_feed_failure()
@@ -533,11 +551,18 @@ class PaperSession:
         for detail in feed_errors:
             if not isinstance(detail, str) or not detail:
                 continue
-            self._runner.persist_data_feed_error(
+            self._runner.persist_session_feed_errors(
                 as_of=now,
                 detail=detail,
                 experiment_id=self._config.experiment_prefix,
-                family_id="FOLLOWING_WEEK_CHAIN",
+                family_slots=tuple(
+                    (mode_id, "FOLLOWING_WEEK_CHAIN")
+                    for mode_id in (
+                        ModeId.M2_DIRECTIONAL,
+                        ModeId.M3_TACTICAL_POSITIONAL,
+                        ModeId.M4_STRATEGIC_POSITIONAL,
+                    )
+                ),
             )
         feed_errors.clear()
 
@@ -1634,6 +1659,7 @@ def _four_mode_request_builder(
             discovery_fingerprint=discovery_fingerprint,
         )
         build.latest_market_state = market_state  # type: ignore[attr-defined]
+        build.latest_produced = tuple(adjusted)  # type: ignore[attr-defined]
         return requests, snapshots
 
     build.m1_holder = m1_holder  # type: ignore[attr-defined]
