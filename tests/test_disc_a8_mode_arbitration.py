@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import cast
 
 import tests.factories as f
-from tests.test_paper_runner import BROKER_FIXTURES, ROOT, _paper_config
 from tests.test_p12_economic_overlap_m4_cap import (
     NOW,
     _bull_call_debit,
     _bull_put_credit,
     _option_snap,
 )
+from tests.test_paper_runner import BROKER_FIXTURES, ROOT, _paper_config
 from trading.broker.paper import PaperBroker
 from trading.config import load_evaluation_config, load_risk_policy
 from trading.config.discovery import load_discovery_config
