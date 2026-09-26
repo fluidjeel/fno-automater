@@ -1311,9 +1311,7 @@ def bind_m2_long_option(
 
     option_type = _direction_type(market)
     direction_tags = tuple(
-        code
-        for code in market.reason_codes
-        if code is ReasonCode.DIRECTION_FALLBACK
+        code for code in market.reason_codes if code is ReasonCode.DIRECTION_FALLBACK
     )
     if option_type is None:
         return _ineligible_binding(
@@ -1377,9 +1375,7 @@ def bind_m2_long_option(
             strategy_id="positional_long_option",
             policy=policy,
             all_candidates=all_candidates,
-            reason_codes=(
-                _dominant_reason(pool, policy),
-            ),
+            reason_codes=(_dominant_reason(pool, policy),),
         )
 
     delta_range = (
@@ -1418,9 +1414,7 @@ def bind_m2_long_option(
     if expiry_sel.audit_note and "Fallback expiry" in expiry_sel.audit_note:
         extra_components["m2_expiry_fallback"] = Decimal(1)
     extra_components.update(pass_tags)
-    binding_reasons = tuple(
-        dict.fromkeys((*direction_tags, *fallback_reasons))
-    )
+    binding_reasons = tuple(dict.fromkeys((*direction_tags, *fallback_reasons)))
     binding = CandidateBinding(
         strategy_id="positional_long_option",
         binding_version=policy.binding_version,
@@ -2059,25 +2053,22 @@ def _m2_survivors(
     for item in candidates:
         if item.contract.option_type is not option_type:
             continue
-        if _common_reason(
-            item,
-            policy,
-            min_open_interest=pass_cfg.min_open_interest,
-            max_spread_fraction=pass_cfg.max_spread_fraction,
-        ) is not None:
+        if (
+            _common_reason(
+                item,
+                policy,
+                min_open_interest=pass_cfg.min_open_interest,
+                max_spread_fraction=pass_cfg.max_spread_fraction,
+            )
+            is not None
+        ):
             continue
         derivatives = item.derivatives
         if derivatives is None:
             continue
-        if not (
-            pass_cfg.dte_min
-            <= derivatives.days_to_expiry
-            <= pass_cfg.dte_max
-        ):
+        if not (pass_cfg.dte_min <= derivatives.days_to_expiry <= pass_cfg.dte_max):
             continue
-        if not _abs_delta_in_range(
-            item, pass_cfg.delta_min, pass_cfg.delta_max
-        ):
+        if not _abs_delta_in_range(item, pass_cfg.delta_min, pass_cfg.delta_max):
             continue
         survivors.append(item)
     return tuple(survivors)
