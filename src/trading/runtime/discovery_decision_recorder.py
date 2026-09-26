@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "build_decision_record",
     "persist_cycle_decisions",
+    "persist_data_feed_error",
     "persist_exit_decision",
     "query_decisions",
 ]
@@ -71,6 +72,7 @@ _HARD_BLOCK_CODES = frozenset(
         ReasonCode.SYSTEM_NOT_READY,
         ReasonCode.RECONCILIATION_UNRESOLVED,
         ReasonCode.RISK_LIMIT_TRADE,
+        ReasonCode.DATA_FEED_ERROR,
     }
 )
 _NEUTRAL_THRESHOLD = Decimal("0.30")
@@ -115,6 +117,49 @@ def persist_cycle_decisions(
             )
         )
     return tuple(sequences)
+
+
+def persist_data_feed_error(
+    store: TradingStore,
+    id_factory: IdFactory,
+    *,
+    cycle_id: str,
+    as_of: datetime,
+    profile_version: str,
+    code_version: str,
+    detail: str,
+    experiment_id: str,
+    family_id: str = "DATA_FEED",
+) -> int:
+    """Append one DATA-stage BLOCKED_HARD record for a session feed failure."""
+    ctx = DecisionTextContext(detail=detail)
+    reason_text = render_decision_text(
+        decision=DiscoveryDecisionKind.BLOCKED_HARD,
+        reason_codes=(ReasonCode.DATA_FEED_ERROR,),
+        ctx=ctx,
+    )
+    record = DiscoveryDecision(
+        decision_id=id_factory.new_id("DDEC"),
+        cycle_id=cycle_id,
+        as_of=as_of,
+        mode_id=ModeId.M2_DIRECTIONAL,
+        family_id=family_id,
+        strategy_id="paper_session",
+        experiment_id=experiment_id,
+        decision=DiscoveryDecisionKind.BLOCKED_HARD,
+        stage=DiscoveryStage.DATA,
+        reason_codes=(ReasonCode.DATA_FEED_ERROR,),
+        reason_text=reason_text,
+        profile_version=profile_version,
+        code_version=code_version,
+        inputs=DiscoveryDecisionInputs(),
+    )
+    return store.append(
+        TradingEventType.DISCOVERY_DECISION,
+        record,
+        event_id=record.decision_id,
+        recorded_at=as_of,
+    )
 
 
 def persist_exit_decision(
