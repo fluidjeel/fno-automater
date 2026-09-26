@@ -254,9 +254,7 @@ class TestCasPaperStance:
         assert cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
         assert cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
         assert cfg.cas_event_driven.enabled is True
-        assert not any(
-            mode.touches_real_capital for mode in cfg.mode_stances.values()
-        )
+        assert not any(mode.touches_real_capital for mode in cfg.mode_stances.values())
 
     def test_cas_execute_fails_closed_without_depth_allow_or_candidate(self) -> None:
         """Invariant 6: missing depth/candidate keeps CAS in SHADOW."""

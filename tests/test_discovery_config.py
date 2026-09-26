@@ -62,16 +62,25 @@ class TestDiscoveryConfig:
         assert cfg.books.starting_equity_per_mode == Decimal("700000")
         assert cfg.modes[ModeId.M1_CAS.value].per_trade_guide == Decimal("0.01")
         assert cfg.modes[ModeId.M2_DIRECTIONAL.value].per_trade_guide == Decimal("0.02")
-        assert cfg.modes[ModeId.M3_TACTICAL_POSITIONAL.value].per_trade_guide == Decimal("0.02")
-        assert cfg.modes[ModeId.M4_STRATEGIC_POSITIONAL.value].per_trade_guide == Decimal("0.03")
+        assert cfg.modes[
+            ModeId.M3_TACTICAL_POSITIONAL.value
+        ].per_trade_guide == Decimal("0.02")
+        assert cfg.modes[
+            ModeId.M4_STRATEGIC_POSITIONAL.value
+        ].per_trade_guide == Decimal("0.03")
         assert cfg.bug_guard_trade_risk_fraction == Decimal("0.10")
         assert cfg.strict_quote_max_age_ms == 120000
         assert cfg.cas_strict_quote_max_age_ms == 30000
         assert cfg.hard_quote_max_age_ms == 300000
 
-    def test_discovery_config_fraction_greater_than_one_fails(self, tmp_path: Path) -> None:
+    def test_discovery_config_fraction_greater_than_one_fails(
+        self, tmp_path: Path
+    ) -> None:
         yaml_content = (ROOT / "config" / "discovery.yaml").read_text(encoding="utf-8")
-        bad_yaml = yaml_content.replace('bug_guard_trade_risk_fraction: "0.10"', 'bug_guard_trade_risk_fraction: "1.50"')
+        bad_yaml = yaml_content.replace(
+            'bug_guard_trade_risk_fraction: "0.10"',
+            'bug_guard_trade_risk_fraction: "1.50"',
+        )
         bad_path = tmp_path / "bad_discovery.yaml"
         bad_path.write_text(bad_yaml, encoding="utf-8")
         with pytest.raises(DiscoveryConfigError):
@@ -116,9 +125,13 @@ class TestStartupValidationDiscovery:
                 discovery_path=ROOT / "config" / "discovery.yaml",
             )
 
-    def test_startup_validation_discovery_malformed_yaml_fails(self, tmp_path: Path) -> None:
+    def test_startup_validation_discovery_malformed_yaml_fails(
+        self, tmp_path: Path
+    ) -> None:
         bad_path = tmp_path / "discovery.yaml"
-        bad_path.write_text("schema_version: '1'\nprofile_version: 'bad'\n", encoding="utf-8")
+        bad_path.write_text(
+            "schema_version: '1'\nprofile_version: 'bad'\n", encoding="utf-8"
+        )
         cfg = _sample_session_config(entry_profile=EntryProfile.DISCOVERY)
         with pytest.raises(StartupValidationError, match=r"[Mm]alformed|[Ii]nvalid"):
             validate_startup_configuration(
@@ -189,7 +202,9 @@ def _make_test_session(
 
 
 class TestHeartbeatAndBanner:
-    def test_paper_session_heartbeat_has_entry_profile_discovery(self, tmp_path: Path) -> None:
+    def test_paper_session_heartbeat_has_entry_profile_discovery(
+        self, tmp_path: Path
+    ) -> None:
         hb_path = tmp_path / "session_heartbeat.json"
         cfg = _sample_session_config(
             entry_profile=EntryProfile.DISCOVERY,
@@ -201,7 +216,9 @@ class TestHeartbeatAndBanner:
         assert payload["entry_profile"] == "DISCOVERY"
         assert payload["profile_version"] == "discovery-v1"
 
-    def test_paper_session_heartbeat_has_entry_profile_strict_when_absent(self, tmp_path: Path) -> None:
+    def test_paper_session_heartbeat_has_entry_profile_strict_when_absent(
+        self, tmp_path: Path
+    ) -> None:
         hb_path = tmp_path / "session_heartbeat.json"
         cfg = _sample_session_config(
             session_heartbeat_path=str(hb_path),
@@ -212,7 +229,9 @@ class TestHeartbeatAndBanner:
         assert payload["entry_profile"] == "STRICT"
         assert payload["profile_version"] == "strict"
 
-    def test_startup_banner_prints_discovery_temporary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_startup_banner_prints_discovery_temporary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         cfg = _sample_session_config(
             entry_profile=EntryProfile.DISCOVERY,
             session_heartbeat_path=str(tmp_path / "hb.json"),
@@ -242,4 +261,3 @@ class TestHeartbeatAndBanner:
         session.run(once=True)
         captured = capsys.readouterr()
         assert "ENTRY PROFILE: STRICT" in captured.out
-

@@ -115,9 +115,7 @@ def evaluate_quote_freshness(
                 f"strict limit {strict_quote_max_age_ms / 1000:.0f}s"
             ),
         )
-    return QuoteFreshnessResult(
-        hard_reason=None, strict_would_block=(), detail=None
-    )
+    return QuoteFreshnessResult(hard_reason=None, strict_would_block=(), detail=None)
 
 
 def quote_freshness_for_context(ctx: StrategyContext) -> QuoteFreshnessResult:

@@ -37,9 +37,7 @@ def _print_scenario_table(summary: ScenarioPerformanceSummary) -> None:
     kind = summary.scenario_kind.value
     print(f"\n{'=' * 78}")
     print(f" SCENARIO: {kind} ({summary.total_cases} Total Setups)")
-    print(
-        f" Genuine: {summary.genuine_count} | Fake Traps: {summary.fake_count}"
-    )
+    print(f" Genuine: {summary.genuine_count} | Fake Traps: {summary.fake_count}")
     print(f"{'=' * 78}")
     print(f"{'Metric':<26} | {'Deterministic Layer':<22} | {'Agentic Desk':<22}")
     print(f"{'-' * 26}-+-{'-' * 22}-+-{'-' * 22}")
@@ -58,8 +56,8 @@ def _print_scenario_table(summary: ScenarioPerformanceSummary) -> None:
     det_inr = _fmt_money(det["total_inr"])
     agt_inr = _fmt_money(agt["total_inr"])
     print(f"{'Net P&L (INR)':<26} | {det_inr:<22} | {agt_inr:<22}")
-    det_pf = det['profit_factor']
-    agt_pf = agt['profit_factor']
+    det_pf = det["profit_factor"]
+    agt_pf = agt["profit_factor"]
     print(f"{'Profit Factor':<26} | {det_pf:<22} | {agt_pf:<22}")
     det_dd = f"{det['max_drawdown_r']} R"
     agt_dd = f"{agt['max_drawdown_r']} R"
@@ -105,16 +103,16 @@ def _print_overall_summary(report: BreakoutStudyReport) -> None:
     print(f" {'Trades Executed':<28} | {det['trades']:<20} | {agt['trades']:<20}")
     print(f" {'Win Rate':<28} | {det_wr:<20} | {agt_wr:<20}")
     print(f" {'Total Return (in R)':<28} | {det_r:<20} | {agt_r:<20}")
-    det_inr_str = _fmt_money(det['total_inr'])
-    agt_inr_str = _fmt_money(agt['total_inr'])
+    det_inr_str = _fmt_money(det["total_inr"])
+    agt_inr_str = _fmt_money(agt["total_inr"])
     print(f" {'Total P&L (INR)':<28} | {det_inr_str:<20} | {agt_inr_str:<20}")
-    det_pf_str = det['profit_factor']
-    agt_pf_str = agt['profit_factor']
+    det_pf_str = det["profit_factor"]
+    agt_pf_str = agt["profit_factor"]
     print(f" {'Profit Factor':<28} | {det_pf_str:<20} | {agt_pf_str:<20}")
     print(f" {'Max Drawdown (R)':<28} | {det_dd:<20} | {agt_dd:<20}")
 
-    veto_saved = cf['veto_saved_losses_r']
-    down_saved = cf['downscale_saved_r']
+    veto_saved = cf["veto_saved_losses_r"]
+    down_saved = cf["downscale_saved_r"]
     print(f"\n{'*' * 78}")
     print(" FAKE BREAKOUT & TRAP DEFENSE ANALYSIS:")
     print(f" - Total Fake Breakouts Encountered : {overall.fake_count}")

@@ -76,9 +76,7 @@ class ModeLedger(StrictModel):
         default_factory=lambda: Money.zero(Currency.INR)
     )
     realized_pnl_today: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
-    estimated_net_today: Money = Field(
-        default_factory=lambda: Money.zero(Currency.INR)
-    )
+    estimated_net_today: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     unrealized_pnl: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     reserved_capital: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
     margin_used: Money = Field(default_factory=lambda: Money.zero(Currency.INR))
@@ -244,10 +242,7 @@ class FourModeBook:
             elif discovery_config is not None:
                 currency = next(iter(self._ledgers.values())).allocated_capital.currency
                 total_amount = sum(
-                    (
-                        item.allocated_capital.amount
-                        for item in self._ledgers.values()
-                    ),
+                    (item.allocated_capital.amount for item in self._ledgers.values()),
                     Decimal("0"),
                 )
                 self._total_equity = Money(total_amount, currency)
@@ -274,10 +269,7 @@ class FourModeBook:
             elif discovery_config is not None:
                 currency = next(iter(self._ledgers.values())).allocated_capital.currency
                 total_amount = sum(
-                    (
-                        item.allocated_capital.amount
-                        for item in self._ledgers.values()
-                    ),
+                    (item.allocated_capital.amount for item in self._ledgers.values()),
                     Decimal("0"),
                 )
                 self._total_equity = Money(total_amount, currency)
@@ -446,10 +438,7 @@ class FourModeBook:
         if total_equity is None and discovery_config is not None:
             computed_total_equity = Money(
                 sum(
-                    (
-                        item.allocated_capital.amount
-                        for item in final_ledgers.values()
-                    ),
+                    (item.allocated_capital.amount for item in final_ledgers.values()),
                     Decimal("0"),
                 ),
                 currency,
@@ -633,5 +622,3 @@ def _calculate_closed_trade_gross_pnl(
 ) -> Money:
     """Signed fill-ledger gross cash flow for one closed trade (pre-charges)."""
     return trade_fill_cash_flow(record.trade_id, orders_by_id, currency)
-
-

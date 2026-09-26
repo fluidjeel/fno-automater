@@ -1133,7 +1133,10 @@ class PaperRunner:
                 ),
             )
             return False
-        if evaluation.submit_structure_close and evaluation.roll_switch_kind is not None:
+        if (
+            evaluation.submit_structure_close
+            and evaluation.roll_switch_kind is not None
+        ):
             return self._submit_roll_switch_close(
                 evaluation,
                 intent=intent,
@@ -1190,9 +1193,7 @@ class PaperRunner:
             review_id=review_id,
             as_of=now,
         )
-        self._write_lifecycle(
-            position.trade_id, roll_switch_transition=transition
-        )
+        self._write_lifecycle(position.trade_id, roll_switch_transition=transition)
         self._services.trade_manager.apply_exit_evaluation(
             position.trade_id,
             ExitEvaluation(
@@ -1221,9 +1222,7 @@ class PaperRunner:
     ) -> PaperRollSwitchReplacementResult:
         """Submit a replacement leg after close; requires fresh Layer 2 approval."""
         lifecycle = self._services.store.get_position_lifecycle(trade_id)
-        transition = (
-            None if lifecycle is None else lifecycle.roll_switch_transition
-        )
+        transition = None if lifecycle is None else lifecycle.roll_switch_transition
         blocked = replacement_blocked_reason(
             transition,
             entries_blocked=self._entries_are_blocked(reconcile_blocked=False),
@@ -1236,9 +1235,7 @@ class PaperRunner:
                 transition=transition,
             )
         position = self._services.trade_manager.get_position(trade_id)
-        closed = (
-            position is not None and position.state is TradeState.CLOSED
-        ) or (
+        closed = (position is not None and position.state is TradeState.CLOSED) or (
             lifecycle is not None and lifecycle.position.state is TradeState.CLOSED
         )
         if not closed:
@@ -1267,9 +1264,7 @@ class PaperRunner:
                 "as_of": self._clock.now_utc(),
             }
         )
-        self._write_lifecycle(
-            trade_id, roll_switch_transition=pending_transition
-        )
+        self._write_lifecycle(trade_id, roll_switch_transition=pending_transition)
         stamped = _stamp_roll_switch_replacement_request(request, pending_transition)
         if lifecycle.campaign_id is not None:
             stamped = PaperStrategyRequest(
@@ -1305,9 +1300,7 @@ class PaperRunner:
                 }
             )
             if lifecycle.campaign_id is not None:
-                self._link_campaign_trade(
-                    lifecycle.campaign_id, replacement_trade_id
-                )
+                self._link_campaign_trade(lifecycle.campaign_id, replacement_trade_id)
             self._write_lifecycle(
                 trade_id,
                 roll_switch_transition=completed,

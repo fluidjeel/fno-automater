@@ -340,8 +340,7 @@ def evaluate_m1_provider_event(
         elif family_id is not None and hasattr(family_id, "value"):
             episode_id = str(family_id.value)
         if event.disconnected or (
-            not event.exchange_timestamp_observed
-            and not event.allow_simulated_fixture
+            not event.exchange_timestamp_observed and not event.allow_simulated_fixture
         ):
             block = ReasonCode.DATA_GAP
         else:
@@ -372,7 +371,9 @@ def evaluate_m1_provider_event(
             event.provenance if isinstance(event, M1ProviderEvent) else "unlabelled"
         ),
         allow_simulated_fixture=(
-            event.allow_simulated_fixture if isinstance(event, M1ProviderEvent) else False
+            event.allow_simulated_fixture
+            if isinstance(event, M1ProviderEvent)
+            else False
         ),
         ledger_block=block,
     )
@@ -476,7 +477,9 @@ def _parse_hhmm(value: str) -> time:
     return time(int(hour), int(minute))
 
 
-def active_m1_window(now: datetime, config: CasEventDrivenConfig) -> M1ScanWindow | None:
+def active_m1_window(
+    now: datetime, config: CasEventDrivenConfig
+) -> M1ScanWindow | None:
     """Return the scan window containing ``now``. Cash auction 15:30-15:40 is absent."""
     local = now.astimezone(_IST).time()
     for window in config.scan_windows:

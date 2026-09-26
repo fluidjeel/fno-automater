@@ -37,9 +37,7 @@ from trading.storage.trading_store import TradingStore
 def _charges_for_trade(store: TradingStore, trade_id: str) -> Decimal:
     orders = index_order_events(store)
     charges = index_fill_charges(store)
-    return trade_confirmed_charges(
-        trade_id, orders, charges, Currency.INR
-    ).amount
+    return trade_confirmed_charges(trade_id, orders, charges, Currency.INR).amount
 
 
 class TestFillChargesByStructure:
@@ -224,9 +222,7 @@ class TestFillChargeRestart:
             assert after.realized_gross == before.realized_gross
             assert after.confirmed_charges == before.confirmed_charges
             assert after.realized_net == before.realized_net
-            book = FourModeBook.reconstruct_from_store(
-                store, clock.now_utc().date()
-            )
+            book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
             ledger = book.get_ledger(lifecycle.intent.mode_id)  # type: ignore[arg-type]
             assert ledger.realized_gross_pnl_today == before.realized_gross
             assert ledger.realized_pnl_today == conservative_realized_net(

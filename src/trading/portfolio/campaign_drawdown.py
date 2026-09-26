@@ -117,7 +117,9 @@ class CampaignLedger:
 
     def campaigns_blocking_entries(self) -> tuple[str, ...]:
         return tuple(
-            record.campaign_id for record in self._records.values() if record.entries_blocked
+            record.campaign_id
+            for record in self._records.values()
+            if record.entries_blocked
         )
 
     def begin_campaign(
@@ -168,9 +170,9 @@ class CampaignLedger:
         if trade_id in record.recorded_closes:
             return record
         currency = record.cumulative_realized_gross.currency
-        gross = (record.cumulative_realized_gross + accounting.realized_gross).quantized(
-            Rounding.HALF_EVEN
-        )
+        gross = (
+            record.cumulative_realized_gross + accounting.realized_gross
+        ).quantized(Rounding.HALF_EVEN)
         total_charges = (
             record.cumulative_charges + accounting.confirmed_charges
         ).quantized(Rounding.HALF_EVEN)
@@ -271,9 +273,9 @@ def campaign_loss_limit(
     cfg = modes_config or load_modes_config()
     policy = cfg.modes[mode_id]
     ledger = mode_book.get_ledger(mode_id)
-    return (
-        ledger.reference_capital * policy.max_open_loss_cap_fraction
-    ).quantized(Rounding.FLOOR)
+    return (ledger.reference_capital * policy.max_open_loss_cap_fraction).quantized(
+        Rounding.FLOOR
+    )
 
 
 def conservative_campaign_net(record: CampaignRecord) -> Money:

@@ -74,7 +74,9 @@ class TestStartupValidation:
         validated_cfg, warnings = validate_startup_configuration(
             cfg, enforce_g3_shadow=False
         )
-        assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+        assert (
+            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+        )
         assert len(warnings) == 1
         assert "measured limitation" in warnings[0]
 
@@ -104,8 +106,13 @@ class TestStartupValidation:
         validated_cfg, warnings = validate_startup_configuration(
             cfg, enforce_g3_shadow=True
         )
-        assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-        assert validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
+        assert (
+            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+        )
+        assert (
+            validated_cfg.strategy_stances["positional_long_option"]
+            is ExecutionMode.PAPER
+        )
         assert len(warnings) == 1
         assert "measured limitation" in warnings[0]
 
@@ -254,8 +261,12 @@ class TestStartupValidation:
             session_cfg, modes_cfg, enforce_g3_shadow=True
         )
         assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
-        assert validated_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
-        assert validated_cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
+        assert (
+            validated_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
+        )
+        assert (
+            validated_cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
+        )
         assert len(warnings) == 1
         assert "measured limitation" in warnings[0]
 

@@ -45,9 +45,7 @@ def following_week_epoch(
     epochs = expiry_epochs(chain.payload)
     if not epochs:
         return None
-    selection = calendar.select_m2_expiry(
-        epochs, as_of=as_of, allow_fallback=True
-    )
+    selection = calendar.select_m2_expiry(epochs, as_of=as_of, allow_fallback=True)
     selected = selection.selected_expiry
     if selected is None or not selection.eligible:
         return None

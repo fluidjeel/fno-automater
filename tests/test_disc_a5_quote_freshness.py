@@ -66,9 +66,7 @@ def _option(symbol: str, *, strike: str, times: SnapshotTimes) -> FeatureSnapsho
         contract=f.option_contract(
             symbol=symbol,
             strike=Decimal(strike),
-            option_type=OptionType.CALL
-            if symbol.endswith("CE")
-            else OptionType.PUT,
+            option_type=OptionType.CALL if symbol.endswith("CE") else OptionType.PUT,
             expiry=EXPIRY,
         ),
         times=times,
@@ -83,9 +81,7 @@ def _option(symbol: str, *, strike: str, times: SnapshotTimes) -> FeatureSnapsho
         derivatives=DerivativesContext(
             days_to_expiry=10,
             open_interest=5000,
-            option_type=OptionType.CALL
-            if symbol.endswith("CE")
-            else OptionType.PUT,
+            option_type=OptionType.CALL if symbol.endswith("CE") else OptionType.PUT,
             greeks=Greeks(
                 model="fixture",
                 calculation_version="1",
@@ -152,7 +148,8 @@ class TestDiscA5QuoteFreshness:
         )
         assert decision.emits_intent
         assert not any(
-            rejection.reason is ReasonCode.DATA_STALE for rejection in decision.rejections
+            rejection.reason is ReasonCode.DATA_STALE
+            for rejection in decision.rejections
         )
 
     def test_fresh_quote_stale_bar_does_not_data_stale_discovery(self) -> None:
@@ -166,7 +163,8 @@ class TestDiscA5QuoteFreshness:
         )
         assert decision.emits_intent
         assert not any(
-            rejection.reason is ReasonCode.DATA_STALE for rejection in decision.rejections
+            rejection.reason is ReasonCode.DATA_STALE
+            for rejection in decision.rejections
         )
 
     def test_three_minute_quote_is_soft_stale_in_discovery(self) -> None:
@@ -180,7 +178,8 @@ class TestDiscA5QuoteFreshness:
         assert decision.emits_intent
         assert ReasonCode.DATA_STALE in decision.strict_would_block
         assert not any(
-            rejection.reason is ReasonCode.DATA_STALE for rejection in decision.rejections
+            rejection.reason is ReasonCode.DATA_STALE
+            for rejection in decision.rejections
         )
 
     def test_three_minute_quote_rejects_under_strict(self) -> None:

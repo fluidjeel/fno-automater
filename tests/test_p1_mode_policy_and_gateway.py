@@ -771,7 +771,9 @@ def test_p1_g3_boundary_warns_without_demotion() -> None:
     )
 
     assert validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-    assert validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
+    assert (
+        validated_cfg.strategy_stances["positional_long_option"] is ExecutionMode.PAPER
+    )
     assert validated_cfg.strategy_stances["debit_spread"] is ExecutionMode.PAPER
     assert len(warnings) == 1
     assert "measured limitation" in warnings[0]
@@ -799,7 +801,10 @@ def test_p1_g3_boundary_warns_without_demotion() -> None:
 
     assert runtime_session_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
     assert runtime_session_cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
-    assert runtime_session_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
+    assert (
+        runtime_session_cfg.mode_stances["M3_TACTICAL_POSITIONAL"]
+        is ExecutionMode.PAPER
+    )
     assert len(startup_warnings) == 1
     assert "measured limitation" in startup_warnings[0]
 
