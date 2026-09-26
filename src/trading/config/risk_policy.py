@@ -78,6 +78,8 @@ class RiskPolicyConfig(VersionedModel):
     single_event_exposure_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
     # ADESK-A5 PART 8 — max |worst_case|/equity before entry freeze.
     tail_budget_fraction: ExactDecimal = Field(gt=0, le=Decimal("1"))
+    # Portfolio arbitration cap on concurrent M4 open/pending positions.
+    max_m4_open_positions: StrictInt = Field(default=2, ge=1)
     # Portfolio open-risk ceiling across all modes (absolute money).
     max_global_open_risk: MoneyAmount | None = None
     decision_ttl_seconds: StrictInt = Field(gt=0)

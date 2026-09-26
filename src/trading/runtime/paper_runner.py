@@ -97,6 +97,7 @@ from trading.portfolio import (
     PortfolioReconciler,
     build_broker_snapshot,
     build_portfolio_view,
+    m4_open_position_cap,
 )
 from trading.portfolio.campaign_drawdown import (
     CampaignLedger,
@@ -414,7 +415,12 @@ class PaperRunner:
             ),
             reservations=reservations,
         )
-        self._arbiter = PortfolioArbiter()
+        self._arbiter = PortfolioArbiter(
+            max_m4_open_positions=m4_open_position_cap(
+                risk_policy=risk_policy.config,
+                discovery_config=discovery_config,
+            )
+        )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._protection_snapshots: dict[str, FeatureSnapshot] = {}
         self._lifecycle_recovered = False

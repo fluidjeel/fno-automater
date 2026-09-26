@@ -17,7 +17,7 @@ from trading.domain.contracts.base import (
     StrictModel,
     VersionedModel,
 )
-from trading.domain.enums import ModeId, ReasonCode
+from trading.domain.enums import ExecutionMode, ModeId, ReasonCode
 
 __all__ = [
     "DeltaBand",
@@ -138,6 +138,7 @@ class DiscoveryConfig(VersionedModel):
     profile_version: NonEmptyStr
     books: DiscoveryBooksConfig
     modes: dict[str, DiscoveryModeConfig]
+    family_stances: dict[str, ExecutionMode] = Field(default_factory=dict)
     bug_guard_trade_risk_fraction: ExactDecimal = Field(
         gt=Decimal("0"), le=Decimal("1")
     )

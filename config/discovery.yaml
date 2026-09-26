@@ -4,6 +4,9 @@ books:
   starting_equity_per_mode: "700000"     # each mode independent
   compounding: DAILY_REALIZED_NET        # equity fixed at session start
   drawdown_alert_fraction: "0.20"        # Telegram only, never blocks
+family_stances:
+  long_straddle: PAPER
+  long_strangle: PAPER
 modes:
   M1_CAS:
     per_trade_guide: "0.01"

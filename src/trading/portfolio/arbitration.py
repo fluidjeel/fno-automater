@@ -13,7 +13,6 @@ from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.position import PositionState
 from trading.domain.enums import FamilyId, ModeId, ReasonCode, TradeState
 from trading.portfolio.economic_overlap import (
-    MAX_M4_OPEN_POSITIONS,
     EconomicExposureKey,
     count_m4_positions,
     directions_conflict,
@@ -96,6 +95,9 @@ class ArbitrationResult(StrictModel):
 
 class PortfolioArbiter:
     """Arbitrates candidates from multiple mode producers."""
+
+    def __init__(self, *, max_m4_open_positions: int) -> None:
+        self._max_m4_open_positions = max_m4_open_positions
 
     def arbitrate(
         self,
@@ -205,7 +207,7 @@ class PortfolioArbiter:
             )
             if (
                 candidate.mode_id is ModeId.M4_STRATEGIC_POSITIONAL
-                and m4_count >= MAX_M4_OPEN_POSITIONS
+                and m4_count >= self._max_m4_open_positions
             ):
                 incumbent_id = (
                     _first_m4_incumbent(existing_positions, approved) or "M4_CAP"
@@ -214,7 +216,7 @@ class PortfolioArbiter:
                     reason_code=ReasonCode.M4_POSITION_CAP_REACHED,
                     incumbent_id=incumbent_id,
                     detail=(
-                        f"M4 position cap {MAX_M4_OPEN_POSITIONS} reached; "
+                        f"M4 position cap {self._max_m4_open_positions} reached; "
                         f"incumbent: {incumbent_id}"
                     ),
                     action="SUPPRESSED_M4_CAP",

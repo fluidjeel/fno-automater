@@ -11,6 +11,7 @@ from trading.config.discovery import DiscoveryConfig
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketState
 from trading.domain.contracts.mode_policy import ModesConfig
 from trading.domain.enums import EntryProfile, ExecutionMode, FamilyId, ModeId
+from trading.domain.family_gates import effective_family_stances
 from trading.identification import (
     bind_credit_spread,
     bind_debit_spread,
@@ -151,11 +152,18 @@ def produce_family_requests(
     entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> tuple[ProducedFamilyRequest, ...]:
     """Evaluate every configured family producer without legacy router gating."""
+    merged_family_stances = effective_family_stances(
+        family_stances,
+        entry_profile=entry_profile,
+        discovery_family_stances=(
+            discovery_config.family_stances if discovery_config is not None else None
+        ),
+    )
     produced: list[ProducedFamilyRequest] = []
     for policy_row, family_id, stance in iter_mode_families(
         modes_config,
         mode_stances=mode_stances,
-        family_stances=family_stances,
+        family_stances=merged_family_stances,
     ):
         spec = producer_spec_for(policy_row.mode_id, family_id)
         if spec is None:
@@ -171,7 +179,12 @@ def produce_family_requests(
             entry_profile=entry_profile,
         )
         execute = (
-            family_executable(stance, family_id=family_id) and bound.binding.eligible
+            family_executable(
+                stance,
+                family_id=family_id,
+                entry_profile=entry_profile,
+            )
+            and bound.binding.eligible
         )
         mode = ExecutionMode.PAPER if execute else ExecutionMode.SHADOW
         produced.append(
