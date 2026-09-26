@@ -118,6 +118,11 @@ def _blocked(ctx: DecisionTextContext, codes: tuple[ReasonCode, ...]) -> str:
     return f"Blocked: {detail}."
 
 
+def _data_feed_error(ctx: DecisionTextContext, _codes: tuple[ReasonCode, ...]) -> str:
+    detail = ctx.detail or "market data builder failed"
+    return f"Blocked: data feed error ({detail})."
+
+
 _DEFAULT_TEMPLATE: Callable[[DecisionTextContext, tuple[ReasonCode, ...]], str] = (
     _generic
 )
@@ -134,6 +139,7 @@ _TEMPLATES: dict[
     ReasonCode.ENTRY_FROZEN: _blocked,
     ReasonCode.DATA_STALE: _blocked,
     ReasonCode.DATA_INVALID: _blocked,
+    ReasonCode.DATA_FEED_ERROR: _data_feed_error,
     ReasonCode.PRICE_UNAVAILABLE: _blocked,
     ReasonCode.RISK_LIMIT_TRADE: _blocked,
     ReasonCode.EXACT_DUPLICATE_SUPPRESSED: _generic,

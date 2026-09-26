@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
+import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -92,6 +93,7 @@ from trading.runtime.cas_event_path import (
     record_episode_attempt,
 )
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
+from trading.runtime.discovery_data_feed_alert import DataFeedAlertTracker
 from trading.runtime.discovery_drawdown_alert import DrawdownAlertTracker
 from trading.runtime.event_risk import collect_event_risk
 from trading.runtime.four_mode_producers import (
@@ -135,6 +137,13 @@ __all__ = [
 
 _IST = ZoneInfo("Asia/Kolkata")
 _NOTIFY_MAX = 4000
+_BUILDER_FEED_ERRORS = (
+    FyersApiError,
+    OSError,
+    TimeoutError,
+    ValueError,
+    httpx.TimeoutException,
+)
 
 
 class ReviewSlotConfig(BaseModel):
@@ -285,6 +294,7 @@ class PaperSession:
         self._m1_ingress: object | None = None
         self._latest_market_state: MarketState | None = None
         self._drawdown_alerts = DrawdownAlertTracker()
+        self._data_feed_alerts = DataFeedAlertTracker()
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -428,10 +438,16 @@ class PaperSession:
         if isinstance(holder, dict) and not holder.get("keep"):
             holder["event"] = None
         now = self._clock.now_utc()
-        requests, snapshots = self._builder(now)
+        try:
+            requests, snapshots = self._builder(now)
+        except _BUILDER_FEED_ERRORS as exc:
+            self._handle_builder_feed_error(exc, now=now)
+            return None
+        self._data_feed_alerts.record_success(notify=self._notifier.send)
         latest = getattr(self._builder, "latest_market_state", None)
         if isinstance(latest, MarketState):
             self._latest_market_state = latest
+        self._persist_supplemental_feed_errors(now)
         requests = self._entry_requests(requests)
         result: PaperCycleResult | None = None
         if requests:
@@ -474,6 +490,49 @@ class PaperSession:
             now=now, result=result, had_requests=bool(requests)
         )
         return result
+
+    def _handle_builder_feed_error(self, exc: BaseException, *, now: datetime) -> None:
+        """Log, record, alert and continue without new entries after a feed failure."""
+        logging.getLogger(__name__).error(
+            "paper session builder feed error; skipping entries this cycle",
+            exc_info=exc,
+        )
+        self._runner.persist_data_feed_error(
+            as_of=now,
+            detail=str(exc),
+            experiment_id=self._config.experiment_prefix,
+        )
+        self._data_feed_alerts.record_failure(exc, notify=self._notifier.send)
+        exit_snapshots = self._exit_snapshots_for_feed_failure()
+        if exit_snapshots:
+            self._runner.manage_exits(exit_snapshots)
+        self._record_portfolio_risk(exit_snapshots)
+        self._run_due_reviews(exit_snapshots)
+        self._run_due_m2_carry_gate(exit_snapshots, now)
+        self._cycle_count += 1
+        self._write_session_heartbeat(now=now, result=None, had_requests=False)
+
+    def _exit_snapshots_for_feed_failure(
+        self,
+    ) -> dict[str, FeatureSnapshot]:
+        """Use protection-monitor quotes when the market builder cannot run."""
+        return self._runner.protection_snapshots
+
+    def _persist_supplemental_feed_errors(self, now: datetime) -> None:
+        """Record partial feed failures that did not abort the builder."""
+        feed_errors = getattr(self._builder, "feed_errors", None)
+        if not isinstance(feed_errors, list):
+            return
+        for detail in feed_errors:
+            if not isinstance(detail, str) or not detail:
+                continue
+            self._runner.persist_data_feed_error(
+                as_of=now,
+                detail=detail,
+                experiment_id=self._config.experiment_prefix,
+                family_id="FOLLOWING_WEEK_CHAIN",
+            )
+        feed_errors.clear()
 
     def submit_m1_event(self, event: M1ProviderEvent) -> PaperCycleResult | None:
         """Run only M1 through the session builder from one provider event.
@@ -1274,6 +1333,7 @@ def _four_mode_request_builder(
     cas_attempts_today = 0
     cas_session_date: date | None = None
     m1_holder: dict[str, object] = {"event": None, "keep": False}
+    feed_errors: list[str] = []
 
     def build(
         now: datetime,
@@ -1351,7 +1411,7 @@ def _four_mode_request_builder(
                 option_candidates = _with_option_depth(
                     option_candidates, feed, paper_data
                 )
-            option_candidates, option_specs = _merge_following_week_chain(
+            option_candidates, option_specs, fw_error = _merge_following_week_chain(
                 option_candidates,
                 option_specs,
                 chain=chain,
@@ -1363,6 +1423,8 @@ def _four_mode_request_builder(
                 pipeline_symbol=underlying_cfg.symbol,
                 following_week_strikes=following_strikes,
             )
+            if fw_error is not None:
+                feed_errors.append(fw_error)
             instruments.update(option_specs)
             for candidate in option_candidates:
                 snapshots[candidate.contract.symbol] = candidate
@@ -1549,6 +1611,7 @@ def _four_mode_request_builder(
         return requests, snapshots
 
     build.m1_holder = m1_holder  # type: ignore[attr-defined]
+    build.feed_errors = feed_errors  # type: ignore[attr-defined]
     build.latest_market_state = None  # type: ignore[attr-defined]
     return build
 
@@ -1594,7 +1657,7 @@ def _merge_following_week_chain(
     feed: FyersMarketFeed,
     pipeline_symbol: str,
     following_week_strikes: int = _FOLLOWING_WEEK_STRIKES,
-) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec]]:
+) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec], str | None]:
     """Add the following-week chain when the loaded chain is a nearer expiry."""
     already = {
         item.contract.expiry
@@ -1608,14 +1671,19 @@ def _merge_following_week_chain(
         already_listed=already,
     )
     if epoch is None:
-        return option_candidates, option_specs
+        return option_candidates, option_specs, None
     try:
         capture = feed.fetch_option_chain(pipeline_symbol, expiry_epoch=epoch)
-    except (FyersApiError, OSError):
-        logging.getLogger(__name__).warning(
-            "following-week chain fetch failed; M2 will abstain if that expiry is absent"
+    except (FyersApiError, OSError) as exc:
+        detail = (
+            f"following-week chain fetch failed for {pipeline_symbol} "
+            f"expiry_epoch={epoch}: {exc}"
         )
-        return option_candidates, option_specs
+        logging.getLogger(__name__).warning(
+            "%s; near chain retained",
+            detail,
+        )
+        return option_candidates, option_specs, detail
     event = normalize_fyers_option_chain(
         capture,
         symbol=pipeline_symbol,
@@ -1637,4 +1705,4 @@ def _merge_following_week_chain(
         marked.append(snap.model_copy(update={"features": features}))
     merged_specs = dict(option_specs)
     merged_specs.update(extra_specs)
-    return option_candidates + tuple(marked), merged_specs
+    return option_candidates + tuple(marked), merged_specs, None

@@ -117,6 +117,7 @@ from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.discovery_decision_recorder import (
     persist_cycle_decisions,
+    persist_data_feed_error,
     persist_exit_decision,
 )
 from trading.runtime.isolation import assert_paper_isolation
@@ -655,6 +656,33 @@ class PaperRunner:
         self, snapshots: Mapping[str, FeatureSnapshot]
     ) -> None:
         self._protection_snapshots.update(snapshots)
+
+    @property
+    def protection_snapshots(self) -> dict[str, FeatureSnapshot]:
+        """Latest protection-monitor snapshots for exit evaluation."""
+        return dict(self._protection_snapshots)
+
+    def persist_data_feed_error(
+        self,
+        *,
+        as_of: datetime,
+        detail: str,
+        experiment_id: str,
+        family_id: str = "DATA_FEED",
+    ) -> int:
+        """Append one DATA-stage BLOCKED_HARD record for a feed failure."""
+        cycle_id = self._ids.new_id("CYC")
+        return persist_data_feed_error(
+            self._services.store,
+            self._ids,
+            cycle_id=cycle_id,
+            as_of=as_of,
+            profile_version=self._profile_version,
+            code_version=self._code_version,
+            detail=detail,
+            experiment_id=experiment_id,
+            family_id=family_id,
+        )
 
     def persist_session_protection(self, state: object) -> None:
         self._services.store.upsert_session_protection(state)  # type: ignore[arg-type]
