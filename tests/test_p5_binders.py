@@ -261,12 +261,12 @@ def test_m2_direction_check() -> None:
     assert bound_down.binding.eligible is True
     assert bound_down.binding.selected_symbols == ("PUT_OPT",)
 
-    # RANGE trend -> PRICE_UNAVAILABLE
+    # RANGE trend -> direction unresolved (not misnamed PRICE_UNAVAILABLE)
     bound_range = bind_m2_long_option(
         (c_call, c_put), market=_market(TrendState.RANGE), policy=POLICY
     )
     assert bound_range.binding.eligible is False
-    assert bound_range.binding.reason_codes == (ReasonCode.PRICE_UNAVAILABLE,)
+    assert bound_range.binding.reason_codes == (ReasonCode.DIRECTION_UNRESOLVED,)
     assert bound_range.setup_features is None
 
 

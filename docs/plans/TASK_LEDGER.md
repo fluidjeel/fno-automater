@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 15
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A2.
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A2 (DISC-A4/A5/A6 done).
 
 ## PAPER Discovery Mode (`docs/plans/DISCOVERY_MODE_STORIES.md`)
 
@@ -17,7 +17,7 @@ Sprint A is the Monday 2026-09-28 target.
 | DISC-A3 | BLOCKED | Event blackout + daily-loss freezes soft; drawdown alert |
 | DISC-A4 | DONE | `touch-v1` paper fills + strict fill verdict |
 | DISC-A5 | DONE | Staleness from quote time, not bar time |
-| DISC-A6 | BLOCKED | M2 direction fallback, two-pass strike pick, binder reasons |
+| DISC-A6 | DONE | M2 direction fallback, two-pass strike pick, binder reasons |
 | DISC-A7 | BLOCKED | Straddle/strangle PAPER; M4 cap config; G2 name fix |
 | DISC-A8 | BLOCKED | Within-mode duplicates only; daily entry caps |
 | DISC-A9 | BLOCKED | Decision + reasoning record for every evaluation and exit |

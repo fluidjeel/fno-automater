@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from statistics import median
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from trading.data.events import CanonicalMarketEvent
@@ -20,12 +21,15 @@ from trading.domain.contracts.identification import (
     TrendState,
     VolatilityState,
 )
-from trading.domain.enums import ReasonCode
+from trading.domain.enums import EntryProfile, ReasonCode
 from trading.identification.config import IdentificationPolicy
 from trading.news.contracts import EventRiskState
 from trading.strategies.macro import MacroAssessment, MacroBias, accepted_macro_bias
 
-__all__ = ["build_market_state"]
+if TYPE_CHECKING:
+    from trading.config.discovery import DiscoveryDirectionConfig
+
+__all__ = ["apply_discovery_direction_fallback", "build_market_state"]
 
 _IST = ZoneInfo("Asia/Kolkata")
 _BAR_SECONDS = 300
@@ -133,6 +137,41 @@ def build_market_state(
         completed_bar_count=len(bars),
         session_count=len(sessions),
         reason_codes=tuple(dict.fromkeys(reasons)),
+    )
+
+
+def apply_discovery_direction_fallback(
+    state: MarketState,
+    *,
+    direction: DiscoveryDirectionConfig,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+) -> MarketState:
+    """When DISCOVERY and strict trend is not UP/DOWN, infer direction from returns."""
+    if entry_profile is not EntryProfile.DISCOVERY:
+        return state
+    if state.trend in {TrendState.UP, TrendState.DOWN}:
+        return state
+    if state.completed_bar_count < direction.fallback_min_bars:
+        return state
+    r15, r60, score = state.return_15m, state.return_60m, state.trend_score
+    if r15 is None or r60 is None or score is None:
+        return state
+    threshold = direction.fallback_trend_threshold
+    if r15 > 0 and r60 > 0 and score >= threshold:
+        resolved = TrendState.UP
+    elif r15 < 0 and r60 < 0 and score <= -threshold:
+        resolved = TrendState.DOWN
+    else:
+        return state
+    reasons = list(state.reason_codes)
+    if not state.warmup_complete:
+        reasons.append(ReasonCode.WARMUP_INCOMPLETE)
+    reasons.append(ReasonCode.DIRECTION_FALLBACK)
+    return state.model_copy(
+        update={
+            "trend": resolved,
+            "reason_codes": tuple(dict.fromkeys(reasons)),
+        }
     )
 
 

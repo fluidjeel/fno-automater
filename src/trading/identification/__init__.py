@@ -36,7 +36,10 @@ from trading.identification.config import (
     load_identification_policy,
 )
 from trading.identification.macro import publish_macro_assessment
-from trading.identification.market_state import build_market_state
+from trading.identification.market_state import (
+    apply_discovery_direction_fallback,
+    build_market_state,
+)
 from trading.identification.p1_features import (
     ObservedP1Features,
     blocked_families,
@@ -60,6 +63,7 @@ __all__ = [
     "SpecialSessionRule",
     "TradingCalendarPort",
     "allowed_families_for",
+    "apply_discovery_direction_fallback",
     "bind_credit_spread",
     "bind_debit_spread",
     "bind_iron_condor",

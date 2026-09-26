@@ -132,7 +132,7 @@ def test_neutral_technical_emits_nothing() -> None:
     ctx = _ctx(underlying=_underlying("24000", "24000"))
     decision = LongOptionStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.DIRECTION_NEUTRAL
 
 
 def test_fresh_confident_macro_overrides_technical() -> None:
@@ -155,6 +155,7 @@ def test_sub_threshold_price_move_abstains_as_noise() -> None:
     assert technical_bias(underlying) is MacroBias.NEUTRAL
     decision = LongOptionStrategy().evaluate(_ctx(underlying=underlying))
     assert not decision.emits_intent
+    assert decision.rejections[0].reason is ReasonCode.DIRECTION_NEUTRAL
 
 
 def test_stale_macro_falls_back_to_technical() -> None:
@@ -183,11 +184,10 @@ def test_same_inputs_produce_identical_intent_id() -> None:
 
 
 def test_option_type_mismatch_skips_candidate() -> None:
-    # Bullish read but the candidate is a PUT: skip, do not reject.
     ctx = _ctx(underlying=_underlying("24100", "24000"), option=_option(OptionType.PUT))
     decision = LongOptionStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.OPTION_TYPE_MISMATCH
 
 
 def test_stale_underlying_blocks_entry() -> None:

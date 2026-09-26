@@ -7,9 +7,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import cast
 
+from trading.config.discovery import DiscoveryConfig
 from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketState
 from trading.domain.contracts.mode_policy import ModesConfig
-from trading.domain.enums import ExecutionMode, FamilyId, ModeId
+from trading.domain.enums import EntryProfile, ExecutionMode, FamilyId, ModeId
 from trading.identification import (
     bind_credit_spread,
     bind_debit_spread,
@@ -146,6 +147,8 @@ def produce_family_requests(
     policy: IdentificationPolicy,
     p1: ObservedP1Features | None,
     master_symbols: frozenset[str] | None,
+    discovery_config: DiscoveryConfig | None = None,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> tuple[ProducedFamilyRequest, ...]:
     """Evaluate every configured family producer without legacy router gating."""
     produced: list[ProducedFamilyRequest] = []
@@ -164,6 +167,8 @@ def produce_family_requests(
             policy=policy,
             p1=p1,
             master_symbols=master_symbols,
+            discovery_config=discovery_config,
+            entry_profile=entry_profile,
         )
         execute = (
             family_executable(stance, family_id=family_id) and bound.binding.eligible
@@ -209,6 +214,7 @@ def build_four_mode_requests(
                 route_decision=None,
                 forced_mode_id=item.spec.mode_id,
                 forced_family_id=item.spec.family_id,
+                binding_reason_codes=item.bound.binding.reason_codes,
             )
         )
     return tuple(requests)

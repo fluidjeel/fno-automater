@@ -59,6 +59,7 @@ from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.identification import (
     allowed_families_for,
+    apply_discovery_direction_fallback,
     bind_debit_spread,
     bind_long_option,
     build_market_state,
@@ -1261,6 +1262,13 @@ def _four_mode_request_builder(
         if cas_session_date != session_day:
             cas_session_date = session_day
             cas_attempts_today = 0
+        near_strikes = session_cfg.option_strikes_each_side
+        following_strikes = _FOLLOWING_WEEK_STRIKES
+        if discovery_config is not None:
+            near_strikes = discovery_config.selection.near_strikes_each_side
+            following_strikes = (
+                discovery_config.selection.following_week_strikes_each_side
+            )
         event_risk = collect_event_risk(collector, news_config, as_of=now)
         snapshots: dict[str, FeatureSnapshot] = {}
         instruments: dict[str, InstrumentSpec] = {}
@@ -1304,7 +1312,7 @@ def _four_mode_request_builder(
                 underlying=index_underlying,
                 as_of=now,
                 zone=zone,
-                strikes_each_side=session_cfg.option_strikes_each_side,
+                strikes_each_side=near_strikes,
             )
             if option_specs:
                 quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
@@ -1315,7 +1323,7 @@ def _four_mode_request_builder(
                     underlying=index_underlying,
                     as_of=now,
                     zone=zone,
-                    strikes_each_side=session_cfg.option_strikes_each_side,
+                    strikes_each_side=near_strikes,
                     quotes=observed_quotes,
                 )
             if paper_data is not None:
@@ -1332,6 +1340,7 @@ def _four_mode_request_builder(
                 zone=zone,
                 feed=feed,
                 pipeline_symbol=underlying_cfg.symbol,
+                following_week_strikes=following_strikes,
             )
             instruments.update(option_specs)
             for candidate in option_candidates:
@@ -1353,6 +1362,12 @@ def _four_mode_request_builder(
             policy=identification,
             vix_history=vix_history,
         )
+        if discovery_config is not None:
+            market_state = apply_discovery_direction_fallback(
+                market_state,
+                direction=discovery_config.direction,
+                entry_profile=session_cfg.entry_profile,
+            )
         p1 = (
             None
             if paper_data is None
@@ -1370,6 +1385,8 @@ def _four_mode_request_builder(
             policy=identification,
             p1=p1,
             master_symbols=master_symbols,
+            discovery_config=discovery_config,
+            entry_profile=session_cfg.entry_profile,
         )
         event = m1_holder.get("event")
         window = active_m1_window(now, session_cfg.cas_event_driven)
@@ -1553,6 +1570,7 @@ def _merge_following_week_chain(
     zone: ZoneInfo,
     feed: FyersMarketFeed,
     pipeline_symbol: str,
+    following_week_strikes: int = _FOLLOWING_WEEK_STRIKES,
 ) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec]]:
     """Add the following-week chain when the loaded chain is a nearer expiry."""
     already = {
@@ -1587,7 +1605,7 @@ def _merge_following_week_chain(
         underlying=underlying,
         as_of=as_of,
         zone=zone,
-        strikes_each_side=_FOLLOWING_WEEK_STRIKES,
+        strikes_each_side=following_week_strikes,
     )
     marked: list[FeatureSnapshot] = []
     for snap in extra:

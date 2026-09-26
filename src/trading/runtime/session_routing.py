@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from trading.domain.contracts.mode_policy import ModePolicy, ModesConfig
-from trading.domain.enums import ExecutionMode, FamilyId, ModeId
+from trading.domain.enums import EntryProfile, ExecutionMode, FamilyId, ModeId
 from trading.domain.family_gates import (
     CALENDAR_FAMILIES,
     G1_EXCEEDS_BUDGET_FAMILIES,
@@ -17,6 +17,7 @@ from trading.domain.family_gates import (
 from trading.identification.binders import BoundCandidates
 
 if TYPE_CHECKING:
+    from trading.config.discovery import DiscoveryConfig
     from trading.domain.contracts import MarketState
     from trading.identification.config import IdentificationPolicy
     from trading.identification.p1_features import ObservedP1Features
@@ -109,6 +110,8 @@ def bind_family(
     policy: IdentificationPolicy,
     p1: ObservedP1Features | None,
     master_symbols: frozenset[str] | None,
+    discovery_config: DiscoveryConfig | None = None,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> BoundCandidates:
     """Invoke the family binder with mode-specific kwargs."""
     kwargs: dict[str, object] = {
@@ -118,10 +121,12 @@ def bind_family(
     }
     if spec.mode_id in {ModeId.M1_CAS, ModeId.M2_DIRECTIONAL}:
         kwargs["master_symbols"] = master_symbols
+    if spec.mode_id is ModeId.M2_DIRECTIONAL:
+        kwargs["allow_fallback_expiry"] = True
+        kwargs["discovery_config"] = discovery_config
+        kwargs["entry_profile"] = entry_profile
     if spec.mode_id is ModeId.M1_CAS:
         return spec.binder(candidates, **kwargs)
-    if spec.mode_id is ModeId.M2_DIRECTIONAL:
-        return spec.binder(candidates, allow_fallback_expiry=True, **kwargs)
     if spec.family_id in {FamilyId.bull_put_credit, FamilyId.bear_call_credit}:
         return spec.binder(
             candidates,

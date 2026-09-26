@@ -230,6 +230,7 @@ class PaperStrategyRequest:
     forced_mode_id: ModeId | None = None
     forced_family_id: FamilyId | None = None
     campaign_id: str | None = None
+    binding_reason_codes: tuple[ReasonCode, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2318,6 +2319,23 @@ class PaperRunner:
                 decisions=(),
                 order_events=(),
                 entry_blocked_reasons=readiness.reason_codes,
+                executed=request.execute,
+                setup_features=request.setup_features,
+                route_decision=request.route_decision,
+                decision_quotes=_decision_quotes(request),
+                execution_mode=request.execution_mode,
+            )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
+
+        if not request.candidates and request.binding_reason_codes:
+            early = PaperStrategyOutcome(
+                strategy_id=request.strategy_id,
+                snapshot_id=request.underlying.snapshot_id,
+                intents=(),
+                rejection_reasons=request.binding_reason_codes,
+                decisions=(),
+                order_events=(),
+                entry_blocked_reasons=request.binding_reason_codes,
                 executed=request.execute,
                 setup_features=request.setup_features,
                 route_decision=request.route_decision,
