@@ -79,6 +79,7 @@ class RiskDecision(VersionedModel):
     post_trade_projection: ExposureSnapshot | None = None
     applied_limits: tuple[NonEmptyStr, ...] = ()
     reason_codes: tuple[ReasonCode, ...]
+    strict_would_block: tuple[ReasonCode, ...] = ()
     liquidity_note: NonEmptyStr | None = None
     decided_at: UtcDatetime
     expires_at: UtcDatetime

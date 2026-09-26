@@ -2,7 +2,7 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A1_DONE (Four independent ₹7L books with daily compounding; M1-M4 independent allocations and prior realized net compounding; BrokerFunds derived from mode equities; STRICT unchanged)
+STATUS: DISC-A2_DONE (Discovery sizing: strike-first 1-lot min, bug guard, 12% per-mode open-risk cap; `strict_would_block` shadow audit; STRICT unchanged)
 
 ## Evidence labels
 
