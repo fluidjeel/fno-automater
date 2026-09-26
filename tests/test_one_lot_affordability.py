@@ -27,6 +27,7 @@ def repo_root() -> Path:
 
 
 def _affordability_data_available(repo_root: Path) -> bool:
+    """Disk-backed G1 fixtures live under gitignored data/ paths."""
     instrument_store = repo_root / "data" / "reference" / "instruments" / "NSE_FO.jsonl"
     fyers_dir = repo_root / "data" / "raw" / "fyers"
     has_chain = any(fyers_dir.glob("202*/*.json")) if fyers_dir.is_dir() else False
@@ -36,7 +37,7 @@ def _affordability_data_available(repo_root: Path) -> bool:
 @pytest.fixture
 def repo_root_with_data(repo_root: Path) -> Path:
     if not _affordability_data_available(repo_root):
-        pytest.skip("affordability reference data not available in this environment")
+        pytest.skip("Requires gitignored data/reference/instruments and data/raw/fyers")
     return repo_root
 
 
