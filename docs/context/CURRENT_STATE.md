@@ -2,7 +2,7 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A3_DONE (Event blackout + daily-loss freezes soft under DISCOVERY; drawdown Telegram alert; manual kill switch stays HARD; STRICT unchanged)
+STATUS: DISC-A7_DONE (DISCOVERY straddle/strangle PAPER via discovery.yaml stances; M4 cap from config; G2 uses real FamilyId values; STRICT unchanged)
 
 ## Evidence labels
 

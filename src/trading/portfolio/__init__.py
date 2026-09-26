@@ -17,10 +17,10 @@ from trading.portfolio.counterfactual_book import (
     build_mode_books,
 )
 from trading.portfolio.economic_overlap import (
-    MAX_M4_OPEN_POSITIONS,
     EconomicExposureKey,
     ThesisDirection,
     extract_economic_exposure,
+    m4_open_position_cap,
 )
 from trading.portfolio.exposure import PositionExposureInput, build_exposure_report
 from trading.portfolio.reconciliation import PortfolioReconciler, ReconcileOutcome
@@ -34,7 +34,6 @@ from trading.portfolio.snapshot import build_broker_snapshot
 from trading.portfolio.view import build_portfolio_view
 
 __all__ = [
-    "MAX_M4_OPEN_POSITIONS",
     "ArbitrationResult",
     "ArbitrationSuppression",
     "CampaignDrawdownLedger",
@@ -57,5 +56,6 @@ __all__ = [
     "build_portfolio_view",
     "extract_economic_exposure",
     "extract_leg_signature",
+    "m4_open_position_cap",
     "read_latest_portfolio_risk",
 ]

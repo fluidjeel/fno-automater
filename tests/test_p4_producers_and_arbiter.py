@@ -491,7 +491,7 @@ def test_p4_counterfactual_log_does_not_mutate_reservations_or_store(
     clock: FrozenClock,
 ) -> None:
     """Counterfactual entries are logged without calling CapitalReservationService or mutating store (§4.3)."""
-    arbiter = PortfolioArbiter()
+    arbiter = PortfolioArbiter(max_m4_open_positions=2)
     opt = _option_snap("24000", OptionType.CALL, bid="49.95", ask="50.00")
 
     leg = IntentLeg(
@@ -590,7 +590,7 @@ def test_p4_arbiter_deterministic_signature_normalization(clock: FrozenClock) ->
 
 def test_p4_exact_duplicate_cross_strategy_suppression(clock: FrozenClock) -> None:
     """When candidates from different strategies share the exact same leg structure, the duplicate is suppressed with incumbent reference."""
-    arbiter = PortfolioArbiter()
+    arbiter = PortfolioArbiter(max_m4_open_positions=2)
     opt = _option_snap("24000", OptionType.CALL, bid="49.95", ask="50.00")
     leg = IntentLeg(leg_id="leg-1", contract=opt.contract, side=Side.BUY, ratio=1)
 

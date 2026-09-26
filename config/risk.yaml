@@ -44,6 +44,8 @@ directional_agreement_max: "0.85"
 single_event_exposure_fraction: "0.25"
 # ADESK-A5 / PART 8 — freeze entries when stress worst-case exceeds this.
 tail_budget_fraction: "0.08"
+# Portfolio arbitration cap on concurrent M4 open/pending positions (STRICT book).
+max_m4_open_positions: 2
 # Four-mode aggregate open-risk envelope. Enforced in Layer 2 at decision time.
 max_global_open_risk:
   amount: "35000"

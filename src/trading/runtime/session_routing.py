@@ -67,15 +67,21 @@ def family_executable(
     stance: ExecutionMode,
     *,
     family_id: FamilyId,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> bool:
     """Return whether a family stance permits PAPER submission."""
     if stance is ExecutionMode.SUSPENDED:
         return False
-    if family_id.value in G1_EXCEEDS_BUDGET_FAMILIES:
-        return False
     if family_id.value in CALENDAR_FAMILIES:
         return False
-    if stance is ExecutionMode.PAPER and family_id.value in G2_UNPROVEN_FAMILIES:
+    discovery_soft = entry_profile is EntryProfile.DISCOVERY
+    if family_id.value in G1_EXCEEDS_BUDGET_FAMILIES and not discovery_soft:
+        return False
+    if (
+        stance is ExecutionMode.PAPER
+        and family_id.value in G2_UNPROVEN_FAMILIES
+        and not discovery_soft
+    ):
         return False
     return stance is ExecutionMode.PAPER
 

@@ -6,21 +6,39 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum, unique
+from typing import TYPE_CHECKING
 
 from trading.domain.contracts.intent import IntentLeg, TradeIntent
 from trading.domain.enums import FamilyId, ModeId
 
+if TYPE_CHECKING:
+    from trading.config.discovery import DiscoveryConfig
+    from trading.config.risk_policy import RiskPolicyConfig
+
 __all__ = [
-    "MAX_M4_OPEN_POSITIONS",
     "EconomicExposureKey",
     "ThesisDirection",
     "bands_overlap",
     "directions_conflict",
     "economic_keys_overlap",
     "extract_economic_exposure",
+    "m4_open_position_cap",
 ]
 
-MAX_M4_OPEN_POSITIONS = 2
+
+def m4_open_position_cap(
+    *,
+    risk_policy: RiskPolicyConfig | None = None,
+    discovery_config: DiscoveryConfig | None = None,
+) -> int:
+    """Resolve the portfolio M4 open-position cap from validated configuration."""
+    if discovery_config is not None:
+        return discovery_config.modes[
+            ModeId.M4_STRATEGIC_POSITIONAL.value
+        ].max_open_positions
+    if risk_policy is not None:
+        return risk_policy.max_m4_open_positions
+    raise ValueError("risk_policy or discovery_config is required for M4 cap")
 
 
 @unique

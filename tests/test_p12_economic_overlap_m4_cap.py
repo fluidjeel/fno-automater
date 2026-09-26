@@ -27,7 +27,6 @@ from trading.portfolio.arbitration import PortfolioArbiter
 from trading.portfolio.campaign_drawdown import CampaignDrawdownLedger
 from trading.portfolio.counterfactual_book import build_mode_books
 from trading.portfolio.economic_overlap import (
-    MAX_M4_OPEN_POSITIONS,
     ThesisDirection,
     economic_keys_overlap,
     extract_economic_exposure,
@@ -202,7 +201,7 @@ class TestP12EconomicOverlap:
         assert economic_keys_overlap(call_key, put_key)
 
     def test_scenario_t28_economic_overlap_suppressed(self) -> None:
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         incumbent = _bull_call_debit("INTENT-BULL-CALL")
         challenger = _bull_put_credit("INTENT-BULL-PUT")
         result = arbiter.arbitrate([incumbent, challenger], now=NOW)
@@ -217,7 +216,7 @@ class TestP12EconomicOverlap:
 
 class TestP12ConflictPolicy:
     def test_scenario_t30_opposing_exposure_rejected(self) -> None:
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         bullish = _bull_call_debit("INTENT-BULL")
         bearish = _bear_put_debit("INTENT-BEAR")
         result = arbiter.arbitrate([bullish, bearish], now=NOW)
@@ -230,7 +229,7 @@ class TestP12ConflictPolicy:
 
     def test_m2_and_m3_both_bullish_allowed(self) -> None:
         """M1/M2 overlap in same direction is permitted when structures differ."""
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         m3 = _bull_call_debit("INTENT-M3-BULL")
         call_snap = _option_snap("NIFTY26OCT24000CE", "24000", OptionType.CALL)
         m2_call = f.intent(
@@ -256,12 +255,12 @@ class TestP12ConflictPolicy:
 
 class TestP12M4PositionCap:
     def test_scenario_t26_third_m4_candidate_suppressed(self) -> None:
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         first = _m4_condor("INTENT-M4-1", wing_shift=0)
         second = _m4_condor("INTENT-M4-2", wing_shift=50)
         third = _m4_condor("INTENT-M4-3", wing_shift=100)
         result = arbiter.arbitrate([first, second, third], now=NOW)
-        assert len(result.approved_intents) == MAX_M4_OPEN_POSITIONS
+        assert len(result.approved_intents) == 2
         assert len(result.suppressed_intents) == 1
         assert (
             result.suppressed_intents[0].reason_code
@@ -270,7 +269,7 @@ class TestP12M4PositionCap:
         assert result.suppressed_intents[0].candidate_intent_id == "INTENT-M4-3"
 
     def test_two_complementary_m4_positions_allowed(self) -> None:
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         first = _m4_condor("INTENT-M4-A", wing_shift=0)
         second = _bull_put_credit("INTENT-M4-BULL-PUT")
         result = arbiter.arbitrate([first, second], now=NOW)
@@ -303,7 +302,7 @@ class TestP12CounterfactualBookIsolation:
         reservations_before = len(store.list_reservations())
         positions_before = len(store.list_position_lifecycle())
 
-        arbiter = PortfolioArbiter()
+        arbiter = PortfolioArbiter(max_m4_open_positions=2)
         incumbent = _bull_call_debit("INTENT-CF-BULL-CALL")
         duplicate = _bull_put_credit("INTENT-CF-BULL-PUT")
         result = arbiter.arbitrate([incumbent, duplicate], now=clock.now_utc())

@@ -54,6 +54,7 @@ from trading.runtime.paper_session import (
 )
 from trading.runtime.startup_validation import (
     G1_EXCEEDS_BUDGET_FAMILIES,
+    G2_LEGACY_UNPROVEN_STRATEGY_IDS,
     G2_UNPROVEN_FAMILIES,
     StartupValidationError,
     validate_startup_configuration,
@@ -653,7 +654,9 @@ def test_p1_gateway_rejects_disallowed_family_and_m3_single_leg(
 def test_p1_startup_validation_enforces_g1_g2_g3() -> None:
     """Asserts StartupValidationError on unproven families, G1 budget failures, G3 polled loop violations, and commodity futures."""
     # 1. G2 unproven families cannot run PAPER
-    for unproven_family in sorted(G2_UNPROVEN_FAMILIES):
+    for unproven_family in sorted(
+        G2_UNPROVEN_FAMILIES | G2_LEGACY_UNPROVEN_STRATEGY_IDS
+    ):
         cfg = _sample_session_config(
             strategy_stances={
                 "positional_long_option": ExecutionMode.PAPER,
@@ -741,7 +744,7 @@ def test_p1_startup_validation_enforces_g1_g2_g3() -> None:
         "commodity_futures_trend": ExecutionMode.SHADOW,
         "cas_microstructure": ExecutionMode.SHADOW,
     }
-    for f_unproven in G2_UNPROVEN_FAMILIES:
+    for f_unproven in G2_UNPROVEN_FAMILIES | G2_LEGACY_UNPROVEN_STRATEGY_IDS:
         shadow_stances[f_unproven] = ExecutionMode.SHADOW
     for f_budget in G1_EXCEEDS_BUDGET_FAMILIES:
         shadow_stances[f_budget] = ExecutionMode.SHADOW
