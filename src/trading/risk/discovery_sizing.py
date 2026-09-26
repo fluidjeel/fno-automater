@@ -186,9 +186,7 @@ def collect_strict_would_block(
     )
     if not campaign_check.passed:
         codes.extend(campaign_check.reason_codes)
-    return tuple(
-        dict.fromkeys(code for code in codes if code is not ReasonCode.OK)
-    )
+    return tuple(dict.fromkeys(code for code in codes if code is not ReasonCode.OK))
 
 
 def rescale_approved_legs(

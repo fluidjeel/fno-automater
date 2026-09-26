@@ -540,10 +540,13 @@ class RiskGateway:
 
         strict_would_block: tuple[ReasonCode, ...] = ()
         approval_reasons: list[ReasonCode] = []
-        if discovery_active:
-            guide = discovery_guide_budget(
-                mode_ledger, discovery_config, intent.mode_id
-            )
+        if (
+            discovery_config is not None
+            and intent.mode_id is not None
+            and mode_ledger is not None
+        ):
+            mode_id = intent.mode_id
+            guide = discovery_guide_budget(mode_ledger, discovery_config, mode_id)
             discovery_sized = apply_discovery_lots(
                 cost_per_lot=sizing.cost_per_lot,
                 guide=guide,
@@ -580,7 +583,7 @@ class RiskGateway:
                 approved_lots=sizing.approved_lots,
                 mode_ledger=mode_ledger,
                 discovery=discovery_config,
-                mode_id=intent.mode_id,
+                mode_id=mode_id,
             )
             if not limit_check.passed:
                 return self._reject(

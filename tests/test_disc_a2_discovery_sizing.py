@@ -15,6 +15,7 @@ from trading.config import load_config, load_risk_policy
 from trading.config.discovery import load_discovery_config
 from trading.domain.clock import FrozenClock
 from trading.domain.contracts import DerivativesContext, FeatureSnapshot, IntentLeg
+from trading.domain.contracts.risk import RiskDecision
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.enums import (
     FamilyId,
@@ -134,8 +135,12 @@ def _straddle_intent(**overrides: object) -> TradeIntent:
         "requested_risk": _money("25000"),
         "estimated_max_loss": _money("30000"),
         "legs": (
-            IntentLeg(leg_id="call", contract=legs["call"].contract, side=Side.BUY, ratio=1),
-            IntentLeg(leg_id="put", contract=legs["put"].contract, side=Side.BUY, ratio=1),
+            IntentLeg(
+                leg_id="call", contract=legs["call"].contract, side=Side.BUY, ratio=1
+            ),
+            IntentLeg(
+                leg_id="put", contract=legs["put"].contract, side=Side.BUY, ratio=1
+            ),
         ),
     }
     payload.update(overrides)
@@ -146,7 +151,9 @@ class TestDiscoverySizingFormula:
     def test_m4_iron_condor_three_lots_from_guide(self) -> None:
         """M4 ₹7L, guide 3% = ₹21k, one-lot loss ₹6k → 3 lots."""
         ledger = _m4_ledger()
-        guide = discovery_guide_budget(ledger, DISCOVERY_CFG, ModeId.M4_STRATEGIC_POSITIONAL)
+        guide = discovery_guide_budget(
+            ledger, DISCOVERY_CFG, ModeId.M4_STRATEGIC_POSITIONAL
+        )
         assert guide == _money("21000")
         result = apply_discovery_lots(cost_per_lot=_money("6000"), guide=guide)
         assert result.approved_lots == 3
@@ -155,7 +162,9 @@ class TestDiscoverySizingFormula:
 
     def test_one_lot_over_guide_when_cost_exceeds_guide(self) -> None:
         ledger = _m4_ledger()
-        guide = discovery_guide_budget(ledger, DISCOVERY_CFG, ModeId.M4_STRATEGIC_POSITIONAL)
+        guide = discovery_guide_budget(
+            ledger, DISCOVERY_CFG, ModeId.M4_STRATEGIC_POSITIONAL
+        )
         result = apply_discovery_lots(cost_per_lot=_money("24000"), guide=guide)
         assert result.approved_lots == 1
         assert result.one_lot_over_guide is True
@@ -278,9 +287,7 @@ class TestDiscoveryGateway:
         book._ledgers[ModeId.M4_STRATEGIC_POSITIONAL] = m4.model_copy(
             update={"margin_used": _money("80000")}
         )
-        gateway = _discovery_gateway(
-            store, broker, clock, id_factory, mode_book=book
-        )
+        gateway = _discovery_gateway(store, broker, clock, id_factory, mode_book=book)
         legs = _straddle_leg_snapshots()
         intent = _straddle_intent(snapshot_id=legs["call"].snapshot_id)
         decision = gateway.evaluate(
@@ -305,9 +312,7 @@ class TestDiscoveryGateway:
     ) -> None:
         """Reservation before submit; concurrent proposals respect per-mode open risk."""
         book = FourModeBook(discovery_config=DISCOVERY_CFG)
-        gateway = _discovery_gateway(
-            store, broker, clock, id_factory, mode_book=book
-        )
+        gateway = _discovery_gateway(store, broker, clock, id_factory, mode_book=book)
         legs = _straddle_leg_snapshots()
         intent_a = _straddle_intent(
             intent_id="INT-A",
@@ -317,7 +322,7 @@ class TestDiscoveryGateway:
             intent_id="INT-B",
             snapshot_id=legs["call"].snapshot_id,
         )
-        results: list = []
+        results: list[RiskDecision] = []
 
         def _evaluate(intent: TradeIntent) -> None:
             results.append(
