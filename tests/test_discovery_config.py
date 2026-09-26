@@ -65,6 +65,8 @@ class TestDiscoveryConfig:
         assert cfg.modes[ModeId.M3_TACTICAL_POSITIONAL.value].per_trade_guide == Decimal("0.02")
         assert cfg.modes[ModeId.M4_STRATEGIC_POSITIONAL.value].per_trade_guide == Decimal("0.03")
         assert cfg.bug_guard_trade_risk_fraction == Decimal("0.10")
+        assert cfg.strict_quote_max_age_ms == 120000
+        assert cfg.cas_strict_quote_max_age_ms == 30000
         assert cfg.hard_quote_max_age_ms == 300000
 
     def test_discovery_config_fraction_greater_than_one_fails(self, tmp_path: Path) -> None:

@@ -30,6 +30,7 @@ from trading.strategies.base import (
     register_strategy,
 )
 from trading.strategies.macro import MacroBias
+from trading.strategies.quote_freshness import quote_freshness_for_context
 
 __all__ = ["CommodityFuturesStrategy"]
 
@@ -39,7 +40,6 @@ STRATEGY_VERSION = "commodity-futures-v1"
 REQUESTED_RISK_INR = Decimal("10000")
 MIN_DAYS_TO_EXPIRY = 3
 MIN_OPEN_INTEREST = 500
-MAX_SNAPSHOT_AGE_SECONDS = 120
 MAX_ENTRY_SPREAD_FRACTION = Decimal("0.02")
 STOP_TICKS = 60
 TARGET_TICKS = 120
@@ -59,7 +59,7 @@ class CommodityFuturesStrategy:
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
 
-    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:
+    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:  # noqa: PLR0911
         decision = StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
@@ -80,6 +80,16 @@ class CommodityFuturesStrategy:
                 ReasonCode.INSTRUMENT_UNKNOWN,
                 "exactly one future required",
             )
+
+        freshness = quote_freshness_for_context(ctx)
+        if freshness.hard_reason is not None:
+            return self._reject(
+                decision,
+                ctx,
+                freshness.hard_reason,
+                freshness.detail or "quote freshness check failed",
+            )
+        strict_would_block = freshness.strict_would_block
 
         stale = self._snapshot_is_stale(ctx)
         if stale is not None:
@@ -110,6 +120,7 @@ class CommodityFuturesStrategy:
             as_of=ctx.now,
             intents=(intent,),
             rejections=(),
+            strict_would_block=strict_would_block,
         )
 
     @staticmethod
@@ -138,11 +149,6 @@ class CommodityFuturesStrategy:
         if not ctx.underlying.permits_new_exposure:
             return ReasonCode.DATA_INVALID
         if not ctx.candidates[0].permits_new_exposure:
-            return ReasonCode.DATA_INVALID
-        age = ctx.now - ctx.underlying.times.calculation_time
-        if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
-            return ReasonCode.DATA_STALE
-        if ctx.now < ctx.underlying.times.calculation_time:
             return ReasonCode.DATA_INVALID
         return None
 

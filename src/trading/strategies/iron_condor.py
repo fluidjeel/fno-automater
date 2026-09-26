@@ -34,6 +34,7 @@ from trading.strategies.base import (
     register_strategy,
 )
 from trading.strategies.macro import MacroBias
+from trading.strategies.quote_freshness import quote_freshness_for_context
 
 __all__ = ["STRATEGY_ID", "STRATEGY_VERSION", "IronCondorStrategy"]
 
@@ -43,7 +44,6 @@ STRATEGY_VERSION = "iron-condor-v1"
 REQUESTED_RISK_INR = Decimal("10000")
 MIN_DAYS_TO_EXPIRY = 7
 MIN_OPEN_INTEREST = 1000
-MAX_SNAPSHOT_AGE_SECONDS = 120
 MAX_ENTRY_SPREAD_FRACTION = Decimal("0.05")
 STOP_TICKS = 40
 TARGET_TICKS = 40
@@ -102,15 +102,16 @@ class IronCondorStrategy:
                 decision, ctx, ReasonCode.ENTRY_FROZEN, "entries not permitted"
             )
 
-        # 2. Snapshot staleness check
-        age = (ctx.now - ctx.underlying.times.event_time).total_seconds()
-        if age > MAX_SNAPSHOT_AGE_SECONDS:
+        # 2. Quote freshness check (calculation_time, not bar event_time)
+        freshness = quote_freshness_for_context(ctx)
+        if freshness.hard_reason is not None:
             return self._reject(
                 decision,
                 ctx,
-                ReasonCode.DATA_STALE,
-                f"snapshot age {age:.1f}s exceeds limit",
+                freshness.hard_reason,
+                freshness.detail or "quote freshness check failed",
             )
+        strict_would_block = freshness.strict_would_block
 
         # 3. Macro bias check (must be NEUTRAL)
         macro_bias = MacroBias.NEUTRAL
@@ -231,6 +232,7 @@ class IronCondorStrategy:
             as_of=ctx.now,
             intents=(intent,),
             rejections=(),
+            strict_would_block=strict_would_block,
         )
 
     @classmethod

@@ -114,6 +114,7 @@ def _ctx(candidates: tuple[FeatureSnapshot, ...], **overrides: Any) -> StrategyC
         view=overrides.get("view") or portfolio_view(),
         now=overrides.get("now", CAS_NOW),
         macro=overrides.get("macro"),
+        strict_quote_max_age_ms=overrides.get("strict_quote_max_age_ms", 30_000),
     )
 
 

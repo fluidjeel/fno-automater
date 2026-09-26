@@ -55,6 +55,7 @@ from trading.domain.enums import (
     CarryGateAction,
     DeskRole,
     DifferenceClass,
+    EntryProfile,
     Exchange,
     ExecutionMode,
     ExitScope,
@@ -117,6 +118,7 @@ from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
 from trading.strategies import StrategyContext, build_strategy
 from trading.strategies.macro import MacroAssessment
+from trading.strategies.quote_freshness import quote_freshness_limits
 from trading.trade import (
     TradeManager,
     assert_stop_not_wider,
@@ -355,6 +357,11 @@ class PaperRunner:
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
         self._discovery_config = discovery_config
+        self._entry_profile = (
+            EntryProfile.DISCOVERY
+            if discovery_config is not None
+            else EntryProfile.STRICT
+        )
         self._exit_depth_gaps: tuple[str, ...] = ()
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
@@ -2406,6 +2413,12 @@ class PaperRunner:
             system_state=system_state,
             entries_blocked=entries_blocked,
         )
+        strict_ms, hard_ms = quote_freshness_limits(
+            entry_profile=self._entry_profile,
+            freshness=self._account.config.freshness,
+            discovery_config=self._discovery_config,
+            cas=request.strategy_id == "cas_microstructure",
+        )
         decision = strategy.evaluate(
             StrategyContext(
                 underlying=request.underlying,
@@ -2415,6 +2428,9 @@ class PaperRunner:
                 experiment_id=request.experiment_id,
                 execution_mode=request.execution_mode,
                 macro=request.macro,
+                entry_profile=self._entry_profile,
+                strict_quote_max_age_ms=strict_ms,
+                hard_quote_max_age_ms=hard_ms,
             )
         )
         intent_updates: dict[str, object] = {
