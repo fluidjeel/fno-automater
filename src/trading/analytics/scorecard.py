@@ -51,6 +51,7 @@ def build_scorecard(
     maes: list[Money] = []
     mfes: list[Money] = []
     reasons: Counter[ReasonCode] = Counter()
+    strict_verdicts: Counter[ReasonCode] = Counter()
     regimes: set[str] = set()
     filled = partial = unfilled = rejects = declined = 0
     costs_confirmed = True
@@ -100,6 +101,8 @@ def build_scorecard(
             continue
         if signal.entry_command is None or signal.entry_quote is None:
             continue
+        if signal.strict_fill_verdict is not None:
+            strict_verdicts[signal.strict_fill_verdict] += 1
         attempted += 1
         entry = simulate_fill(
             signal.entry_command,
@@ -152,6 +155,12 @@ def build_scorecard(
         ReasonCount(reason_code=code, count=count)
         for code, count in sorted(reasons.items(), key=lambda item: item[0].value)
     )
+    strict_histogram = tuple(
+        ReasonCount(reason_code=code, count=count)
+        for code, count in sorted(
+            strict_verdicts.items(), key=lambda item: item[0].value
+        )
+    )
     return CohortScorecard(
         scorecard_id=scorecard_id,
         experiment_id=package.experiment.experiment_id,
@@ -183,6 +192,7 @@ def build_scorecard(
         average_mae=_average(maes),
         average_mfe=_average(mfes),
         reason_histogram=histogram,
+        strict_fill_verdict_histogram=strict_histogram,
         regime_count=len(regimes),
         max_single_trade_pnl_share=share,
         incident_p0_p1_count=incident_p0_p1,

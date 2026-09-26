@@ -104,6 +104,50 @@ class TestConservativeFillCalculator:
         assert fill.outcome is FillOutcome.REJECTED
         assert fill.reason_code is ReasonCode.PRICE_UNAVAILABLE
 
+    def test_touch_buy_fills_at_ask_without_depth(self) -> None:
+        quote = f.quote(
+            bid=f.price("119.50"),
+            ask=f.price("120.50"),
+            last=f.price("118.00"),
+            bid_size=300,
+            ask_size=0,
+        )
+        command = f.order_command(
+            side=Side.BUY, quantity_contracts=75, limit_price=f.price("121.00")
+        )
+        touch = shipped_fill_model().model_copy(
+            update={
+                "version": "touch-v1",
+                "slippage_ticks": 0,
+                "require_traded_through": False,
+            }
+        )
+        fill = simulate_fill(command, quote, policy=touch)
+        assert fill.outcome is FillOutcome.FILLED
+        assert fill.fill_price == Price.snap("120.50", f.TICK)
+        assert fill.charges_confirmed is True
+
+    def test_touch_sell_rejects_without_bid(self) -> None:
+        quote = f.quote(
+            bid=None,
+            ask=f.price("120.50"),
+            last=f.price("118.00"),
+            ask_size=300,
+        )
+        command = f.order_command(
+            side=Side.SELL, quantity_contracts=75, limit_price=f.price("119.00")
+        )
+        touch = shipped_fill_model().model_copy(
+            update={
+                "version": "touch-v1",
+                "slippage_ticks": 0,
+                "require_traded_through": False,
+            }
+        )
+        fill = simulate_fill(command, quote, policy=touch)
+        assert fill.outcome is FillOutcome.REJECTED
+        assert fill.reason_code is ReasonCode.PRICE_UNAVAILABLE
+
     def test_unverified_charges_fail_closed(self) -> None:
         quote = f.quote(bid_size=300, ask_size=300, last=f.price("100.05"))
         command = f.order_command(

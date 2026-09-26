@@ -31,6 +31,7 @@ from trading.domain.enums import (
     InstrumentKind,
     OrderState,
     OrderType,
+    ReasonCode,
     Side,
 )
 from trading.domain.ids import IdFactory
@@ -68,6 +69,7 @@ class PaperBroker:
         id_factory: IdFactory,
         fixtures: PaperBrokerFixtures,
         fill_model: FillModelConfig | None = None,
+        shadow_fill_model: FillModelConfig | None = None,
         synthetic_margin: bool = False,
         future_margin_fraction: Decimal | None = None,
     ) -> None:
@@ -75,6 +77,7 @@ class PaperBroker:
         self._ids = id_factory
         self._fixtures = fixtures
         self._fill_model = fill_model
+        self._shadow_fill_model = shadow_fill_model
         self._synthetic_margin = synthetic_margin
         self._future_margin_fraction = future_margin_fraction
         self._quotes: dict[str, MarketQuote] = {}
@@ -94,6 +97,7 @@ class PaperBroker:
         clock: Clock,
         id_factory: IdFactory,
         fill_model: FillModelConfig | None = None,
+        shadow_fill_model: FillModelConfig | None = None,
     ) -> PaperBroker:
         """Construct a paper broker from tests/fixtures/broker/."""
         return cls(
@@ -101,6 +105,7 @@ class PaperBroker:
             id_factory=id_factory,
             fixtures=PaperBrokerFixtures.load(root),
             fill_model=fill_model,
+            shadow_fill_model=shadow_fill_model,
         )
 
     @classmethod
@@ -111,6 +116,7 @@ class PaperBroker:
         id_factory: IdFactory,
         funds: BrokerFunds,
         fill_model: FillModelConfig | None = None,
+        shadow_fill_model: FillModelConfig | None = None,
         future_margin_fraction: Decimal | None = None,
     ) -> PaperBroker:
         """Live-symbol paper broker: empty fixtures, synthetic margin previews."""
@@ -123,6 +129,7 @@ class PaperBroker:
                 margin_previews={},
             ),
             fill_model=fill_model,
+            shadow_fill_model=shadow_fill_model,
             synthetic_margin=True,
             future_margin_fraction=future_margin_fraction,
         )
@@ -133,8 +140,13 @@ class PaperBroker:
 
     @property
     def fill_model(self) -> FillModelConfig | None:
-        """Conservative fill model, or None for immediate limit fills."""
+        """Primary fill model, or None for immediate limit fills."""
         return self._fill_model
+
+    @property
+    def shadow_fill_model(self) -> FillModelConfig | None:
+        """Strict shadow model recorded as strict_fill_verdict under DISCOVERY."""
+        return self._shadow_fill_model
 
     def submit(self, request: BrokerSubmitRequest) -> OrderEvent:
         """Submit one order; fill immediately or via the conservative model."""
@@ -155,7 +167,7 @@ class PaperBroker:
             )
             self._apply_fill(request, event, fill_price)
         else:
-            event = self._conservative_event(
+            event = self._modeled_event(
                 request, broker_order_id=broker_order_id, now=now
             )
             if (
@@ -478,7 +490,7 @@ class PaperBroker:
             }
         )
 
-    def _conservative_event(
+    def _modeled_event(
         self,
         request: BrokerSubmitRequest,
         *,
@@ -489,7 +501,7 @@ class PaperBroker:
         self._resolve_limit_price(command)
         policy = self._fill_model
         if policy is None:
-            raise BrokerError("conservative fill requires a fill model")
+            raise BrokerError("modeled fill requires a fill model")
         quote = self._quotes.get(command.contract.symbol)
         if quote is None:
             return self._rejected_event(
@@ -497,8 +509,12 @@ class PaperBroker:
                 broker_order_id=broker_order_id,
                 now=now,
                 reason_code="PRICE_UNAVAILABLE",
-                detail="conservative paper fill requires a published quote",
+                detail="paper fill requires a published quote",
             )
+        strict_verdict = None
+        if self._shadow_fill_model is not None:
+            shadow = simulate_fill(command, quote, policy=self._shadow_fill_model)
+            strict_verdict = shadow.reason_code
         simulation = simulate_fill(command, quote, policy=policy)
         if (
             simulation.outcome is FillOutcome.FILLED
@@ -514,6 +530,7 @@ class PaperBroker:
                 update={
                     "reason_code": simulation.reason_code,
                     "reason_detail": simulation.reason_detail,
+                    "strict_fill_verdict": strict_verdict,
                 }
             )
         return self._rejected_event(
@@ -522,6 +539,7 @@ class PaperBroker:
             now=now,
             reason_code=simulation.reason_code.value,
             detail=simulation.reason_detail or simulation.outcome.value,
+            strict_fill_verdict=strict_verdict,
         )
 
     def _rejected_event(
@@ -532,6 +550,7 @@ class PaperBroker:
         now: datetime,
         reason_code: str,
         detail: str,
+        strict_fill_verdict: ReasonCode | None = None,
     ) -> OrderEvent:
         order = request.order
         return OrderEvent.model_validate(
@@ -552,6 +571,7 @@ class PaperBroker:
                 "broker_time": now,
                 "reason_code": reason_code,
                 "reason_detail": detail,
+                "strict_fill_verdict": strict_fill_verdict,
                 "raw_broker_status": "REJECTED",
                 "raw_payload_ref": f"paper://orders/{broker_order_id}",
             }

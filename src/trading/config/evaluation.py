@@ -32,6 +32,8 @@ __all__ = [
     "JudgmentThresholds",
     "LoadedEvaluationConfig",
     "assert_execution_mode_allowed",
+    "build_fill_model",
+    "discovery_fill_models",
     "load_evaluation_config",
 ]
 
@@ -158,3 +160,31 @@ def load_evaluation_config(path: Path) -> LoadedEvaluationConfig:
     except OSError as exc:
         raise EvaluationConfigError(f"cannot read {path}: {exc}") from exc
     return load_evaluation_config_text(raw, source=str(path))
+
+
+def build_fill_model(version: str, base: FillModelConfig) -> FillModelConfig:
+    """Derive a named fill model from the evaluation policy charges schedule."""
+    if version == "touch-v1":
+        return base.model_copy(
+            update={
+                "version": "touch-v1",
+                "slippage_ticks": 0,
+                "legging_delay_ticks": 0,
+                "require_traded_through": False,
+            }
+        )
+    if version == "conservative-v1":
+        return base.model_copy(update={"version": "conservative-v1"})
+    raise EvaluationConfigError(f"unsupported fill model version: {version}")
+
+
+def discovery_fill_models(
+    base: FillModelConfig,
+    *,
+    model: str,
+    shadow_model: str,
+) -> tuple[FillModelConfig, FillModelConfig]:
+    """Primary touch fill plus the strict shadow model for DISCOVERY."""
+    primary = build_fill_model(model, base)
+    shadow = build_fill_model(shadow_model, base)
+    return primary, shadow

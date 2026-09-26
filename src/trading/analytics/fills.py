@@ -30,6 +30,31 @@ def simulate_fill(
     traded_through: bool | None = None,
     charges_lots: int = 1,
 ) -> FillSimulation:
+    """Reconstruct one fill from the decision-time book and policy version."""
+    if policy.version == "touch-v1":
+        return _simulate_touch_fill(
+            command,
+            quote,
+            policy=policy,
+            charges_lots=charges_lots,
+        )
+    return _simulate_conservative_fill(
+        command,
+        quote,
+        policy=policy,
+        traded_through=traded_through,
+        charges_lots=charges_lots,
+    )
+
+
+def _simulate_conservative_fill(
+    command: OrderCommand,
+    quote: MarketQuote,
+    *,
+    policy: FillModelConfig,
+    traded_through: bool | None = None,
+    charges_lots: int = 1,
+) -> FillSimulation:
     """Reconstruct one conservative fill from the decision-time book."""
     intended = command.limit_price
     if intended is None:
@@ -92,6 +117,48 @@ def simulate_fill(
         filled_quantity=command.quantity_contracts,
         intended_price=intended,
         fill_price=conservative,
+        slippage=slippage,
+        charges=charges,
+        charges_confirmed=confirmed,
+        reason_code=ReasonCode.OK,
+    )
+
+
+def _simulate_touch_fill(
+    command: OrderCommand,
+    quote: MarketQuote,
+    *,
+    policy: FillModelConfig,
+    charges_lots: int = 1,
+) -> FillSimulation:
+    """DISCOVERY touch fill: BUY at ask, SELL at bid, plus charges."""
+    intended = command.limit_price
+    if intended is None:
+        return FillSimulation(
+            outcome=FillOutcome.REJECTED,
+            filled_quantity=0,
+            intended_price=_quote_anchor(quote, command.side),
+            reason_code=ReasonCode.PRICE_UNAVAILABLE,
+            reason_detail="touch fill requires a LIMIT command",
+        )
+
+    book_price = quote.ask if command.side is Side.BUY else quote.bid
+    if book_price is None:
+        return FillSimulation(
+            outcome=FillOutcome.REJECTED,
+            filled_quantity=0,
+            intended_price=intended,
+            reason_code=ReasonCode.PRICE_UNAVAILABLE,
+            reason_detail="missing bid/ask for touch fill",
+        )
+
+    slippage = _slippage_money(command.side, intended, book_price)
+    charges, confirmed = _charges(policy, lots=charges_lots)
+    return FillSimulation(
+        outcome=FillOutcome.FILLED,
+        filled_quantity=command.quantity_contracts,
+        intended_price=intended,
+        fill_price=book_price,
         slippage=slippage,
         charges=charges,
         charges_confirmed=confirmed,

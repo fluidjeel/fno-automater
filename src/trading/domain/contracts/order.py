@@ -97,6 +97,7 @@ class OrderEvent(VersionedModel):
     raw_payload_ref: NonEmptyStr | None = None
     reason_code: ReasonCode | None = None
     reason_detail: str = ""
+    strict_fill_verdict: ReasonCode | None = None
     reconciled: bool = False
 
     @model_validator(mode="after")
