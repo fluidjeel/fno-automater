@@ -543,7 +543,10 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
                 assert frozen.quantity_contracts == current.quantity_contracts
             book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
             ledger = book.get_ledger(mode_id)
-            assert ledger.realized_pnl_today.amount <= ledger.realized_gross_pnl_today.amount
+            assert (
+                ledger.realized_pnl_today.amount
+                <= ledger.realized_gross_pnl_today.amount
+            )
         finally:
             store.close()
 
@@ -601,7 +604,8 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
             assert resumed is not None
             for snapshot in snapshots.values():
                 replacement._services.broker.publish_quote(
-                    snapshot.contract.symbol, snapshot.market  # type: ignore[attr-defined]
+                    snapshot.contract.symbol,
+                    snapshot.market,  # type: ignore[attr-defined]
                 )
             _close_open_position(replacement, resumed, snapshots)
             assert _reconstruct_m3_gross(store, clock.now_utc().date()) == Decimal(
@@ -661,7 +665,10 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
             book = FourModeBook.reconstruct_from_store(store, clock.now_utc().date())
             ledger = book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL)
             assert ledger.realized_gross_pnl_today.amount == Decimal("-22.50")
-            assert ledger.realized_pnl_today.amount < ledger.realized_gross_pnl_today.amount
+            assert (
+                ledger.realized_pnl_today.amount
+                < ledger.realized_gross_pnl_today.amount
+            )
             budget = ledger.daily_loss_budget(fraction)
             zero = Money.zero(Currency.INR)
             expected = max(budget + ledger.realized_pnl_today, zero)
@@ -771,7 +778,9 @@ class TestP0OpenRiskCapsAndAtomicReservations:
         from trading.domain.primitives import Rounding
         from trading.risk.mode_ledger import FourModeBook
 
-        limits_source = (ROOT / "src/trading/risk/limits.py").read_text(encoding="utf-8")
+        limits_source = (ROOT / "src/trading/risk/limits.py").read_text(
+            encoding="utf-8"
+        )
         gateway_source = (ROOT / "src/trading/risk/gateway.py").read_text(
             encoding="utf-8"
         )
@@ -922,9 +931,7 @@ class TestP0OpenRiskCapsAndAtomicReservations:
         finally:
             store.close()
 
-    def test_failed_protected_prefix_releases_reservation(
-        self, tmp_path: Path
-    ) -> None:
+    def test_failed_protected_prefix_releases_reservation(self, tmp_path: Path) -> None:
         from tests.test_four_mode_session_integration import _runner
         from tests.test_four_mode_trade_simulations import _spec
         from tests.test_p10_iron_condor_binder_and_g2 import _macro as m4_macro
@@ -950,7 +957,9 @@ class TestP0OpenRiskCapsAndAtomicReservations:
                         underlying=f.snapshot(
                             snapshot_id="SNAP-UNDER",
                             contract=f.index_contract(),
-                            market=f.quote(last=f.price("24500"), close=f.price("24500")),
+                            market=f.quote(
+                                last=f.price("24500"), close=f.price("24500")
+                            ),
                         ),
                         candidates=candidates,
                         instruments={
@@ -1042,7 +1051,9 @@ class TestP0OpenRiskCapsAndAtomicReservations:
             )
             store.upsert_reservation(committed)
             book = FourModeBook.reconstruct_from_store(
-                store, clock.now_utc().date(), modes_config=load_modes_config(ROOT / "config" / "modes.yaml")
+                store,
+                clock.now_utc().date(),
+                modes_config=load_modes_config(ROOT / "config" / "modes.yaml"),
             )
             m2 = book.get_ledger(ModeId.M2_DIRECTIONAL)
             assert m2.reserved_capital.amount == Decimal("5000")
@@ -1060,7 +1071,9 @@ class TestP0M3M4FollowingWeekCandidates:
 
         base = f.snapshot(
             snapshot_id="SNAP-FW",
-            contract=f.option_contract(symbol="NIFTY26OCT24000CE", strike=Decimal("24000")),
+            contract=f.option_contract(
+                symbol="NIFTY26OCT24000CE", strike=Decimal("24000")
+            ),
             derivatives=DerivativesContext(
                 days_to_expiry=9,
                 open_interest=5000,
@@ -1074,9 +1087,9 @@ class TestP0M3M4FollowingWeekCandidates:
         assert _candidates_for_mode((marked,), mode_id=ModeId.M2_DIRECTIONAL) == (
             marked,
         )
-        assert _candidates_for_mode((marked,), mode_id=ModeId.M3_TACTICAL_POSITIONAL) == (
-            marked,
-        )
+        assert _candidates_for_mode(
+            (marked,), mode_id=ModeId.M3_TACTICAL_POSITIONAL
+        ) == (marked,)
         assert _candidates_for_mode(
             (marked,), mode_id=ModeId.M4_STRATEGIC_POSITIONAL
         ) == (marked,)
@@ -1122,7 +1135,9 @@ class TestP0M1EventPathAndM2Carry:
                 session_cfg=session_cfg,
                 builder=builder,
             )
-            event = replace(_simulated_event(now=at), quote_time=at - timedelta(seconds=10))
+            event = replace(
+                _simulated_event(now=at), quote_time=at - timedelta(seconds=10)
+            )
             result = session.submit_m1_event(event)
             assert result is None or not any(
                 outcome.order_events for outcome in (result.outcomes if result else ())
@@ -1158,8 +1173,12 @@ class TestP0M1EventPathAndM2Carry:
             assert opened.outcomes[0].order_events
             carry_at = datetime(2026, 9, 14, 15, 1, tzinfo=IST)
             clock.set(carry_at.astimezone(UTC))
-            fresh = option.model_copy(update={"times": _times(carry_at.astimezone(UTC))})
-            session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
+            fresh = option.model_copy(
+                update={"times": _times(carry_at.astimezone(UTC))}
+            )
+            session_cfg = load_paper_session_config(
+                ROOT / "config" / "paper_session.yaml"
+            )
 
             def builder(
                 _now: datetime,
@@ -1182,7 +1201,9 @@ class TestP0M1EventPathAndM2Carry:
                 charges_verified=False,
                 cohort_dir=tmp_path / "cohorts",
             )
-            session._run_due_m2_carry_gate({fresh.contract.symbol: fresh}, carry_at.astimezone(UTC))
+            session._run_due_m2_carry_gate(
+                {fresh.contract.symbol: fresh}, carry_at.astimezone(UTC)
+            )
             records = store.list_position_lifecycle()
             carry = records[-1].carry_records[-1]
             assert carry.action is CarryGateAction.CARRY_APPROVED
@@ -1224,7 +1245,12 @@ class TestP0RollSwitchPerLegAndReplacement:
 
     @pytest.mark.parametrize(
         "opener",
-        ["open_bull_put_credit", "open_bull_call_debit", "open_iron_condor", "open_call_butterfly"],
+        [
+            "open_bull_put_credit",
+            "open_bull_call_debit",
+            "open_iron_condor",
+            "open_call_butterfly",
+        ],
     )
     def test_roll_close_plan_uses_per_leg_quantities(
         self, tmp_path: Path, opener: str
@@ -1238,15 +1264,15 @@ class TestP0RollSwitchPerLegAndReplacement:
             intent, decision = runner._open_book[position.trade_id]
             plan = runner._exit_plan(intent, decision, position, snapshots)
             assert plan is not None
-            qty_by_leg = {
-                leg.leg_id: leg.quantity_contracts for leg in position.legs
-            }
+            qty_by_leg = {leg.leg_id: leg.quantity_contracts for leg in position.legs}
             for order in plan.orders:
                 assert order.command.quantity_contracts == qty_by_leg[order.leg_id]
         finally:
             store.close()
 
-    def test_close_only_review_stays_propose_roll_not_roll(self, tmp_path: Path) -> None:
+    def test_close_only_review_stays_propose_roll_not_roll(
+        self, tmp_path: Path
+    ) -> None:
         from tests.structures import open_bull_call_debit
         from trading.domain.enums import RollSwitchStatus
 
@@ -1525,7 +1551,10 @@ class TestP0CampaignDrawdownRollChain:
             )
             assert replacement_lifecycle is not None
             assert replacement_lifecycle.campaign_id == incumbent.campaign_id
-            assert campaign.cumulative_realized_gross.currency == campaign.cumulative_realized_net.currency
+            assert (
+                campaign.cumulative_realized_gross.currency
+                == campaign.cumulative_realized_net.currency
+            )
             assert campaign.drawdown.amount >= 0
         finally:
             store.close()
@@ -1650,7 +1679,9 @@ class TestP0CampaignDrawdownRollChain:
         finally:
             store.close()
 
-    def test_rejected_replacement_preserves_campaign_losses(self, tmp_path: Path) -> None:
+    def test_rejected_replacement_preserves_campaign_losses(
+        self, tmp_path: Path
+    ) -> None:
         from dataclasses import replace
 
         from tests.structures import open_bull_call_debit

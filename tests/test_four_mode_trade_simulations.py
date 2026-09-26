@@ -308,9 +308,7 @@ def test_m2_sim_3_neutral_macro_abstains(
 # --- M3 ---
 
 
-def test_m3_sim_1_bull_call_debit_fill(
-    store: TradingStore, clock: FrozenClock
-) -> None:
+def test_m3_sim_1_bull_call_debit_fill(store: TradingStore, clock: FrozenClock) -> None:
     long_leg = _option("24000", OptionType.CALL, ask="50.00")
     short_leg = _option("24200", OptionType.CALL, ask="30.00")
     result = _runner(store, clock).run_cycle(
@@ -329,9 +327,7 @@ def test_m3_sim_1_bull_call_debit_fill(
     assert len(outcome.order_events) == 2
 
 
-def test_m3_sim_2_bull_put_credit_fill(
-    store: TradingStore, clock: FrozenClock
-) -> None:
+def test_m3_sim_2_bull_put_credit_fill(store: TradingStore, clock: FrozenClock) -> None:
     long_leg = _option("23950", OptionType.PUT, ask="15.00")
     short_leg = _option("24000", OptionType.PUT, ask="35.00")
     result = _runner(store, clock).run_cycle(

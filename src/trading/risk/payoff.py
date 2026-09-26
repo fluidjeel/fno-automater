@@ -663,12 +663,7 @@ def _parse_iron_butterfly_legs(
     short_put = next((leg for leg in puts if leg.side is Side.SELL), None)
     short_call = next((leg for leg in calls if leg.side is Side.SELL), None)
     long_call = next((leg for leg in calls if leg.side is Side.BUY), None)
-    if (
-        long_put is None
-        or short_put is None
-        or short_call is None
-        or long_call is None
-    ):
+    if long_put is None or short_put is None or short_call is None or long_call is None:
         return None
     if short_put.strike != short_call.strike:
         return None
@@ -688,12 +683,7 @@ def _parse_iron_condor_legs(
     short_put = next((leg for leg in puts if leg.side is Side.SELL), None)
     short_call = next((leg for leg in calls if leg.side is Side.SELL), None)
     long_call = next((leg for leg in calls if leg.side is Side.BUY), None)
-    if (
-        long_put is None
-        or short_put is None
-        or short_call is None
-        or long_call is None
-    ):
+    if long_put is None or short_put is None or short_call is None or long_call is None:
         return None
     if not (long_put.strike < short_put.strike < short_call.strike < long_call.strike):
         return None

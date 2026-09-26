@@ -141,6 +141,8 @@ class DiscoveryConfig(VersionedModel):
     bug_guard_trade_risk_fraction: ExactDecimal = Field(
         gt=Decimal("0"), le=Decimal("1")
     )
+    strict_quote_max_age_ms: StrictInt = Field(gt=0)
+    cas_strict_quote_max_age_ms: StrictInt = Field(gt=0)
     hard_quote_max_age_ms: StrictInt = Field(gt=0)
     min_dte_new_entry: dict[str, StrictInt]
     fills: DiscoveryFillsConfig

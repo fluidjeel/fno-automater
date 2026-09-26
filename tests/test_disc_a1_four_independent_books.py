@@ -92,7 +92,9 @@ def _record_closed_trade(
             trade_id=trade_id,
             idempotency_key=f"IDEM-X-{trade_id}",
         ),
-        command=f.order_command(contract=contract, side=Side.SELL, quantity_contracts=1),
+        command=f.order_command(
+            contract=contract, side=Side.SELL, quantity_contracts=1
+        ),
         state=OrderState.FILLED,
         attempt_number=1,
         filled_quantity=1,
@@ -100,7 +102,9 @@ def _record_closed_trade(
         sent_at=close_time,
         received_at=close_time,
     )
-    store.append(TradingEventType.ORDER_EVENT, entry_order, event_id=f"EVT-E-{trade_id}")
+    store.append(
+        TradingEventType.ORDER_EVENT, entry_order, event_id=f"EVT-E-{trade_id}"
+    )
     store.append(TradingEventType.ORDER_EVENT, exit_order, event_id=f"EVT-X-{trade_id}")
 
 
@@ -125,7 +129,9 @@ class TestDiscAFourIndependentBooks:
             assert ledger.reference_capital == Money.of("700000", Currency.INR)
         assert book.total_equity == Money.of("2800000", Currency.INR)
 
-    def test_prior_day_realized_net_compounds_independently(self, tmp_path: Path) -> None:
+    def test_prior_day_realized_net_compounds_independently(
+        self, tmp_path: Path
+    ) -> None:
         db_path = tmp_path / "trading.sqlite"
         clock = FrozenClock(datetime(2026, 9, 28, 9, 15, tzinfo=UTC))
         store = TradingStore.open(db_path, clock=clock)
@@ -165,7 +171,9 @@ class TestDiscAFourIndependentBooks:
         assert m1_ledger.allocated_capital == Money.of("700000", Currency.INR)
         assert m3_ledger.allocated_capital == Money.of("700000", Currency.INR)
 
-    def test_intraday_pnl_does_not_change_todays_allocated_capital(self, tmp_path: Path) -> None:
+    def test_intraday_pnl_does_not_change_todays_allocated_capital(
+        self, tmp_path: Path
+    ) -> None:
         db_path = tmp_path / "trading.sqlite"
         clock = FrozenClock(datetime(2026, 9, 28, 9, 15, tzinfo=UTC))
         store = TradingStore.open(db_path, clock=clock)
@@ -239,8 +247,12 @@ class TestDiscAFourIndependentBooks:
             gross_pnl=Decimal("3000"),
         )
 
-        book1 = FourModeBook.reconstruct_from_store(store, today_date, discovery_config=DISCOVERY_CFG)
-        book2 = FourModeBook.reconstruct_from_store(store, today_date, discovery_config=DISCOVERY_CFG)
+        book1 = FourModeBook.reconstruct_from_store(
+            store, today_date, discovery_config=DISCOVERY_CFG
+        )
+        book2 = FourModeBook.reconstruct_from_store(
+            store, today_date, discovery_config=DISCOVERY_CFG
+        )
 
         for mode in (
             ModeId.M1_CAS,
@@ -248,8 +260,14 @@ class TestDiscAFourIndependentBooks:
             ModeId.M3_TACTICAL_POSITIONAL,
             ModeId.M4_STRATEGIC_POSITIONAL,
         ):
-            assert book1.get_ledger(mode).allocated_capital == book2.get_ledger(mode).allocated_capital
-            assert book1.get_ledger(mode).realized_pnl_today == book2.get_ledger(mode).realized_pnl_today
+            assert (
+                book1.get_ledger(mode).allocated_capital
+                == book2.get_ledger(mode).allocated_capital
+            )
+            assert (
+                book1.get_ledger(mode).realized_pnl_today
+                == book2.get_ledger(mode).realized_pnl_today
+            )
 
     def test_strict_profile_remains_unchanged(self, tmp_path: Path) -> None:
         db_path = tmp_path / "trading.sqlite"
@@ -259,10 +277,18 @@ class TestDiscAFourIndependentBooks:
             store,
             date(2026, 9, 28),
         )
-        assert book.get_ledger(ModeId.M1_CAS).allocated_capital == Money.of("70000", Currency.INR)
-        assert book.get_ledger(ModeId.M2_DIRECTIONAL).allocated_capital == Money.of("196000", Currency.INR)
-        assert book.get_ledger(ModeId.M3_TACTICAL_POSITIONAL).allocated_capital == Money.of("210000", Currency.INR)
-        assert book.get_ledger(ModeId.M4_STRATEGIC_POSITIONAL).allocated_capital == Money.of("224000", Currency.INR)
+        assert book.get_ledger(ModeId.M1_CAS).allocated_capital == Money.of(
+            "70000", Currency.INR
+        )
+        assert book.get_ledger(ModeId.M2_DIRECTIONAL).allocated_capital == Money.of(
+            "196000", Currency.INR
+        )
+        assert book.get_ledger(
+            ModeId.M3_TACTICAL_POSITIONAL
+        ).allocated_capital == Money.of("210000", Currency.INR)
+        assert book.get_ledger(
+            ModeId.M4_STRATEGIC_POSITIONAL
+        ).allocated_capital == Money.of("224000", Currency.INR)
         assert book.total_equity == Money.of("700000", Currency.INR)
 
     def test_sizing_limits_uses_mode_independent_equity(self, tmp_path: Path) -> None:
@@ -282,7 +308,9 @@ class TestDiscAFourIndependentBooks:
             close_time=yesterday,
             gross_pnl=Decimal("12000"),
         )
-        book = FourModeBook.reconstruct_from_store(store, today, discovery_config=DISCOVERY_CFG)
+        book = FourModeBook.reconstruct_from_store(
+            store, today, discovery_config=DISCOVERY_CFG
+        )
         m2_ledger = book.get_ledger(ModeId.M2_DIRECTIONAL)
         # Starting 700,000 + 12,000 gross - 100 estimated charges = 711,900
         assert m2_ledger.allocated_capital == Money.of("711900.00", Currency.INR)
@@ -310,4 +338,6 @@ class TestDiscAFourIndependentBooks:
         # M2 policy per_trade_loss_cap_fraction is 0.04
         # reference_capital 711,900 * 0.04 = 28,476
         assert limits_m2.max_loss_per_trade == Money.of("28476.00", Currency.INR)
-        assert limits_m2.strategy_allocation_remaining == Money.of("711900.00", Currency.INR)
+        assert limits_m2.strategy_allocation_remaining == Money.of(
+            "711900.00", Currency.INR
+        )

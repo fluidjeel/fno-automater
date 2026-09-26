@@ -26,6 +26,8 @@ modes:
     max_new_entries_per_day: 3
     max_open_positions: 4
 bug_guard_trade_risk_fraction: "0.10"
+strict_quote_max_age_ms: 120000
+cas_strict_quote_max_age_ms: 30000
 hard_quote_max_age_ms: 300000
 min_dte_new_entry:
   default: 1

@@ -26,17 +26,33 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def test_load_instrument_spec_dynamic_lot_size(repo_root: Path) -> None:
+def _affordability_data_available(repo_root: Path) -> bool:
+    instrument_store = repo_root / "data" / "reference" / "instruments" / "NSE_FO.jsonl"
+    fyers_dir = repo_root / "data" / "raw" / "fyers"
+    has_chain = any(fyers_dir.glob("202*/*.json")) if fyers_dir.is_dir() else False
+    return instrument_store.is_file() and has_chain
+
+
+@pytest.fixture
+def repo_root_with_data(repo_root: Path) -> Path:
+    if not _affordability_data_available(repo_root):
+        pytest.skip("affordability reference data not available in this environment")
+    return repo_root
+
+
+def test_load_instrument_spec_dynamic_lot_size(repo_root_with_data: Path) -> None:
     """Lot size, tick size, and source path must be loaded dynamically from the contract file."""
-    lot_size, tick_size, source_path = load_nifty_instrument_spec(repo_root)
+    lot_size, tick_size, source_path = load_nifty_instrument_spec(repo_root_with_data)
     assert lot_size == 65
     assert tick_size == Decimal("0.05")
     assert "NSE_FO.jsonl" in source_path
 
 
-def test_latest_chain_provenance_and_offline_disclaimer(repo_root: Path) -> None:
+def test_latest_chain_provenance_and_offline_disclaimer(
+    repo_root_with_data: Path,
+) -> None:
     """Option chain must be loaded with dynamic timestamp provenance and marked offline."""
-    raw_chain, provenance = load_latest_option_chain(repo_root)
+    raw_chain, provenance = load_latest_option_chain(repo_root_with_data)
     assert "payload" in raw_chain
     assert provenance.capture_id != ""
     assert provenance.provider == "fyers"
@@ -49,9 +65,11 @@ def test_latest_chain_provenance_and_offline_disclaimer(repo_root: Path) -> None
     assert provenance.receive_time != ""
 
 
-def test_evaluate_affordability_all_modes_and_families(repo_root: Path) -> None:
+def test_evaluate_affordability_all_modes_and_families(
+    repo_root_with_data: Path,
+) -> None:
     """Evaluate all 18 mode × allowed family structures using the ₹7L book and 65-contract lot."""
-    report = evaluate_affordability(repo_root)
+    report = evaluate_affordability(repo_root_with_data)
     assert report.total_equity == Money.of("700000", Currency.INR)
     assert report.lot_size == 65
     assert len(report.evaluations) == 18
@@ -136,9 +154,9 @@ def test_evaluate_affordability_all_modes_and_families(repo_root: Path) -> None:
     assert m4_evals["long_strangle"].binding_constraint is SizingBindingConstraint.RISK
 
 
-def test_fixture_lot_above_cap_abstains(repo_root: Path) -> None:
+def test_fixture_lot_above_cap_abstains(repo_root_with_data: Path) -> None:
     """A fixture lot size above the cap causes all structures to abstain with MIN_LOT_EXCEEDS_BUDGET."""
-    report = evaluate_affordability(repo_root, lot_size_override=1000)
+    report = evaluate_affordability(repo_root_with_data, lot_size_override=1000)
     assert report.lot_size == 1000
     assert len(report.evaluations) == 18
 
@@ -153,9 +171,9 @@ def test_fixture_lot_above_cap_abstains(repo_root: Path) -> None:
         assert ev.total_cost_per_lot.amount > ev.per_trade_cap.amount
 
 
-def test_m4_straddle_and_strangle_exceed_budget(repo_root: Path) -> None:
+def test_m4_straddle_and_strangle_exceed_budget(repo_root_with_data: Path) -> None:
     """Mode 4 straddle and strangle defined risk exceeds the 1% cap (₹2,800)."""
-    report = evaluate_affordability(repo_root)
+    report = evaluate_affordability(repo_root_with_data)
     m4_evals = {
         e.family_id: e
         for e in report.evaluations
@@ -312,10 +330,10 @@ decision_ttl_seconds: 300
 
 
 def test_markdown_report_rendering_and_persistence(
-    repo_root: Path, tmp_path: Path
+    repo_root_with_data: Path, tmp_path: Path
 ) -> None:
     """Render markdown report and test persistence to disk."""
-    report = evaluate_affordability(repo_root)
+    report = evaluate_affordability(repo_root_with_data)
     rendered = render_markdown_report(report)
 
     assert "# Gate G1 — One-Lot Feasibility and Affordability Report" in rendered
@@ -329,6 +347,6 @@ def test_markdown_report_rendering_and_persistence(
     assert "Do NOT cut delta to force a pass" in rendered
 
     out_file = tmp_path / "test_g1_report.md"
-    saved = persist_affordability_report(repo_root, report, out_file)
+    saved = persist_affordability_report(repo_root_with_data, report, out_file)
     assert saved.exists()
     assert saved.read_text(encoding="utf-8") == rendered

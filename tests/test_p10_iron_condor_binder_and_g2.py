@@ -97,6 +97,7 @@ IDENTIFICATION_POLICY = load_identification_policy(
 BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
 ACCOUNT_ID = "ACC-PAPER-1"
 NOW = f.NOW
+NOW_CTX = NOW + timedelta(seconds=60)
 EXPIRY = date(2026, 10, 1)
 
 
@@ -480,7 +481,7 @@ class TestIronCondorStrategyAndBinder:
             ),
             candidates=candidates,
             view=f.portfolio_view(),
-            now=NOW,
+            now=NOW_CTX,
             macro=_macro(),
         )
         decision = IronCondorStrategy().evaluate(ctx)

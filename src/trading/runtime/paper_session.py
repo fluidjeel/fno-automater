@@ -1385,9 +1385,8 @@ def _four_mode_request_builder(
             elif discovery_config is not None:
                 m1_cap = discovery_config.books.starting_equity_per_mode
             else:
-                m1_cap = (
-                    modes_config.modes[ModeId.M1_CAS].capital_share
-                    * Decimal("700000")
+                m1_cap = modes_config.modes[ModeId.M1_CAS].capital_share * Decimal(
+                    "700000"
                 )
             gate = evaluate_m1_provider_event(
                 item=item,
@@ -1450,7 +1449,8 @@ def _four_mode_request_builder(
                                 0,
                                 int(
                                     (
-                                        event.execution_completed_at - event.submitted_at
+                                        event.execution_completed_at
+                                        - event.submitted_at
                                     ).total_seconds()
                                     * 1000
                                 ),
@@ -1465,7 +1465,8 @@ def _four_mode_request_builder(
                                 0,
                                 int(
                                     (
-                                        event.exit_quote_at - event.previous_exit_quote_at
+                                        event.exit_quote_at
+                                        - event.previous_exit_quote_at
                                     ).total_seconds()
                                     * 1000
                                 ),

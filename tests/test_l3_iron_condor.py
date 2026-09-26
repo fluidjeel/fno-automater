@@ -23,6 +23,7 @@ from trading.strategies.iron_condor import IronCondorStrategy
 from trading.strategies.macro import MacroAssessment, MacroBias
 
 EXPIRY = date(2026, 9, 24)
+NOW_CTX = NOW + timedelta(seconds=60)
 
 
 def _opt_snap(symbol: str, strike: str, opt_type: OptionType) -> FeatureSnapshot:
@@ -68,7 +69,7 @@ def test_iron_condor_regime_rejection() -> None:
         underlying=underlying,
         candidates=(),
         view=portfolio_view(),
-        now=NOW,
+        now=NOW_CTX,
         macro=_macro(MacroBias.BULLISH),
     )
 
@@ -97,7 +98,7 @@ def test_iron_condor_unequal_wings_rejection() -> None:
         underlying=underlying,
         candidates=(lp, sp, sc, lc),
         view=portfolio_view(),
-        now=NOW,
+        now=NOW_CTX,
         macro=_macro(MacroBias.NEUTRAL),
     )
 
@@ -126,7 +127,7 @@ def test_iron_condor_approval_and_l2_compliance() -> None:
         underlying=underlying,
         candidates=(lp, sp, sc, lc),
         view=portfolio_view(),
-        now=NOW,
+        now=NOW_CTX,
         macro=_macro(MacroBias.NEUTRAL),
     )
 

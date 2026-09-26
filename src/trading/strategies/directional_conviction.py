@@ -25,6 +25,7 @@ from trading.strategies.base import (
     StrategyDecision,
     register_strategy,
 )
+from trading.strategies.quote_freshness import quote_freshness_for_context
 
 __all__ = ["DirectionalConvictionStrategy"]
 
@@ -33,7 +34,6 @@ STRATEGY_VERSION = "directional-conviction-v1"
 REQUESTED_RISK_INR = Decimal("10000")
 MIN_DAYS_TO_EXPIRY = 10
 MIN_OPEN_INTEREST = 1000
-MAX_SNAPSHOT_AGE_SECONDS = 120
 MAX_ENTRY_SPREAD_FRACTION = Decimal("0.05")
 STOP_TICKS = 30
 TARGET_TICKS = 60
@@ -70,6 +70,16 @@ class DirectionalConvictionStrategy:
             return self._reject(
                 decision, ctx, ReasonCode.INSTRUMENT_UNKNOWN, "no candidates provided"
             )
+
+        freshness = quote_freshness_for_context(ctx)
+        if freshness.hard_reason is not None:
+            return self._reject(
+                decision,
+                ctx,
+                freshness.hard_reason,
+                freshness.detail or "quote freshness check failed",
+            )
+        strict_would_block = freshness.strict_would_block
 
         reason = self._validation_reason(ctx)
         if reason is not None:
@@ -115,6 +125,7 @@ class DirectionalConvictionStrategy:
             as_of=ctx.now,
             intents=(intent,),
             rejections=(),
+            strict_would_block=strict_would_block,
         )
 
     @staticmethod
@@ -141,11 +152,6 @@ class DirectionalConvictionStrategy:
 
     def _validation_reason(self, ctx: StrategyContext) -> ReasonCode | None:
         if not ctx.underlying.permits_new_exposure:
-            return ReasonCode.DATA_INVALID
-        age = ctx.now - ctx.underlying.times.calculation_time
-        if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
-            return ReasonCode.DATA_STALE
-        if ctx.now < ctx.underlying.times.calculation_time:
             return ReasonCode.DATA_INVALID
         return None
 

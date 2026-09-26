@@ -55,6 +55,7 @@ from trading.domain.enums import (
     CarryGateAction,
     DeskRole,
     DifferenceClass,
+    EntryProfile,
     Exchange,
     ExecutionMode,
     ExitScope,
@@ -117,6 +118,7 @@ from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.storage.trading_store import TradingEventType, TradingStore
 from trading.strategies import StrategyContext, build_strategy
 from trading.strategies.macro import MacroAssessment
+from trading.strategies.quote_freshness import quote_freshness_limits
 from trading.trade import (
     TradeManager,
     assert_stop_not_wider,
@@ -355,6 +357,11 @@ class PaperRunner:
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
         self._discovery_config = discovery_config
+        self._entry_profile = (
+            EntryProfile.DISCOVERY
+            if discovery_config is not None
+            else EntryProfile.STRICT
+        )
         self._exit_depth_gaps: tuple[str, ...] = ()
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
@@ -1126,7 +1133,10 @@ class PaperRunner:
                 ),
             )
             return False
-        if evaluation.submit_structure_close and evaluation.roll_switch_kind is not None:
+        if (
+            evaluation.submit_structure_close
+            and evaluation.roll_switch_kind is not None
+        ):
             return self._submit_roll_switch_close(
                 evaluation,
                 intent=intent,
@@ -1183,9 +1193,7 @@ class PaperRunner:
             review_id=review_id,
             as_of=now,
         )
-        self._write_lifecycle(
-            position.trade_id, roll_switch_transition=transition
-        )
+        self._write_lifecycle(position.trade_id, roll_switch_transition=transition)
         self._services.trade_manager.apply_exit_evaluation(
             position.trade_id,
             ExitEvaluation(
@@ -1214,9 +1222,7 @@ class PaperRunner:
     ) -> PaperRollSwitchReplacementResult:
         """Submit a replacement leg after close; requires fresh Layer 2 approval."""
         lifecycle = self._services.store.get_position_lifecycle(trade_id)
-        transition = (
-            None if lifecycle is None else lifecycle.roll_switch_transition
-        )
+        transition = None if lifecycle is None else lifecycle.roll_switch_transition
         blocked = replacement_blocked_reason(
             transition,
             entries_blocked=self._entries_are_blocked(reconcile_blocked=False),
@@ -1229,9 +1235,7 @@ class PaperRunner:
                 transition=transition,
             )
         position = self._services.trade_manager.get_position(trade_id)
-        closed = (
-            position is not None and position.state is TradeState.CLOSED
-        ) or (
+        closed = (position is not None and position.state is TradeState.CLOSED) or (
             lifecycle is not None and lifecycle.position.state is TradeState.CLOSED
         )
         if not closed:
@@ -1260,9 +1264,7 @@ class PaperRunner:
                 "as_of": self._clock.now_utc(),
             }
         )
-        self._write_lifecycle(
-            trade_id, roll_switch_transition=pending_transition
-        )
+        self._write_lifecycle(trade_id, roll_switch_transition=pending_transition)
         stamped = _stamp_roll_switch_replacement_request(request, pending_transition)
         if lifecycle.campaign_id is not None:
             stamped = PaperStrategyRequest(
@@ -1298,9 +1300,7 @@ class PaperRunner:
                 }
             )
             if lifecycle.campaign_id is not None:
-                self._link_campaign_trade(
-                    lifecycle.campaign_id, replacement_trade_id
-                )
+                self._link_campaign_trade(lifecycle.campaign_id, replacement_trade_id)
             self._write_lifecycle(
                 trade_id,
                 roll_switch_transition=completed,
@@ -2406,6 +2406,12 @@ class PaperRunner:
             system_state=system_state,
             entries_blocked=entries_blocked,
         )
+        strict_ms, hard_ms = quote_freshness_limits(
+            entry_profile=self._entry_profile,
+            freshness=self._account.config.freshness,
+            discovery_config=self._discovery_config,
+            cas=request.strategy_id == "cas_microstructure",
+        )
         decision = strategy.evaluate(
             StrategyContext(
                 underlying=request.underlying,
@@ -2415,6 +2421,9 @@ class PaperRunner:
                 experiment_id=request.experiment_id,
                 execution_mode=request.execution_mode,
                 macro=request.macro,
+                entry_profile=self._entry_profile,
+                strict_quote_max_age_ms=strict_ms,
+                hard_quote_max_age_ms=hard_ms,
             )
         )
         intent_updates: dict[str, object] = {

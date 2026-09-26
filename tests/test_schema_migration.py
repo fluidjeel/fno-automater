@@ -56,7 +56,9 @@ class TestOracleBackupMigration:
         assert after.position_lifecycle == before.position_lifecycle
         assert after.reservations == before.reservations
         assert after.idempotency_keys == before.idempotency_keys
-        assert is_migration_applied(sqlite3.connect(db_path), MIGRATION_PRE_900293F_SCHEMA)
+        assert is_migration_applied(
+            sqlite3.connect(db_path), MIGRATION_PRE_900293F_SCHEMA
+        )
         assert is_migration_applied(
             sqlite3.connect(db_path), MIGRATION_PRE_900293F_FILL_CHARGES
         )
@@ -87,7 +89,9 @@ class TestSyntheticLegacyTradingMigration:
         before = snapshot.row_counts
         store = TradingStore.open(db_path, clock=clock)
         after = capture_row_counts(sqlite3.connect(db_path))
-        assert after.trading_events == before.trading_events + 2  # durable FILL_CHARGE rows
+        assert (
+            after.trading_events == before.trading_events + 2
+        )  # durable FILL_CHARGE rows
         assert after.position_lifecycle == before.position_lifecycle
         assert after.reservations == before.reservations
         assert after.campaign_ledger == before.campaign_ledger
@@ -109,7 +113,9 @@ class TestSyntheticLegacyTradingMigration:
         assert len(charges) == 2
         assert accounting.confirmed_charges.amount > 0
         assert accounting.realized_net.amount < accounting.realized_gross.amount
-        campaign = CampaignLedger.reconstruct_from_store(store).get(snapshot.campaign_id)
+        campaign = CampaignLedger.reconstruct_from_store(store).get(
+            snapshot.campaign_id
+        )
         assert campaign is not None
         assert campaign.cumulative_realized_gross.amount == snapshot.gross_amount
         book = FourModeBook.reconstruct_from_store(store, NOW.date())
@@ -117,7 +123,9 @@ class TestSyntheticLegacyTradingMigration:
         assert ledger.realized_gross_pnl_today.amount == snapshot.gross_amount
         store.close()
 
-    def test_fill_charge_dedup_on_second_migration(self, tmp_path: Path, clock: WallClock) -> None:
+    def test_fill_charge_dedup_on_second_migration(
+        self, tmp_path: Path, clock: WallClock
+    ) -> None:
         db_path = tmp_path / "synthetic_legacy.sqlite"
         build_legacy_trading_db(db_path)
         store = TradingStore.open(db_path, clock=clock)

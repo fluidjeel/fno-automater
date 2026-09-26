@@ -42,6 +42,7 @@ from trading.strategies.base import (
     register_strategy,
 )
 from trading.strategies.macro import MacroBias
+from trading.strategies.quote_freshness import quote_freshness_for_context
 
 __all__ = ["LongOptionStrategy"]
 
@@ -55,7 +56,6 @@ STRATEGY_VERSION = "long-option-v2"
 REQUESTED_RISK_INR = Decimal("10000")
 MIN_DAYS_TO_EXPIRY = 2
 MIN_OPEN_INTEREST = 1000
-MAX_SNAPSHOT_AGE_SECONDS = 120
 MAX_ENTRY_SPREAD_FRACTION = Decimal("0.05")
 STOP_TICKS = 40
 TARGET_TICKS = 80
@@ -83,7 +83,7 @@ class LongOptionStrategy:
     strategy_id = STRATEGY_ID
     strategy_version = STRATEGY_VERSION
 
-    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:
+    def evaluate(self, ctx: StrategyContext) -> StrategyDecision:  # noqa: PLR0911
         decision = StrategyDecision(
             strategy_id=self.strategy_id,
             strategy_version=self.strategy_version,
@@ -104,6 +104,16 @@ class LongOptionStrategy:
                 ReasonCode.INSTRUMENT_UNKNOWN,
                 "exactly one option required",
             )
+
+        freshness = quote_freshness_for_context(ctx)
+        if freshness.hard_reason is not None:
+            return self._reject(
+                decision,
+                ctx,
+                freshness.hard_reason,
+                freshness.detail or "quote freshness check failed",
+            )
+        strict_would_block = freshness.strict_would_block
 
         reason = self._validation_reason(ctx)
         if reason is not None:
@@ -131,6 +141,7 @@ class LongOptionStrategy:
             as_of=ctx.now,
             intents=(intent,),
             rejections=(),
+            strict_would_block=strict_would_block,
         )
 
     @staticmethod
@@ -158,11 +169,6 @@ class LongOptionStrategy:
     def _validation_reason(self, ctx: StrategyContext) -> ReasonCode | None:
         option = ctx.candidates[0]
         if not ctx.underlying.permits_new_exposure or not option.permits_new_exposure:
-            return ReasonCode.DATA_INVALID
-        age = ctx.now - ctx.underlying.times.calculation_time
-        if age > timedelta(seconds=MAX_SNAPSHOT_AGE_SECONDS):
-            return ReasonCode.DATA_STALE
-        if ctx.now < ctx.underlying.times.calculation_time:
             return ReasonCode.DATA_INVALID
         if ctx.now >= _flatten_at(ctx.now):
             return ReasonCode.SETUP_COOLDOWN

@@ -177,6 +177,7 @@ class FreshnessRules(StrictModel):
     max_clock_drift_ms: StrictInt = Field(gt=0)
     warmup_bars_by_timeframe: dict[NonEmptyStr, StrictInt] = Field(default_factory=dict)
     quote_max_age_ms: StrictInt | None = Field(default=None, gt=0)
+    cas_quote_max_age_ms: StrictInt | None = Field(default=None, gt=0)
     max_leg_quote_skew_ms: StrictInt | None = Field(default=None, ge=0)
     protection_stale_escalate_after_ms: StrictInt | None = Field(default=None, gt=0)
 
@@ -207,6 +208,15 @@ class FreshnessRules(StrictModel):
                 "strategy specification and observed feed latency",
             )
         return self.quote_max_age_ms
+
+    def require_cas_quote_max_age_ms(self) -> int:
+        """Fail closed when CAS quote age is not configured."""
+        if self.cas_quote_max_age_ms is None:
+            raise ConfigNotVerifiedError(
+                "freshness.cas_quote_max_age_ms",
+                "strategy specification and observed feed latency",
+            )
+        return self.cas_quote_max_age_ms
 
     def require_max_leg_quote_skew_ms(self) -> int:
         """Fail closed when multi-leg quote skew is not configured."""

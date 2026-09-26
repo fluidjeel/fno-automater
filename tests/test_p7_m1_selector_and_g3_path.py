@@ -505,7 +505,9 @@ def test_g3_slow_poll_warns_without_blocking_m1_paper() -> None:
     validated_config, warnings = validate_startup_configuration(
         config, enforce_g3_shadow=False
     )
-    assert validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert (
+        validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    )
     assert warnings
 
 
@@ -515,7 +517,9 @@ def test_g3_enforce_flag_does_not_demote_cas() -> None:
     validated_config, warnings = validate_startup_configuration(
         config, enforce_g3_shadow=True
     )
-    assert validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    assert (
+        validated_config.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
+    )
     assert any("measured limitation" in item for item in warnings)
 
 

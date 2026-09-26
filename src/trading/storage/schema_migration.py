@@ -170,9 +170,9 @@ def _migrate_pre_900293f_fill_charges(
     for lifecycle in store.list_position_lifecycle():
         approved = lifecycle.risk_decision.approved_legs
         if approved:
-            contracts_by_trade[lifecycle.trade_id] = (
-                approved[0].lot_size.contracts_per_lot
-            )
+            contracts_by_trade[lifecycle.trade_id] = approved[
+                0
+            ].lot_size.contracts_per_lot
     backfill_fill_charges(
         store,
         orders,

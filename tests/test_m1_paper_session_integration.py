@@ -314,7 +314,12 @@ def test_m1_poll_tick_does_not_submit_without_event(
         instruments=instruments,
     )
     session = _session(
-        store, clock, tmp_path, repo_root=tmp_path, session_cfg=session_cfg, builder=builder
+        store,
+        clock,
+        tmp_path,
+        repo_root=tmp_path,
+        session_cfg=session_cfg,
+        builder=builder,
     )
     result = session.tick()
     assert result is None or not session._runner.trade_manager.list_positions()
@@ -333,7 +338,12 @@ def test_m1_event_reaches_paper_fill_and_managed_exit(
         instruments=instruments,
     )
     session = _session(
-        store, clock, tmp_path, repo_root=tmp_path, session_cfg=session_cfg, builder=builder
+        store,
+        clock,
+        tmp_path,
+        repo_root=tmp_path,
+        session_cfg=session_cfg,
+        builder=builder,
     )
     event = _simulated_event(now=clock.now_utc())
     fill = session.submit_m1_event(event)
@@ -353,7 +363,11 @@ def test_m1_event_reaches_paper_fill_and_managed_exit(
     session._runner.manage_exits({symbol: exit_snap})
     closed = session._runner.trade_manager.get_position(position.trade_id)
     assert closed is not None
-    assert closed.state in {TradeState.EXIT_PENDING, TradeState.CLOSING, TradeState.CLOSED}
+    assert closed.state in {
+        TradeState.EXIT_PENDING,
+        TradeState.CLOSING,
+        TradeState.CLOSED,
+    }
 
 
 def test_m1_disconnect_and_missing_timestamp_abstain(
@@ -369,7 +383,12 @@ def test_m1_disconnect_and_missing_timestamp_abstain(
         instruments=instruments,
     )
     session = _session(
-        store, clock, tmp_path, repo_root=tmp_path, session_cfg=session_cfg, builder=builder
+        store,
+        clock,
+        tmp_path,
+        repo_root=tmp_path,
+        session_cfg=session_cfg,
+        builder=builder,
     )
     disconnected = session.submit_m1_event(
         _simulated_event(now=clock.now_utc(), disconnected=True)
@@ -406,11 +425,20 @@ def test_m1_repeated_episode_blocked_by_retry_limit(
         instruments=instruments,
     )
     session = _session(
-        store, clock, tmp_path, repo_root=tmp_path, session_cfg=session_cfg, builder=builder
+        store,
+        clock,
+        tmp_path,
+        repo_root=tmp_path,
+        session_cfg=session_cfg,
+        builder=builder,
     )
-    first = session.submit_m1_event(_simulated_event(now=clock.now_utc(), episode_id="dup"))
+    first = session.submit_m1_event(
+        _simulated_event(now=clock.now_utc(), episode_id="dup")
+    )
     assert first is not None
-    second = session.submit_m1_event(_simulated_event(now=clock.now_utc(), episode_id="dup"))
+    second = session.submit_m1_event(
+        _simulated_event(now=clock.now_utc(), episode_id="dup")
+    )
     assert second is None or len(session._runner.trade_manager.list_positions()) == 1
 
 
@@ -427,7 +455,12 @@ def test_m1_restart_preserves_open_position(
         instruments=instruments,
     )
     session = _session(
-        store, clock, tmp_path, repo_root=tmp_path, session_cfg=session_cfg, builder=builder
+        store,
+        clock,
+        tmp_path,
+        repo_root=tmp_path,
+        session_cfg=session_cfg,
+        builder=builder,
     )
     session.submit_m1_event(_simulated_event(now=clock.now_utc()))
     opened = session._runner.trade_manager.list_positions()[0]

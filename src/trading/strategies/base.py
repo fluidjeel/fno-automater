@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 from trading.domain.contracts import FeatureSnapshot, PortfolioView, TradeIntent
-from trading.domain.enums import ExecutionMode, ReasonCode
+from trading.domain.enums import EntryProfile, ExecutionMode, ReasonCode
 
 if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from trading.strategies.macro import MacroAssessment
@@ -46,6 +46,7 @@ class StrategyDecision:
     as_of: datetime
     intents: tuple[TradeIntent, ...]
     rejections: tuple[Rejection, ...]
+    strict_would_block: tuple[ReasonCode, ...] = ()
 
     @property
     def emits_intent(self) -> bool:
@@ -69,6 +70,9 @@ class StrategyContext:
     experiment_id: str = "EXP-PAPER-DEFAULT"
     execution_mode: ExecutionMode = ExecutionMode.PAPER
     macro: MacroAssessment | None = None
+    entry_profile: EntryProfile = EntryProfile.STRICT
+    strict_quote_max_age_ms: int = 120_000
+    hard_quote_max_age_ms: int | None = None
 
 
 class Strategy(Protocol):
