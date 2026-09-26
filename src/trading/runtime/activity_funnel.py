@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 __all__ = ["build_activity_funnel"]
 
 
-def build_activity_funnel(result: PaperCycleResult) -> ActivityFunnelSummary:
+def build_activity_funnel(result: PaperCycleResult) -> ActivityFunnelSummary:  # noqa: PLR0912
     """Emit evaluation → exit funnel drops for one cycle."""
     drops: list[FunnelDrop] = []
     approved = 0
