@@ -156,9 +156,7 @@ def _signals_for(
             )
             continue
         command = event.command if event is not None else None
-        strict_fill_verdict = (
-            event.strict_fill_verdict if event is not None else None
-        )
+        strict_fill_verdict = event.strict_fill_verdict if event is not None else None
         signals.append(
             _emitted(
                 intent,

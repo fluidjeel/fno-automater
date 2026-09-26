@@ -513,9 +513,7 @@ class PaperBroker:
             )
         strict_verdict = None
         if self._shadow_fill_model is not None:
-            shadow = simulate_fill(
-                command, quote, policy=self._shadow_fill_model
-            )
+            shadow = simulate_fill(command, quote, policy=self._shadow_fill_model)
             strict_verdict = shadow.reason_code
         simulation = simulate_fill(command, quote, policy=policy)
         if (
