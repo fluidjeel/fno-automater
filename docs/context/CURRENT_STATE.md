@@ -2,11 +2,11 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A10_DONE (`paper_session.tick()` survives builder feed errors; DATA-stage `DATA_FEED_ERROR` records; protection quotes still drive exits; consecutive-failure and recovery Telegram alerts)
+STATUS: DISC-A11_DONE (`EXP-DISC` experiment ids include discovery.yaml fingerprint; eligibility always INELIGIBLE for discovery cohorts; scorecard refuses DISCOVERY/STRICT mixing)
 
 ## Evidence labels
 
-- TEST-PROVEN: local pytest including `tests/test_disc_a9_discovery_decision.py` and `tests/test_disc_a10_data_feed_error.py`.
+- TEST-PROVEN: local pytest including `tests/test_disc_a11_cohort_identity.py`.
 - DEPLOYED-PAPER: Oracle rsync tree; startup keeps `M1_CAS: PAPER`.
 - OBSERVED-IN-MARKET: not yet. Market was closed; no qualifying live signal captured.
 

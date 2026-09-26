@@ -20,11 +20,20 @@ from trading.runtime.paper_runner import PaperCycleResult, PaperStrategyOutcome
 __all__ = ["experiment_id_for", "persist_cohorts"]
 
 
-def experiment_id_for(prefix: str, strategy_id: str, as_of: datetime) -> str:
+def experiment_id_for(
+    prefix: str,
+    strategy_id: str,
+    as_of: datetime,
+    *,
+    discovery_fingerprint: str | None = None,
+) -> str:
     """Freeze one experiment identity per strategy ISO week."""
     iso = as_of.isocalendar()
     short = _short_strategy(strategy_id)
-    return f"{prefix}-{short}-{iso.year}W{iso.week:02d}"
+    base = f"{prefix}-{short}-{iso.year}W{iso.week:02d}"
+    if discovery_fingerprint is None:
+        return base
+    return f"{base}-{discovery_fingerprint}"
 
 
 def persist_cohorts(
@@ -39,6 +48,7 @@ def persist_cohorts(
     fill_model_version: str,
     code_version: str,
     feature_set_version: str,
+    discovery_fingerprint: str | None = None,
 ) -> tuple[Path, ...]:
     """Write one CohortPackage JSON per strategy. Empty cohorts are skipped."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -60,7 +70,12 @@ def persist_cohorts(
     for strategy_id, signals in grouped.items():
         if not signals:
             continue
-        experiment_id = experiment_id_for(prefix, strategy_id, observation_start)
+        experiment_id = experiment_id_for(
+            prefix,
+            strategy_id,
+            observation_start,
+            discovery_fingerprint=discovery_fingerprint,
+        )
         aligned = tuple(_align_experiment(signal, experiment_id) for signal in signals)
         version_tuple = versions.get(
             strategy_id,

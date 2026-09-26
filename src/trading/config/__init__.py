@@ -8,9 +8,13 @@ from trading.config.agent import (
     load_agent_config_text,
 )
 from trading.config.discovery import (
+    DISCOVERY_EXPERIMENT_PREFIX,
     DiscoveryConfig,
     DiscoveryConfigError,
+    LoadedDiscoveryConfig,
+    discovery_config_fingerprint,
     load_discovery_config,
+    load_discovery_config_text,
 )
 from trading.config.evaluation import (
     EligibilityThresholds,
@@ -49,6 +53,7 @@ from trading.config.schema import (
 )
 
 __all__ = [
+    "DISCOVERY_EXPERIMENT_PREFIX",
     "AgentConfig",
     "AgentConfigError",
     "AppConfig",
@@ -66,6 +71,7 @@ __all__ = [
     "InstrumentRule",
     "LoadedAgentConfig",
     "LoadedConfig",
+    "LoadedDiscoveryConfig",
     "LoadedEvaluationConfig",
     "LoadedRiskPolicy",
     "MarginRules",
@@ -77,11 +83,13 @@ __all__ = [
     "StorageRules",
     "VerifiedValue",
     "assert_execution_mode_allowed",
+    "discovery_config_fingerprint",
     "load_agent_config",
     "load_agent_config_text",
     "load_config",
     "load_config_text",
     "load_discovery_config",
+    "load_discovery_config_text",
     "load_evaluation_config",
     "load_paper_data_requirements",
     "load_risk_policy",

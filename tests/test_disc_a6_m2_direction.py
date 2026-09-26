@@ -33,7 +33,7 @@ from trading.strategies.macro import MacroAssessment, MacroBias
 
 ROOT = Path(__file__).resolve().parent.parent
 POLICY = load_identification_policy(ROOT / "config" / "identification.yaml")
-DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 KOLKATA = ZoneInfo("Asia/Kolkata")
 CALCULATED_AT = datetime(2026, 9, 24, 10, 0, tzinfo=KOLKATA)
 NOW_CTX = NOW + timedelta(seconds=60)

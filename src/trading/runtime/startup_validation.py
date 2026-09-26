@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from trading.config.discovery import DiscoveryConfig, load_discovery_config
+from trading.config.discovery import (
+    DISCOVERY_EXPERIMENT_PREFIX,
+    LoadedDiscoveryConfig,
+    load_discovery_config,
+)
 from trading.domain.contracts.mode_policy import ModesConfig
 from trading.domain.enums import (
     EntryProfile,
@@ -198,7 +202,7 @@ def _validate_discovery_profile(
     environment: Environment | None,
     broker: object | None,
     discovery_path: Path | None,
-) -> DiscoveryConfig | None:
+) -> LoadedDiscoveryConfig | None:
     if session_config.entry_profile is not EntryProfile.DISCOVERY:
         return None
     if environment is not None and environment is not Environment.PAPER:
@@ -239,17 +243,23 @@ def validate_startup_configuration(
     discovery_path: Path | None = None,
 ) -> tuple[PaperSessionConfig, list[str]]:
     """Validate session configuration against Gates G1, G2, G3, DISCOVERY rules."""
-    discovery_config = _validate_discovery_profile(
+    loaded_discovery = _validate_discovery_profile(
         session_config,
         environment=environment,
         broker=broker,
         discovery_path=discovery_path,
     )
+    if loaded_discovery is not None:
+        session_config = session_config.model_copy(
+            update={"experiment_prefix": DISCOVERY_EXPERIMENT_PREFIX}
+        )
     merged_family_stances = effective_family_stances(
         session_config.family_stances,
         entry_profile=session_config.entry_profile,
         discovery_family_stances=(
-            discovery_config.family_stances if discovery_config is not None else None
+            loaded_discovery.config.family_stances
+            if loaded_discovery is not None
+            else None
         ),
     )
     _validate_known_stances(session_config, modes_config)

@@ -57,8 +57,10 @@ class _DummyRealBroker:
 
 class TestDiscoveryConfig:
     def test_load_canonical_discovery_config_succeeds(self) -> None:
-        cfg = load_discovery_config(ROOT / "config" / "discovery.yaml")
+        loaded = load_discovery_config(ROOT / "config" / "discovery.yaml")
+        cfg = loaded.config
         assert cfg.profile_version == "discovery-v1"
+        assert loaded.checksum
         assert cfg.books.starting_equity_per_mode == Decimal("700000")
         assert cfg.modes[ModeId.M1_CAS.value].per_trade_guide == Decimal("0.01")
         assert cfg.modes[ModeId.M2_DIRECTIONAL.value].per_trade_guide == Decimal("0.02")

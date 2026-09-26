@@ -21,7 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from trading.broker.paper import PaperBroker
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
-from trading.config.discovery import DiscoveryConfig, load_discovery_config
+from trading.config.discovery import (
+    DiscoveryConfig,
+    LoadedDiscoveryConfig,
+    discovery_config_fingerprint,
+    load_discovery_config,
+)
 from trading.config.evaluation import discovery_fill_models
 from trading.config.paper_data import load_paper_data_requirements
 from trading.config.risk_policy import RiskPolicyConfig
@@ -256,11 +261,13 @@ class PaperSession:
         session_heartbeat_path: Path | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         discovery_config: DiscoveryConfig | None = None,
+        discovery_fingerprint: str | None = None,
     ) -> None:
         self._runner = runner
         self._clock = clock
         self._config = session_config
         self._discovery_config = discovery_config
+        self._discovery_fingerprint = discovery_fingerprint
         if self._config.entry_profile is EntryProfile.DISCOVERY:
             self._profile_version = (
                 discovery_config.profile_version
@@ -691,6 +698,7 @@ class PaperSession:
             fill_model_version=self._fill_model_version,
             code_version=self._code_version,
             feature_set_version="paper-session-v1",
+            discovery_fingerprint=self._discovery_fingerprint,
         )
         self._eod_sent = True
 
@@ -753,9 +761,18 @@ def run_paper_session(
         repo_root / "config" / "data_pipeline.yaml"
     )
     paper_data = load_paper_data_requirements(repo_root / "config" / "paper_data.yaml")
-    discovery_cfg: DiscoveryConfig | None = None
+    loaded_discovery: LoadedDiscoveryConfig | None = None
     if session_cfg.entry_profile is EntryProfile.DISCOVERY and discovery_path.is_file():
-        discovery_cfg = load_discovery_config(discovery_path)
+        loaded_discovery = load_discovery_config(discovery_path)
+    discovery_cfg = loaded_discovery.config if loaded_discovery is not None else None
+    discovery_fingerprint = (
+        discovery_config_fingerprint(
+            loaded_discovery.config.profile_version,
+            loaded_discovery.checksum,
+        )
+        if loaded_discovery is not None
+        else None
+    )
 
     store = TradingStore.open(repo_root / session_cfg.store_path, clock=clock)
     session_date = clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
@@ -845,6 +862,7 @@ def run_paper_session(
                 paper_data=paper_data,
                 mode_book=mode_book,
                 discovery_config=discovery_cfg,
+                discovery_fingerprint=discovery_fingerprint,
             )
         else:
             request_builder = _live_request_builder(
@@ -856,6 +874,7 @@ def run_paper_session(
                 broker=broker,
                 paper_data=paper_data,
                 discovery_config=discovery_cfg,
+                discovery_fingerprint=discovery_fingerprint,
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
@@ -895,6 +914,7 @@ def run_paper_session(
         session_heartbeat_path=repo_root / session_cfg.session_heartbeat_path,
         sleeper=sleeper or time.sleep,
         discovery_config=discovery_cfg,
+        discovery_fingerprint=discovery_fingerprint,
     )
     return session.run(once=once)
 
@@ -1048,6 +1068,7 @@ def _live_request_builder(
     broker: PaperBroker,
     paper_data: PaperDataRequirements | None = None,
     discovery_config: DiscoveryConfig | None = None,
+    discovery_fingerprint: str | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -1277,7 +1298,10 @@ def _live_request_builder(
                     instruments=instruments,
                     event_risk_state=event_risk,
                     experiment_id=experiment_id_for(
-                        session_cfg.experiment_prefix, strategy_id, now
+                        session_cfg.experiment_prefix,
+                        strategy_id,
+                        now,
+                        discovery_fingerprint=discovery_fingerprint,
                     ),
                     execution_mode=mode,
                     macro=macro,
@@ -1302,6 +1326,7 @@ def _four_mode_request_builder(
     paper_data: PaperDataRequirements | None = None,
     mode_book: FourModeBook | None = None,
     discovery_config: DiscoveryConfig | None = None,
+    discovery_fingerprint: str | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -1606,6 +1631,7 @@ def _four_mode_request_builder(
             macro=macro,
             experiment_prefix=session_cfg.experiment_prefix,
             now=now,
+            discovery_fingerprint=discovery_fingerprint,
         )
         build.latest_market_state = market_state  # type: ignore[attr-defined]
         return requests, snapshots

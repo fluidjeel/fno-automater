@@ -59,7 +59,7 @@ def _planned(
 
 def _discovery_broker(clock: FrozenClock) -> PaperBroker:
     base = load_evaluation_config(EVALUATION).config.fill_model
-    discovery = load_discovery_config(DISCOVERY)
+    discovery = load_discovery_config(DISCOVERY).config
     touch, shadow = discovery_fill_models(
         base,
         model=discovery.fills.model,
@@ -298,7 +298,7 @@ class TestPaperRunnerFillModelPair:
         store = TradingStore.open(tmp_path / "runner.sqlite", clock=clock)
         try:
             base = load_evaluation_config(EVALUATION).config.fill_model
-            discovery = load_discovery_config(DISCOVERY)
+            discovery = load_discovery_config(DISCOVERY).config
             touch, shadow = discovery_fill_models(
                 base,
                 model=discovery.fills.model,

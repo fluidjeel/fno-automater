@@ -7,6 +7,7 @@ from collections import Counter
 from datetime import datetime
 from decimal import Decimal
 
+from trading.analytics.cohort_evidence import is_discovery_experiment_id
 from trading.analytics.fills import simulate_fill
 from trading.config.evaluation import FillModelConfig
 from trading.domain.contracts.evaluation import (
@@ -40,6 +41,12 @@ def build_scorecard(
     """Score one frozen experiment. Refuses mixed versions."""
     if not package.experiment.parameters_frozen:
         raise EvaluationError("unfrozen experiment cannot be scored")
+    discovery = is_discovery_experiment_id(package.experiment.experiment_id)
+    if discovery and fill_policy.version != package.experiment.fill_model_version:
+        raise EvaluationError(
+            "do not mix DISCOVERY and STRICT cohorts: score DISCOVERY packages "
+            "with their touch-v1 fill policy"
+        )
     if fill_policy.version != package.experiment.fill_model_version:
         raise EvaluationError(
             f"fill-model {fill_policy.version} does not match experiment "

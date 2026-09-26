@@ -5,6 +5,10 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 
+from trading.analytics.cohort_evidence import (
+    DISCOVERY_INELIGIBLE_REASON,
+    is_discovery_experiment_id,
+)
 from trading.config.evaluation import EligibilityThresholds
 from trading.domain.contracts.evaluation import (
     CohortScorecard,
@@ -12,7 +16,7 @@ from trading.domain.contracts.evaluation import (
 )
 from trading.domain.enums import EligibilityStatus
 
-__all__ = ["evaluate_eligibility"]
+__all__ = ["DISCOVERY_INELIGIBLE_REASON", "evaluate_eligibility"]
 
 
 def evaluate_eligibility(
@@ -23,6 +27,21 @@ def evaluate_eligibility(
     threshold_checksum: str,
 ) -> PromotionEligibilityResult:
     """Return eligibility. Win rate and gross P&L alone never pass."""
+    if is_discovery_experiment_id(scorecard.experiment_id):
+        result_id = hashlib.sha256(
+            f"{scorecard.scorecard_id}|discovery|{evaluated_at.isoformat()}".encode()
+        ).hexdigest()[:16]
+        return PromotionEligibilityResult(
+            result_id=result_id,
+            experiment_id=scorecard.experiment_id,
+            scorecard_id=scorecard.scorecard_id,
+            status=EligibilityStatus.INELIGIBLE,
+            evaluated_at=evaluated_at,
+            failed_gates=("discovery_cohort",),
+            threshold_checksum=threshold_checksum,
+            detail=DISCOVERY_INELIGIBLE_REASON,
+        )
+
     sample_gates: list[str] = []
     hard_gates: list[str] = []
 

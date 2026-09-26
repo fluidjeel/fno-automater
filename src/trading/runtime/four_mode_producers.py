@@ -207,6 +207,7 @@ def build_four_mode_requests(
     macro: MacroAssessment | None,
     experiment_prefix: str,
     now: datetime,
+    discovery_fingerprint: str | None = None,
 ) -> tuple[PaperStrategyRequest, ...]:
     """Map producer outputs to PaperStrategyRequest rows for PaperRunner."""
     requests: list[PaperStrategyRequest] = []
@@ -219,7 +220,12 @@ def build_four_mode_requests(
                 candidates=item.bound.candidates,
                 instruments=instruments,
                 event_risk_state=event_risk,
-                experiment_id=experiment_id_for(experiment_prefix, strategy_key, now),
+                experiment_id=experiment_id_for(
+                    experiment_prefix,
+                    strategy_key,
+                    now,
+                    discovery_fingerprint=discovery_fingerprint,
+                ),
                 execution_mode=item.execution_mode,
                 macro=macro,
                 execute=item.execute,

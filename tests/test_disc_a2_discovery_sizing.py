@@ -40,7 +40,7 @@ from trading.risk.reservation import CapitalReservationService
 from trading.storage.trading_store import TradingStore
 
 ROOT = Path(__file__).resolve().parent.parent
-DISCOVERY_CFG = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY_CFG = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 RISK_POLICY = load_risk_policy(ROOT / "config" / "risk.yaml")
 ACCOUNT_CONFIG = load_config(ROOT / "config" / "base.yaml")
 BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"

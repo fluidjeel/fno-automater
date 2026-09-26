@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Self
@@ -19,7 +21,10 @@ from trading.domain.contracts.base import (
 )
 from trading.domain.enums import ExecutionMode, ModeId, ReasonCode
 
+DISCOVERY_EXPERIMENT_PREFIX = "EXP-DISC"
+
 __all__ = [
+    "DISCOVERY_EXPERIMENT_PREFIX",
     "DeltaBand",
     "DiscoveryBooksConfig",
     "DiscoveryConfig",
@@ -29,9 +34,12 @@ __all__ = [
     "DiscoveryModeConfig",
     "DiscoverySelectionConfig",
     "DteBand",
+    "LoadedDiscoveryConfig",
     "MaxSpreadFractionConfig",
     "MinOpenInterestConfig",
+    "discovery_config_fingerprint",
     "load_discovery_config",
+    "load_discovery_config_text",
 ]
 
 
@@ -167,19 +175,59 @@ class DiscoveryConfig(VersionedModel):
         return self
 
 
-def load_discovery_config(path: Path) -> DiscoveryConfig:
+@dataclass(frozen=True, slots=True)
+class LoadedDiscoveryConfig:
+    """Validated discovery profile plus the identity of the bytes it came from."""
+
+    config: DiscoveryConfig
+    checksum: str
+    source: str
+
+
+def discovery_config_fingerprint(profile_version: str, checksum: str) -> str:
+    """Short hash tying DISCOVERY experiment ids to profile_version and file bytes."""
+    digest = hashlib.sha256(f"{profile_version}|{checksum}".encode()).hexdigest()
+    return digest[:8]
+
+
+def _checksum(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def load_discovery_config_text(
+    raw: str,
+    *,
+    source: str = "<string>",
+) -> LoadedDiscoveryConfig:
+    """Parse, validate and checksum discovery policy from text."""
+    try:
+        payload = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise DiscoveryConfigError(f"{source}: not valid YAML: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise DiscoveryConfigError(
+            f"{source}: expected a mapping at the top level, got "
+            f"{type(payload).__name__}"
+        )
+    try:
+        config = DiscoveryConfig.model_validate(payload)
+    except Exception as exc:
+        raise DiscoveryConfigError(
+            f"failed to validate discovery config from {source}: {exc}"
+        ) from exc
+    return LoadedDiscoveryConfig(
+        config=config,
+        checksum=_checksum(raw.encode("utf-8")),
+        source=source,
+    )
+
+
+def load_discovery_config(path: Path) -> LoadedDiscoveryConfig:
     """Load and validate discovery.yaml from the filesystem."""
     if not path.is_file():
         raise DiscoveryConfigError(f"discovery config file not found: {path}")
     try:
-        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise DiscoveryConfigError(f"failed to read yaml from {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise DiscoveryConfigError(f"discovery config in {path} must be a mapping")
-    try:
-        return DiscoveryConfig.model_validate(payload)
-    except Exception as exc:
-        raise DiscoveryConfigError(
-            f"failed to validate discovery config from {path}: {exc}"
-        ) from exc
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DiscoveryConfigError(f"cannot read {path}: {exc}") from exc
+    return load_discovery_config_text(raw, source=str(path))
