@@ -1,7 +1,10 @@
 # Active PAPER session — four-mode producers (deployed Oracle 2026-09-25).
-# Rollback: cp config/paper_session_legacy.yaml config/paper_session.yaml
+# Rollback legacy router: cp config/paper_session_legacy.yaml config/paper_session.yaml
+# Rollback DISCOVERY: set entry_profile: STRICT (or remove it) and restart;
+#   positions opened under DISCOVERY keep their frozen exit policy.
 schema_version: "1"
 routing_profile: four_mode
+entry_profile: DISCOVERY
 # Four-mode PAPER entries enabled after audit remediation and Oracle migration,
 # restart, risk-ledger, charge-accounting and regression gates passed. Family
 # overrides below remain authoritative for SHADOW/SUSPENDED strategies.
@@ -9,15 +12,15 @@ new_entries_enabled: true
 poll_interval_seconds: 60
 eod_local: "15:40"
 option_strikes_each_side: 2
-experiment_prefix: "EXP-4M"
+experiment_prefix: "EXP-DISC"
 mode_stances:
   M1_CAS: PAPER
   M2_DIRECTIONAL: PAPER
   M3_TACTICAL_POSITIONAL: PAPER
   M4_STRATEGIC_POSITIONAL: PAPER
 family_stances:
-  long_straddle: SHADOW
-  long_strangle: SHADOW
+  long_straddle: PAPER
+  long_strangle: PAPER
   long_call_calendar: SUSPENDED
   long_put_calendar: SUSPENDED
 commodity_underlying: CRUDEOIL

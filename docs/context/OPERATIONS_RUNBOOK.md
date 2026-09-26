@@ -106,6 +106,17 @@ Repeats for the same fault are suppressed for 15 minutes.
 ## Four-mode PAPER routing (2026-09-25)
 
 - Active session config: `config/paper_session.yaml` with `routing_profile: four_mode`.
+- **DISCOVERY profile:** set `entry_profile: DISCOVERY` in
+  `config/paper_session.yaml` (default when absent is `STRICT`). Under DISCOVERY,
+  `experiment_prefix` is `EXP-DISC`, straddle/strangle families run `PAPER`, and
+  soft gates record `strict_would_block` instead of blocking. Startup prints
+  `ENTRY PROFILE: DISCOVERY (temporary)`; the heartbeat includes
+  `entry_profile: DISCOVERY`. See `docs/context/DISCOVERY_MODE.md`.
+- **Rollback DISCOVERY:** set `entry_profile: STRICT` (or remove the key) in
+  `config/paper_session.yaml`, then
+  `sudo systemctl restart fno-paper-session.service`. Positions opened under
+  DISCOVERY keep their frozen exit policy after rollback; only new entries
+  revert to STRICT rules.
 - Rollback to legacy one-winner router:
   `cp config/paper_session_legacy.yaml config/paper_session.yaml` then
   `sudo systemctl restart fno-paper-session.service`.
