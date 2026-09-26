@@ -15,10 +15,9 @@ from tests.test_disc_a2_discovery_sizing import (
     _discovery_gateway,
     _straddle_intent,
     _straddle_leg_snapshots,
-    instrument_spec,
 )
 from tests.test_paper_data_requirements import _inputs as paper_data_inputs
-from tests.test_risk_gateway import _gateway_request
+from tests.test_risk_gateway import _gateway_request, instrument_spec
 from trading.broker.paper import PaperBroker
 from trading.config import load_config, load_risk_policy
 from trading.config.paper_data import load_paper_data_requirements
@@ -124,7 +123,7 @@ class TestEventBlackoutSoft:
 
     def test_strict_rejects_event_blackout(
         self,
-        strict_gateway,
+        strict_gateway: RiskGateway,
     ) -> None:
         decision = strict_gateway.evaluate(
             replace(
