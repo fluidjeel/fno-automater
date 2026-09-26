@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 15
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A2.
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A2 (DISC-A4/A5/A6 done).
 
 ## PAPER Discovery Mode (`docs/plans/DISCOVERY_MODE_STORIES.md`)
 
