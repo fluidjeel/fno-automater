@@ -18,7 +18,12 @@ from trading.broker.paper import PaperBroker
 from trading.config import load_evaluation_config, load_risk_policy
 from trading.config.discovery import load_discovery_config
 from trading.domain.clock import FrozenClock
-from trading.domain.contracts import FeatureSnapshot, IntentLeg, PositionState, TradeIntent
+from trading.domain.contracts import (
+    FeatureSnapshot,
+    IntentLeg,
+    PositionState,
+    TradeIntent,
+)
 from trading.domain.enums import (
     EntryProfile,
     FamilyId,
