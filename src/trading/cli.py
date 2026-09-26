@@ -577,6 +577,58 @@ def _cmd_evaluate_improvements(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_evaluate_decisions(args: argparse.Namespace) -> int:
+    """Print DISCOVERY_DECISION rows for one session date as a readable table."""
+    from datetime import datetime as dt_datetime
+    from zoneinfo import ZoneInfo
+
+    from trading.domain.enums import ModeId
+    from trading.runtime.discovery_decision_recorder import query_decisions
+    from trading.storage.trading_store import TradingStore
+
+    kol = ZoneInfo("Asia/Kolkata")
+    session = date.fromisoformat(args.date)
+    session_dt = dt_datetime.combine(session, dt_datetime.min.time(), tzinfo=kol)
+    mode = ModeId(args.mode) if args.mode else None
+    store = TradingStore.open(Path(args.store), clock=WallClock())
+    try:
+        rows = query_decisions(
+            store,
+            session_date=session_dt,
+            mode_id=mode,
+            experiment_id=args.experiment_id or None,
+        )
+        headers = (
+            "time",
+            "mode",
+            "family",
+            "decision",
+            "stage",
+            "reasons",
+            "experiment",
+        )
+        print("\t".join(headers))
+        for row in rows:
+            local = row.as_of.astimezone(kol).strftime("%H:%M:%S")
+            print(
+                "\t".join(
+                    (
+                        local,
+                        row.mode_id.value,
+                        row.family_id,
+                        row.decision.value,
+                        row.stage.value,
+                        ",".join(code.value for code in row.reason_codes),
+                        row.experiment_id,
+                    )
+                )
+            )
+        print(f"# {len(rows)} decision record(s)", file=sys.stderr)
+    finally:
+        store.close()
+    return 0
+
+
 def _cmd_evaluate_monthly_meta(args: argparse.Namespace) -> int:
     """Build and persist monthly meta-report (ADESK-E3)."""
     from trading.analytics.agent_scorecard import build_agent_scorecard
@@ -1698,6 +1750,32 @@ def main(argv: list[str] | None = None) -> int:
         help="UTC instant for STALE marking (optional)",
     )
     improvements_parser.set_defaults(func=_cmd_evaluate_improvements)
+
+    decisions_parser = evaluate_sub.add_parser(
+        "decisions",
+        help="print durable decision records for one session date",
+    )
+    decisions_parser.add_argument(
+        "--store",
+        default="data/paper/trading.sqlite",
+        help="path to TradingStore sqlite file",
+    )
+    decisions_parser.add_argument(
+        "--date",
+        required=True,
+        help="session date YYYY-MM-DD (Asia/Kolkata)",
+    )
+    decisions_parser.add_argument(
+        "--mode",
+        default="",
+        help="optional mode filter (M1_CAS, M2_DIRECTIONAL, ...)",
+    )
+    decisions_parser.add_argument(
+        "--experiment-id",
+        default="",
+        help="optional experiment_id filter",
+    )
+    decisions_parser.set_defaults(func=_cmd_evaluate_decisions)
 
     research_weekly_parser = evaluate_sub.add_parser(
         "research-weekly",

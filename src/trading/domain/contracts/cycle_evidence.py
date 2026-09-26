@@ -68,6 +68,7 @@ class StrategyCycleSummary(VersionedModel):
     execution_mode: ExecutionMode
     executed: StrictBool
     rejection_reasons: tuple[ReasonCode, ...] = ()
+    rejection_details: tuple[NonEmptyStr, ...] = ()
     entry_blocked_reasons: tuple[ReasonCode, ...] = ()
     intent_count: StrictInt = Field(ge=0)
     setup_features: SetupFeatures | None = None

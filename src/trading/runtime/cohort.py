@@ -117,14 +117,19 @@ def _signals_for(
     outcome: PaperStrategyOutcome, *, as_of: datetime
 ) -> list[CohortSignal]:
     signals: list[CohortSignal] = []
-    if not outcome.intents and outcome.rejection_reasons:
+    if not outcome.intents:
+        reason = (
+            outcome.rejection_reasons[0]
+            if outcome.rejection_reasons
+            else ReasonCode.INSTRUMENT_UNKNOWN
+        )
         signals.append(
             CohortSignal(
                 signal_id=f"{outcome.snapshot_id}-blocked",
                 snapshot_id=outcome.snapshot_id,
                 created_at=as_of,
                 declined=True,
-                rejection_reason=outcome.rejection_reasons[0],
+                rejection_reason=reason,
                 entry_quote=_first_quote(outcome),
                 decision_quotes=dict(outcome.decision_quotes),
                 setup_features=outcome.setup_features,

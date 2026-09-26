@@ -89,10 +89,20 @@ class DirectionalConvictionStrategy:
         conviction_dir_val = ctx.underlying.features.get("conviction_direction")
 
         if conviction_score_val is None or conviction_dir_val is None:
-            return decision
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.CONVICTION_BELOW_THRESHOLD,
+                "conviction features absent",
+            )
 
         if conviction_score_val < MIN_CONVICTION_SCORE:
-            return decision
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.CONVICTION_BELOW_THRESHOLD,
+                f"conviction score {conviction_score_val} below {MIN_CONVICTION_SCORE}",
+            )
 
         if conviction_dir_val == 1:
             option_type = OptionType.CALL
@@ -101,7 +111,12 @@ class DirectionalConvictionStrategy:
             option_type = OptionType.PUT
             setup_code = "CONVICTION_SHORT"
         else:
-            return decision
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.DIRECTION_NEUTRAL,
+                "conviction direction neutral",
+            )
 
         matching_option = None
         for cand in ctx.candidates:
@@ -113,7 +128,12 @@ class DirectionalConvictionStrategy:
                 break
 
         if not matching_option:
-            return decision
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.INSTRUMENT_UNKNOWN,
+                "no eligible option matched conviction direction",
+            )
 
         intent = self._build_intent(
             ctx, matching_option, setup_code, option_type, conviction_score_val

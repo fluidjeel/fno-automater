@@ -45,6 +45,7 @@ from trading.domain.contracts.cycle_evidence import (
     PaperCycleEvidence,
     StrategyCycleSummary,
 )
+from trading.domain.contracts.discovery_decision import DiscoveryDecision
 from trading.domain.contracts.entry import (
     ALLOWED_ENTRY_ACTIONS,
     EntryAdvice,
@@ -225,6 +226,11 @@ __all__ = [
     "CorrelationPair",
     "DataQualityReport",
     "DerivativesContext",
+    "DiscoveryCandidateRow",
+    "DiscoveryDecision",
+    "DiscoveryDecisionInputs",
+    "DiscoveryFillSnapshot",
+    "DiscoverySizingSnapshot",
     "EntryAdvice",
     "EntryAdviceError",
     "EntryFreezeRecord",

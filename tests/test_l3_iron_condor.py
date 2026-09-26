@@ -76,7 +76,7 @@ def test_iron_condor_regime_rejection() -> None:
     dec = strat.evaluate(ctx_bullish)
     assert dec.emits_intent is False
     assert len(dec.rejections) == 1
-    assert dec.rejections[0].reason is ReasonCode.DATA_INVALID
+    assert dec.rejections[0].reason is ReasonCode.REGIME_NOT_RANGE
 
 
 def test_iron_condor_unequal_wings_rejection() -> None:

@@ -2,11 +2,11 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A8_DONE (DISCOVERY within-mode exact duplicates HARD; cross-mode overlap/conflict SOFT; per-mode daily entry and open-position caps; router cooldown SOFT; arbiter reason codes preserved in paper_runner)
+STATUS: DISC-A9_DONE (durable `DISCOVERY_DECISION` events per mode/family evaluation and exit; deterministic `reason_text`; cohort/funnel/cycle evidence carry rejection detail; CLI `trading evaluate decisions`)
 
 ## Evidence labels
 
-- TEST-PROVEN: local pytest including `tests/test_m1_paper_session_integration.py`.
+- TEST-PROVEN: local pytest including `tests/test_disc_a9_discovery_decision.py`.
 - DEPLOYED-PAPER: Oracle rsync tree; startup keeps `M1_CAS: PAPER`.
 - OBSERVED-IN-MARKET: not yet. Market was closed; no qualifying live signal captured.
 
@@ -32,7 +32,8 @@ Reference equity ₹7,00,000. M2 share 28%, per-trade 4%, cap ₹7,840. M4 share
 
 ## Verification
 
-- Oracle deploy: `ruff`, `mypy`, full pytest green on the rsynced tree.
+- `uv run ruff check`, `uv run mypy`, full pytest green on committed tree.
+- DISC-A9: `tests/test_disc_a9_discovery_decision.py` covers per-pair records, neutral reason text, trade snapshots, exit records, and store restart query.
 - Startup validation on Oracle prints `M1_CAS: PAPER` with one latency-limitation warning.
 - G1 report: `docs/reports/G1_ONE_LOT_AFFORDABILITY.md`.
 

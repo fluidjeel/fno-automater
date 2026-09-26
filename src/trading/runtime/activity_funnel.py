@@ -38,6 +38,9 @@ def build_activity_funnel(result: PaperCycleResult) -> ActivityFunnelSummary:
         if outcome.intents:
             mode_id = outcome.intents[0].mode_id
             family_id = outcome.intents[0].family_id
+        elif outcome.mode_id is not None:
+            mode_id = outcome.mode_id
+            family_id = outcome.family_id
         for reason in outcome.entry_blocked_reasons:
             drops.append(
                 FunnelDrop(
@@ -53,6 +56,11 @@ def build_activity_funnel(result: PaperCycleResult) -> ActivityFunnelSummary:
             stage = FunnelStage.ELIGIBLE_SIGNAL
             if outcome.rejection_reasons:
                 stage = FunnelStage.BOUND_CONTRACTS
+            detail = (
+                outcome.rejection_details[0]
+                if outcome.rejection_details
+                else "strategy abstained or produced no intent"
+            )
             drops.append(
                 FunnelDrop(
                     stage=stage,
@@ -60,7 +68,7 @@ def build_activity_funnel(result: PaperCycleResult) -> ActivityFunnelSummary:
                     mode_id=mode_id,
                     family_id=family_id,
                     reason_codes=outcome.rejection_reasons,
-                    detail="strategy abstained or produced no intent",
+                    detail=detail,
                 )
             )
         for decision in outcome.decisions:

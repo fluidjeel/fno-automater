@@ -182,7 +182,17 @@ class MultiLegOptionsStrategy:
                 for option in ctx.candidates
             )
         ):
-            return decision  # directional read mismatch or neutral; skip, do not reject
+            reason = (
+                ReasonCode.DIRECTION_NEUTRAL
+                if bias is MacroBias.NEUTRAL
+                else ReasonCode.OPTION_TYPE_MISMATCH
+            )
+            detail = (
+                "direction neutral"
+                if bias is MacroBias.NEUTRAL
+                else "candidate legs do not match directional read"
+            )
+            return self._reject(decision, ctx, reason, detail)
 
         legs = _ordered_legs(ctx.candidates, option_type)
         intent = self._build_intent(ctx, legs, option_type, confidence)

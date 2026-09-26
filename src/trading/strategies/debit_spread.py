@@ -123,18 +123,21 @@ class DebitSpreadStrategy:
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
         if bias is MacroBias.NEUTRAL:
-            return decision
+            return self._reject(
+                decision, ctx, ReasonCode.DIRECTION_NEUTRAL, "direction neutral"
+            )
 
         option_type = OptionType.CALL if bias is MacroBias.BULLISH else OptionType.PUT
         mismatched = any(
             option.contract.option_type is not option_type for option in ctx.candidates
         )
         if mismatched:
-            # The candidates do not express the resolved direction. Emitting here
-            # would build the opposite structure — a bullish read over put legs
-            # orders a bear put spread — so skip rather than trade against the
-            # signal. This is not an input error, so it is not a rejection.
-            return decision
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.OPTION_TYPE_MISMATCH,
+                "candidate legs do not match directional read",
+            )
 
         long_leg, short_leg = self._ordered_legs(ctx.candidates, option_type)
         intent = self._build_intent(ctx, long_leg, short_leg, option_type, confidence)
