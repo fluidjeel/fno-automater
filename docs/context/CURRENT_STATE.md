@@ -2,7 +2,7 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A2_DONE (Discovery sizing: strike-first 1-lot min, bug guard, 12% per-mode open-risk cap; `strict_would_block` shadow audit; STRICT unchanged)
+STATUS: DISC-A3_DONE (Event blackout + daily-loss freezes soft under DISCOVERY; drawdown Telegram alert; manual kill switch stays HARD; STRICT unchanged)
 
 ## Evidence labels
 

@@ -11,6 +11,7 @@ from enum import StrEnum, unique
 from typing import TypedDict
 
 from trading.broker.ports import MarginPreviewPort
+from trading.config.discovery import DiscoveryConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, RiskPolicyConfig
 from trading.config.schema import RiskLimits
@@ -26,6 +27,7 @@ from trading.domain.contracts.sizing import SizingRequest
 from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
     DataQuality,
+    EntryProfile,
     InstrumentKind,
     ModeId,
     ReasonCode,
@@ -46,6 +48,7 @@ from trading.risk.discovery_sizing import (
     evaluate_discovery_hard_limits,
     rescale_approved_legs,
 )
+from trading.risk.gate_profile import is_soft, partition_reasons
 from trading.risk.limits import (
     build_sizing_limits,
     evaluate_campaign_limit,
@@ -92,7 +95,11 @@ from trading.risk.sizing.long_volatility import (
     is_long_strangle,
 )
 from trading.risk.snapshot_bundle import validate_leg_snapshot_bundle
-from trading.safety.paper_data import PaperDataInputs, assess_paper_data
+from trading.safety.paper_data import (
+    PaperDataInputs,
+    assess_paper_data,
+    strict_would_block_p0,
+)
 
 __all__ = ["RiskGateway", "RiskGatewayRequest"]
 
@@ -300,15 +307,27 @@ class RiskGateway:
                 audit=audit,
             )
 
+        discovery_config = (
+            self._mode_book.discovery_config if self._mode_book is not None else None
+        )
+        entry_profile = (
+            EntryProfile.DISCOVERY
+            if discovery_config is not None
+            else EntryProfile.STRICT
+        )
+        early_strict_would_block: list[ReasonCode] = []
         constraint_reason = _constraint_reason(request, now=now)
         if constraint_reason is not None:
-            return self._reject(
-                intent,
-                portfolio,
-                reason_codes=(constraint_reason,),
-                decided_at=now,
-                audit=audit,
-            )
+            if is_soft(constraint_reason, entry_profile, discovery_config):
+                early_strict_would_block.append(constraint_reason)
+            else:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(constraint_reason,),
+                    decided_at=now,
+                    audit=audit,
+                )
 
         if self._nifty_only_execution and (
             request.instrument.underlying != "NIFTY"
@@ -449,9 +468,6 @@ class RiskGateway:
         if intent.mode_id is not None and self._mode_book is not None:
             mode_ledger = self._mode_book.get_ledger(intent.mode_id)
 
-        discovery_config = (
-            self._mode_book.discovery_config if self._mode_book is not None else None
-        )
         limits = build_sizing_limits(
             portfolio,
             account_risk,
@@ -528,8 +544,15 @@ class RiskGateway:
                 audit=audit,
             )
 
-        paper_block = _paper_p0_reason(request, now=now, margin=sizing.estimated_margin)
-        if paper_block is not None:
+        paper_block, paper_soft = _paper_p0_reason(
+            request,
+            now=now,
+            margin=sizing.estimated_margin,
+            entry_profile=entry_profile,
+            discovery_config=discovery_config,
+        )
+        early_strict_would_block.extend(paper_soft)
+        if paper_block:
             return self._reject(
                 intent,
                 portfolio,
@@ -746,7 +769,9 @@ class RiskGateway:
             post_trade_projection=post_trade,
             applied_limits=limit_check.applied_limits,
             reason_codes=tuple(approval_reasons),
-            strict_would_block=strict_would_block,
+            strict_would_block=tuple(
+                dict.fromkeys((*early_strict_would_block, *strict_would_block))
+            ),
             decided_at=now,
             expires_at=expires_at,
             decision_snapshot_id=audit["decision_snapshot_id"],
@@ -826,11 +851,13 @@ def _paper_p0_reason(
     *,
     now: datetime,
     margin: Money,
-) -> tuple[ReasonCode, ...] | None:
-    """Fail closed when the caller asked for the PAPER P0 contract."""
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
+) -> tuple[tuple[ReasonCode, ...], tuple[ReasonCode, ...]]:
+    """Return hard P0 blockers and DISCOVERY strict_would_block shadows."""
     requirements = request.paper_requirements
     if requirements is None:
-        return None
+        return (), ()
     if request.leg_snapshots:
         snapshots = tuple(request.leg_snapshots.values())
     else:
@@ -847,10 +874,22 @@ def _paper_p0_reason(
             margin_required=margin,
             instruments=_paper_instruments(request),
         ),
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
+    )
+    p0_soft = strict_would_block_p0(
+        assessment,
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
     )
     if assessment.p0_ok:
-        return None
-    return assessment.p0_reason_codes or (ReasonCode.DATA_GAP,)
+        return (), p0_soft
+    hard, soft = partition_reasons(
+        assessment.p0_reason_codes or (ReasonCode.DATA_GAP,),
+        entry_profile,
+        discovery_config,
+    )
+    return hard, (*p0_soft, *soft)
 
 
 def _paper_instruments(request: RiskGatewayRequest) -> dict[str, InstrumentSpec]:

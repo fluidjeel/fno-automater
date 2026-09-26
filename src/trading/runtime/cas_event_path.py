@@ -11,9 +11,11 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading.config.discovery import DiscoveryConfig
 from trading.domain.contracts import FeatureSnapshot
-from trading.domain.enums import ExecutionMode, ReasonCode
+from trading.domain.enums import EntryProfile, ExecutionMode, ReasonCode
 from trading.identification import top_book_size
+from trading.risk.gate_profile import is_soft
 
 _IST = ZoneInfo("Asia/Kolkata")
 ORACLE_MEASURED = "oracle_measured"
@@ -313,6 +315,7 @@ class M1EventGateOutcome:
     explained: bool
     detail: str
     latency_limitation: str | None = None
+    strict_would_block: tuple[ReasonCode, ...] = ()
 
 
 def evaluate_m1_provider_event(
@@ -328,6 +331,8 @@ def evaluate_m1_provider_event(
     session_date: str,
     episode_ledger: Path,
     mode_capital: Decimal,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> M1EventGateOutcome:
     """Apply the session M1 gate to one produced family row."""
     block: ReasonCode | None = None
@@ -361,6 +366,11 @@ def evaluate_m1_provider_event(
             option_candidates,
             config=config,
         )
+    strict_would_block: tuple[ReasonCode, ...] = ()
+    effective_block = block
+    if block is not None and is_soft(block, entry_profile, discovery_config):
+        strict_would_block = (block,)
+        effective_block = None
     permitted, mode = cas_event_paper_permitted(
         config=config,
         latency_report=latency_report,
@@ -375,7 +385,7 @@ def evaluate_m1_provider_event(
             if isinstance(event, M1ProviderEvent)
             else False
         ),
-        ledger_block=block,
+        ledger_block=effective_block,
     )
     trigger_block: ReasonCode | None = None
     if (
@@ -425,6 +435,7 @@ def evaluate_m1_provider_event(
         explained=explained,
         detail=detail,
         latency_limitation=latency_limitation,
+        strict_would_block=strict_would_block,
     )
 
 
