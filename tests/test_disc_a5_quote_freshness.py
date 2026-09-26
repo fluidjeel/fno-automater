@@ -24,7 +24,7 @@ from trading.strategies.macro import MacroAssessment, MacroBias
 from trading.strategies.quote_freshness import quote_freshness_limits
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DISCOVERY = load_discovery_config(REPO_ROOT / "config" / "discovery.yaml")
+DISCOVERY = load_discovery_config(REPO_ROOT / "config" / "discovery.yaml").config
 ACCOUNT_CONFIG = load_config(REPO_ROOT / "config" / "base.yaml")
 NOW = datetime.fromisoformat("2026-09-22T05:00:00+00:00")
 EXPIRY = date(2026, 10, 1)

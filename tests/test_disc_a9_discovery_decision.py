@@ -38,7 +38,7 @@ from trading.strategies.macro import MacroAssessment, MacroBias
 NOW = f.NOW
 NOW_CTX = NOW + timedelta(seconds=60)
 KOLKATA = ZoneInfo("Asia/Kolkata")
-DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 
 
 def _runner(store: TradingStore, clock: FrozenClock) -> PaperRunner:

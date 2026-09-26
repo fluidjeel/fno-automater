@@ -39,7 +39,7 @@ from trading.portfolio.arbitration import PortfolioArbiter, count_mode_entries_t
 from trading.runtime.paper_runner import PaperRunner
 from trading.storage.trading_store import TradingStore
 
-DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 
 
 def _discovery_arbiter() -> PortfolioArbiter:

@@ -25,7 +25,7 @@ from trading.risk.mode_ledger import FourModeBook
 from trading.storage.trading_store import TradingEventType, TradingStore
 
 ROOT = Path(__file__).resolve().parent.parent
-DISCOVERY_CFG = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY_CFG = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 
 
 def _record_closed_trade(

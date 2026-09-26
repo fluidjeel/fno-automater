@@ -44,7 +44,7 @@ from trading.runtime.startup_validation import (
 
 ROOT = Path(__file__).resolve().parent.parent
 MODES = load_modes_config(ROOT / "config" / "modes.yaml")
-DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml")
+DISCOVERY = load_discovery_config(ROOT / "config" / "discovery.yaml").config
 RISK = load_risk_policy(ROOT / "config" / "risk.yaml")
 
 

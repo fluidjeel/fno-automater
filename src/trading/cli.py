@@ -25,6 +25,7 @@ from trading.ai.openai_compat import OpenAICompatLlm
 from trading.ai.ports import LlmTimeoutError, LlmTurn
 from trading.ai.recording import RecordingLlm, persist_agent_run
 from trading.ai.tools import ToolContext
+from trading.analytics.cohort_evidence import is_discovery_experiment_id
 from trading.analytics.eligibility import evaluate_eligibility
 from trading.analytics.improvements import apply_stale_status, cluster_improvements
 from trading.analytics.judgment import JudgmentError, evaluate_judgment
@@ -32,11 +33,13 @@ from trading.analytics.scorecard import EvaluationError, build_scorecard
 from trading.config import (
     AgentConfigError,
     EvaluationConfigError,
+    FillModelConfig,
     LoadedEvaluationConfig,
     load_agent_config,
     load_config,
     load_evaluation_config,
 )
+from trading.config.evaluation import discovery_fill_models
 from trading.config.schema import Environment
 from trading.data.backfill import backfill_history, backfill_instruments
 from trading.data.config import load_data_pipeline_config
@@ -489,10 +492,26 @@ def _parse_utc(value: str) -> datetime:
     return ensure_utc(datetime.fromisoformat(value))
 
 
+def _fill_policy_for_package(
+    package: CohortPackage,
+    loaded: LoadedEvaluationConfig,
+) -> FillModelConfig:
+    """Select the fill policy that matches the cohort evidence profile."""
+    if not is_discovery_experiment_id(package.experiment.experiment_id):
+        return loaded.config.fill_model
+    touch, _shadow = discovery_fill_models(
+        loaded.config.fill_model,
+        model=package.experiment.fill_model_version,
+        shadow_model="conservative-v1",
+    )
+    return touch
+
+
 def _cmd_evaluate_scorecard(args: argparse.Namespace) -> int:
     try:
         package, loaded, as_of = _evaluation_inputs(args)
-        scorecard = build_scorecard(package, loaded.config.fill_model, as_of=as_of)
+        fill_policy = _fill_policy_for_package(package, loaded)
+        scorecard = build_scorecard(package, fill_policy, as_of=as_of)
     except (
         OSError,
         EvaluationError,
@@ -509,7 +528,8 @@ def _cmd_evaluate_scorecard(args: argparse.Namespace) -> int:
 def _cmd_evaluate_eligibility(args: argparse.Namespace) -> int:
     try:
         package, loaded, as_of = _evaluation_inputs(args)
-        scorecard = build_scorecard(package, loaded.config.fill_model, as_of=as_of)
+        fill_policy = _fill_policy_for_package(package, loaded)
+        scorecard = build_scorecard(package, fill_policy, as_of=as_of)
         result = evaluate_eligibility(
             scorecard,
             loaded.config.eligibility,
