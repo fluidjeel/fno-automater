@@ -154,6 +154,7 @@ class RouteDecision(VersionedModel):
     shadow_alternatives: tuple[NonEmptyStr, ...] = ()
     rejected_families: tuple[NonEmptyStr, ...] = ()
     reason_codes: tuple[ReasonCode, ...] = ()
+    strict_would_block: tuple[ReasonCode, ...] = ()
     failed_gate_ids: tuple[NonEmptyStr, ...] = ()
     winner_score: ExactDecimal | None = Field(default=None, ge=0, le=1)
     score_gap: ExactDecimal | None = Field(default=None, ge=0, le=1)

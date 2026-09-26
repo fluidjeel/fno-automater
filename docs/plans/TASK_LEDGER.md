@@ -19,8 +19,8 @@ Sprint A is the Monday 2026-09-28 target.
 | DISC-A5 | DONE | Staleness from quote time, not bar time |
 | DISC-A6 | DONE | M2 direction fallback, two-pass strike pick, binder reasons |
 | DISC-A7 | DONE | Straddle/strangle PAPER; M4 cap config; G2 name fix |
-| DISC-A8 | READY | Within-mode duplicates only; daily entry caps |
-| DISC-A9 | BLOCKED | Decision + reasoning record for every evaluation and exit |
+| DISC-A8 | DONE | Within-mode duplicates only; daily entry caps |
+| DISC-A9 | READY | Decision + reasoning record for every evaluation and exit |
 | DISC-A10 | BLOCKED | Session survives feed errors (Fyers 401) |
 | DISC-A11 | BLOCKED | `EXP-DISC` cohort identity; never promotion evidence |
 | DISC-A12 | BLOCKED | Deploy + Monday readiness |

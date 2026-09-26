@@ -2,9 +2,11 @@
 
 from trading.portfolio.arbitration import (
     ArbitrationResult,
+    ArbitrationSoftWarning,
     ArbitrationSuppression,
     CounterfactualLogEntry,
     PortfolioArbiter,
+    count_mode_entries_today,
     extract_leg_signature,
 )
 from trading.portfolio.campaign_drawdown import (
@@ -35,6 +37,7 @@ from trading.portfolio.view import build_portfolio_view
 
 __all__ = [
     "ArbitrationResult",
+    "ArbitrationSoftWarning",
     "ArbitrationSuppression",
     "CampaignDrawdownLedger",
     "CampaignDrawdownRecord",
@@ -54,6 +57,7 @@ __all__ = [
     "build_mode_books",
     "build_portfolio_risk_record",
     "build_portfolio_view",
+    "count_mode_entries_today",
     "extract_economic_exposure",
     "extract_leg_signature",
     "m4_open_position_cap",

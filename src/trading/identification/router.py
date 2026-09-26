@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from trading.domain.contracts import MarketState, RouteDecision
 from trading.domain.contracts.identification import (
@@ -14,11 +15,15 @@ from trading.domain.contracts.identification import (
     VolatilityState,
 )
 from trading.domain.contracts.paper_data import PaperDataField
-from trading.domain.enums import ReasonCode
+from trading.domain.enums import EntryProfile, ReasonCode
 from trading.identification.allow_table import allowed_families_for
 from trading.identification.binders import BoundCandidates
 from trading.identification.config import IdentificationPolicy
 from trading.identification.p1_features import ObservedP1Features
+from trading.risk.gate_profile import is_soft
+
+if TYPE_CHECKING:
+    from trading.config.discovery import DiscoveryConfig
 
 __all__ = ["RoutedOpportunity", "route_nifty_options"]
 
@@ -42,6 +47,8 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
     cooldown_active: bool = False,
     allowed_families: frozenset[str] | None = None,
     p1: ObservedP1Features | None = None,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> tuple[RouteDecision, tuple[RoutedOpportunity, ...]]:
     families = (
         allowed_families
@@ -53,12 +60,16 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
         "debit_spread": debit_spread,
     }
     hard_reasons: list[ReasonCode] = []
+    soft_reasons: list[ReasonCode] = []
     if not entries_permitted:
         hard_reasons.append(ReasonCode.ENTRY_FROZEN)
     if existing_correlated_exposure:
         hard_reasons.append(ReasonCode.CORRELATION_LIMIT)
     if cooldown_active:
-        hard_reasons.append(ReasonCode.SETUP_COOLDOWN)
+        if is_soft(ReasonCode.SETUP_COOLDOWN, entry_profile, discovery_config):
+            soft_reasons.append(ReasonCode.SETUP_COOLDOWN)
+        else:
+            hard_reasons.append(ReasonCode.SETUP_COOLDOWN)
     if not market.warmup_complete:
         hard_reasons.append(ReasonCode.WARMUP_INCOMPLETE)
     if market.trend not in {TrendState.UP, TrendState.DOWN}:
@@ -139,6 +150,7 @@ def route_nifty_options(  # noqa: PLR0912, PLR0915 - fail-closed winner gates
         shadow_alternatives=shadows,
         rejected_families=rejected,
         reason_codes=tuple(dict.fromkeys(hard_reasons)),
+        strict_would_block=tuple(dict.fromkeys(soft_reasons)),
         failed_gate_ids=tuple(dict.fromkeys(failed_gates)),
         winner_score=winner_score,
         score_gap=score_gap,
