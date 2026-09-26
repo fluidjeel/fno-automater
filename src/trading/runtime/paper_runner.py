@@ -334,6 +334,7 @@ class PaperRunner:
         clock: Clock,
         id_factory: IdFactory,
         fill_model: FillModelConfig | None = None,
+        shadow_fill_model: FillModelConfig | None = None,
         charge_policy: LoadedChargePolicy | None = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         paper_data_requirements: PaperDataRequirements | None = None,
@@ -344,11 +345,12 @@ class PaperRunner:
             execution_mode,
             broker,
         )
-        if fill_model is not None and broker.fill_model is None:
-            raise ValueError(
-                "fill_model was supplied but the paper broker is still in "
-                "immediate-fill mode; construct PaperBroker with the same model"
-            )
+        _assert_fill_models_match(
+            fill_model,
+            shadow_fill_model,
+            broker.fill_model,
+            broker.shadow_fill_model,
+        )
         self._account = account_config
         self._risk_policy = risk_policy
         self._charge_policy = charge_policy or load_charge_policy()
@@ -3168,3 +3170,36 @@ def _remaining_dte(
 
 def _as_reconciliation(payload: object) -> ReconciliationEvent | None:
     return payload if isinstance(payload, ReconciliationEvent) else None
+
+
+def _assert_fill_models_match(
+    runner_fill: FillModelConfig | None,
+    runner_shadow: FillModelConfig | None,
+    broker_fill: FillModelConfig | None,
+    broker_shadow: FillModelConfig | None,
+) -> None:
+    """Require the broker and runner to share the same fill-model pair."""
+    if runner_fill is not None and broker_fill is None:
+        raise ValueError(
+            "fill_model was supplied but the paper broker is still in "
+            "immediate-fill mode; construct PaperBroker with the same model"
+        )
+    if runner_fill is not None and (
+        broker_fill is None or runner_fill.version != broker_fill.version
+    ):
+        raise ValueError(
+            f"runner fill_model {runner_fill.version} does not match broker "
+            f"{broker_fill.version if broker_fill is not None else None}"
+        )
+    if runner_shadow is not None and (
+        broker_shadow is None or runner_shadow.version != broker_shadow.version
+    ):
+        raise ValueError(
+            f"runner shadow_fill_model {runner_shadow.version} does not match "
+            f"broker {broker_shadow.version if broker_shadow is not None else None}"
+        )
+    if runner_shadow is None and broker_shadow is not None:
+        raise ValueError(
+            "broker has a shadow_fill_model but PaperRunner was not constructed "
+            "with the same shadow model"
+        )

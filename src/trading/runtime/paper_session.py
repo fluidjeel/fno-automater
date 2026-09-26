@@ -21,6 +21,7 @@ from trading.broker.paper import PaperBroker
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
 from trading.config.discovery import DiscoveryConfig, load_discovery_config
+from trading.config.evaluation import discovery_fill_models
 from trading.config.paper_data import load_paper_data_requirements
 from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import Environment
@@ -697,11 +698,25 @@ def run_paper_session(
         margin_available=funds_equity,
     )
     ids = SequentialIdFactory(clock.now_utc())
+    if discovery_cfg is not None:
+        touch_fill, shadow_fill = discovery_fill_models(
+            evaluation.config.fill_model,
+            model=discovery_cfg.fills.model,
+            shadow_model=discovery_cfg.fills.shadow_model,
+        )
+        session_fill_model = touch_fill
+        session_shadow_fill_model = shadow_fill
+        session_fill_model_version = touch_fill.version
+    else:
+        session_fill_model = evaluation.config.fill_model
+        session_shadow_fill_model = None
+        session_fill_model_version = evaluation.config.fill_model.version
     broker = PaperBroker.for_session(
         clock=clock,
         id_factory=ids,
         funds=funds,
-        fill_model=evaluation.config.fill_model,
+        fill_model=session_fill_model,
+        shadow_fill_model=session_shadow_fill_model,
         future_margin_fraction=risk.config.paper_future_margin_fraction,
     )
     assert_paper_isolation(account.config.environment, ExecutionMode.PAPER, broker)
@@ -719,7 +734,8 @@ def run_paper_session(
         broker=broker,
         clock=clock,
         id_factory=ids,
-        fill_model=evaluation.config.fill_model,
+        fill_model=session_fill_model,
+        shadow_fill_model=session_shadow_fill_model,
         execution_mode=ExecutionMode.PAPER,
         paper_data_requirements=paper_data,
         discovery_config=discovery_cfg,
@@ -789,9 +805,9 @@ def run_paper_session(
         observation_start=clock.now_utc(),
         capital_limit=funds.equity,
         risk_policy_version=risk.config.policy_version,
-        fill_model_version=evaluation.config.fill_model.version,
+        fill_model_version=session_fill_model_version,
         code_version=account.version,
-        charges_verified=evaluation.config.fill_model.charges_per_lot.is_verified,
+        charges_verified=session_fill_model.charges_per_lot.is_verified,
         cohort_dir=repo_root / session_cfg.cohort_dir,
         broker_state_path=state_path,
         risk_journal=PortfolioRiskJournal(repo_root / session_cfg.portfolio_risk_dir),

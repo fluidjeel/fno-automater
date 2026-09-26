@@ -156,6 +156,9 @@ def _signals_for(
             )
             continue
         command = event.command if event is not None else None
+        strict_fill_verdict = (
+            event.strict_fill_verdict if event is not None else None
+        )
         signals.append(
             _emitted(
                 intent,
@@ -163,6 +166,7 @@ def _signals_for(
                 risk_action=decision.action if decision is not None else None,
                 risk_reasons=decision.reason_codes if decision is not None else (),
                 entry_command=command,
+                strict_fill_verdict=strict_fill_verdict,
                 outcome=outcome,
             )
         )
@@ -177,6 +181,7 @@ def _emitted(
     risk_reasons: tuple[ReasonCode, ...],
     rejection_reason: ReasonCode | None = None,
     entry_command: OrderCommand | None = None,
+    strict_fill_verdict: ReasonCode | None = None,
     outcome: PaperStrategyOutcome,
 ) -> CohortSignal:
     quotes = dict(outcome.decision_quotes)
@@ -193,6 +198,7 @@ def _emitted(
         entry_quote=quotes.get(primary_symbol),
         decision_quotes=quotes,
         entry_command=entry_command,
+        strict_fill_verdict=strict_fill_verdict,
         lots=1,
         regime=(
             None

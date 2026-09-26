@@ -154,6 +154,7 @@ class CohortSignal(StrictModel):
     route_decision: RouteDecision | None = None
     executed: StrictBool = True
     judgment_label: StrictBool | None = None
+    strict_fill_verdict: ReasonCode | None = None
 
     @model_validator(mode="after")
     def _decline_and_intent_agree(self) -> CohortSignal:
@@ -243,6 +244,7 @@ class CohortScorecard(VersionedModel):
     average_mae: Money | None = None
     average_mfe: Money | None = None
     reason_histogram: tuple[ReasonCount, ...] = ()
+    strict_fill_verdict_histogram: tuple[ReasonCount, ...] = ()
     regime_count: StrictInt = Field(ge=0)
     max_single_trade_pnl_share: ExactDecimal | None = Field(default=None, ge=0, le=1)
     incident_p0_p1_count: StrictInt = Field(ge=0)
