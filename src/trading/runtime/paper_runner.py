@@ -97,6 +97,7 @@ from trading.portfolio import (
     PortfolioReconciler,
     build_broker_snapshot,
     build_portfolio_view,
+    count_mode_entries_today,
     m4_open_position_cap,
 )
 from trading.portfolio.campaign_drawdown import (
@@ -419,7 +420,9 @@ class PaperRunner:
             max_m4_open_positions=m4_open_position_cap(
                 risk_policy=risk_policy.config,
                 discovery_config=discovery_config,
-            )
+            ),
+            discovery_config=discovery_config,
+            entry_profile=self._entry_profile,
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._protection_snapshots: dict[str, FeatureSnapshot] = {}
@@ -463,10 +466,16 @@ class PaperRunner:
             if rec.can_execute:
                 all_executable_intents.extend(rec.intents)
 
+        session_date = self._clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
+        mode_daily_entries = count_mode_entries_today(
+            self._services.store.list_position_lifecycle(),
+            session_date=session_date,
+        )
         arb_result = self._arbiter.arbitrate(
             all_executable_intents,
             existing_positions=self._services.trade_manager.list_positions(),
             now=self._clock.now_utc(),
+            mode_daily_entries=mode_daily_entries,
         )
 
         outcomes: list[PaperStrategyOutcome] = []
@@ -2540,6 +2549,7 @@ class PaperRunner:
 
         approved_ids = {i.intent_id for i in arb_result.approved_intents}
         suppressions = {s.candidate_intent_id: s for s in arb_result.suppressed_intents}
+        soft_by_intent = {w.intent_id: w for w in arb_result.soft_warnings}
 
         rejection_reasons = list(rec.rejection_reasons)
         risk_decisions: list[RiskDecision] = []
@@ -2547,16 +2557,23 @@ class PaperRunner:
 
         for intent in intents:
             if id(intent) in arb_result.suppressed_object_ids:
-                rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                suppression = suppressions.get(intent.intent_id)
+                rejection_reasons.append(
+                    suppression.reason_code
+                    if suppression is not None
+                    else ReasonCode.EXACT_DUPLICATE_SUPPRESSED
+                )
                 continue
             if arb_result.approved_object_ids:
                 if id(intent) not in arb_result.approved_object_ids:
-                    if intent.intent_id in suppressions:
-                        rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                    suppression = suppressions.get(intent.intent_id)
+                    if suppression is not None:
+                        rejection_reasons.append(suppression.reason_code)
                     continue
             else:
-                if intent.intent_id in suppressions:
-                    rejection_reasons.append(ReasonCode.EXACT_DUPLICATE_SUPPRESSED)
+                suppression = suppressions.get(intent.intent_id)
+                if suppression is not None:
+                    rejection_reasons.append(suppression.reason_code)
                     continue
                 if intent.intent_id not in approved_ids:
                     continue
@@ -2583,6 +2600,15 @@ class PaperRunner:
                 risk,
                 event_id=risk.decision_id,
             )
+            arb_soft = soft_by_intent.get(intent.intent_id)
+            if arb_soft is not None and risk.action in {
+                RiskAction.APPROVE,
+                RiskAction.RESIZE,
+            }:
+                merged_soft = tuple(
+                    dict.fromkeys((*risk.strict_would_block, arb_soft.reason_code))
+                )
+                risk = risk.model_copy(update={"strict_would_block": merged_soft})
             risk_decisions.append(risk)
             if risk.action not in {RiskAction.APPROVE, RiskAction.RESIZE}:
                 continue
@@ -2622,10 +2648,15 @@ class PaperRunner:
         )
         if not rec.can_execute:
             return rec.early_outcome  # type: ignore[return-value]
+        session_date = self._clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
         arb = self._arbiter.arbitrate(
             rec.intents,
             existing_positions=self._services.trade_manager.list_positions(),
             now=self._clock.now_utc(),
+            mode_daily_entries=count_mode_entries_today(
+                self._services.store.list_position_lifecycle(),
+                session_date=session_date,
+            ),
         )
         return self._execute_strategy_eval(
             rec,

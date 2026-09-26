@@ -2,7 +2,7 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A7_DONE (DISCOVERY straddle/strangle PAPER via discovery.yaml stances; M4 cap from config; G2 uses real FamilyId values; STRICT unchanged)
+STATUS: DISC-A8_DONE (DISCOVERY within-mode exact duplicates HARD; cross-mode overlap/conflict SOFT; per-mode daily entry and open-position caps; router cooldown SOFT; arbiter reason codes preserved in paper_runner)
 
 ## Evidence labels
 

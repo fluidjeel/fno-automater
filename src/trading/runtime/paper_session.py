@@ -790,6 +790,7 @@ def run_paper_session(
                 settings=settings,
                 broker=broker,
                 paper_data=paper_data,
+                discovery_config=discovery_cfg,
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
@@ -981,6 +982,7 @@ def _live_request_builder(
     settings: FyersSettings,
     broker: PaperBroker,
     paper_data: PaperDataRequirements | None = None,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -1155,6 +1157,8 @@ def _live_request_builder(
             cooldown_active=cooldown_active,
             allowed_families=allowed,
             p1=p1,
+            entry_profile=session_cfg.entry_profile,
+            discovery_config=discovery_config,
         )
         if route.paper_winner is not None:
             last_winner_at = now
