@@ -2,7 +2,7 @@
 
 LAST_UPDATED: 2026-09-26
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A11_DONE (`EXP-DISC` experiment ids include discovery.yaml fingerprint; eligibility always INELIGIBLE for discovery cohorts; scorecard refuses DISCOVERY/STRICT mixing)
+STATUS: DISC-A11_DONE (`EXP-DISC` experiment ids include discovery.yaml fingerprint; eligibility always INELIGIBLE for discovery cohorts; scorecard refuses DISCOVERY/STRICT mixing). `config/paper_session.yaml` now has `entry_profile: DISCOVERY` with straddle/strangle `PAPER`; Oracle re-sync and service restart still pending (DISC-A12).
 
 ## Evidence labels
 
