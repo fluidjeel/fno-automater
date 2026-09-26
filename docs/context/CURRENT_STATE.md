@@ -1,8 +1,8 @@
 # Current State
 
-LAST_UPDATED: 2026-09-25
-CURRENT_MILESTONE: M1/M2 PAPER promotion
-STATUS: M1_PAPER_ENABLED_LATENCY_MEASURED_NOT_GATED
+LAST_UPDATED: 2026-09-26
+CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
+STATUS: DISC-A1_DONE (Four independent ₹7L books with daily compounding; M1-M4 independent allocations and prior realized net compounding; BrokerFunds derived from mode equities; STRICT unchanged)
 
 ## Evidence labels
 

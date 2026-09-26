@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 
+from trading.config.discovery import DiscoveryConfig
 from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import RiskLimits
 from trading.domain.contracts.common import ExposureSnapshot
@@ -60,6 +61,7 @@ def build_sizing_limits(
     mode_id: ModeId | None = None,
     modes_config: ModesConfig | None = None,
     mode_ledger: ModeLedger | None = None,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> SizingLimits:
     """Derive the limit snapshot used by the sizing engine."""
     if mode_id is not None or mode_ledger is not None:
@@ -71,8 +73,14 @@ def build_sizing_limits(
         cfg = modes_config or load_modes_config()
         mode_policy = cfg.modes[effective_mode_id]
         if mode_ledger is None:
-            share = mode_policy.capital_share
-            alloc = (portfolio.exposure.equity * share).quantized(Rounding.FLOOR)
+            if discovery_config is not None:
+                alloc = Money.of(
+                    str(discovery_config.books.starting_equity_per_mode),
+                    portfolio.exposure.equity.currency,
+                )
+            else:
+                share = mode_policy.capital_share
+                alloc = (portfolio.exposure.equity * share).quantized(Rounding.FLOOR)
             mode_ledger = ModeLedger(
                 mode_id=effective_mode_id,
                 allocated_capital=alloc,

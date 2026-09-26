@@ -26,6 +26,7 @@ from typing import Any, Final, Self
 
 from pydantic import Field, model_validator
 
+from trading.config.discovery import DiscoveryConfig
 from trading.config.risk_policy import load_risk_policy
 from trading.domain.contracts.base import StrictModel
 from trading.domain.contracts.fill_charges import FillChargeRecord
@@ -228,22 +229,69 @@ class FourModeBook:
 
     def __init__(
         self,
-        total_equity: Money = DEFAULT_TOTAL_EQUITY,
+        total_equity: Money | None = None,
         modes_config: ModesConfig | None = None,
         *,
+        discovery_config: DiscoveryConfig | None = None,
         ledgers: dict[ModeId, ModeLedger] | None = None,
     ) -> None:
-        self._total_equity = total_equity
         self._modes_config = modes_config or load_modes_config()
+        self._discovery_config = discovery_config
         if ledgers is not None:
             self._ledgers = dict(ledgers)
+            if total_equity is not None:
+                self._total_equity = total_equity
+            elif discovery_config is not None:
+                currency = next(iter(self._ledgers.values())).allocated_capital.currency
+                total_amount = sum(
+                    (
+                        item.allocated_capital.amount
+                        for item in self._ledgers.values()
+                    ),
+                    Decimal("0"),
+                )
+                self._total_equity = Money(total_amount, currency)
+            else:
+                self._total_equity = DEFAULT_TOTAL_EQUITY
         else:
-            self._ledgers = self._build_ledgers(self._total_equity, self._modes_config)
+            default_eq = (
+                Money.of(
+                    str(
+                        discovery_config.books.starting_equity_per_mode
+                        * len(self._modes_config.modes)
+                    ),
+                    Currency.INR,
+                )
+                if discovery_config is not None
+                else DEFAULT_TOTAL_EQUITY
+            )
+            eq = total_equity or default_eq
+            self._ledgers = self._build_ledgers(
+                eq, self._modes_config, discovery_config=discovery_config
+            )
+            if total_equity is not None:
+                self._total_equity = total_equity
+            elif discovery_config is not None:
+                currency = next(iter(self._ledgers.values())).allocated_capital.currency
+                total_amount = sum(
+                    (
+                        item.allocated_capital.amount
+                        for item in self._ledgers.values()
+                    ),
+                    Decimal("0"),
+                )
+                self._total_equity = Money(total_amount, currency)
+            else:
+                self._total_equity = DEFAULT_TOTAL_EQUITY
         self._reserve_lock = Lock()
 
     @classmethod
     def _build_ledgers(
-        cls, total_equity: Money, modes_config: ModesConfig
+        cls,
+        total_equity: Money,
+        modes_config: ModesConfig,
+        *,
+        discovery_config: DiscoveryConfig | None = None,
     ) -> dict[ModeId, ModeLedger]:
         ledgers: dict[ModeId, ModeLedger] = {}
         for mode_id in (
@@ -252,14 +300,24 @@ class FourModeBook:
             ModeId.M3_TACTICAL_POSITIONAL,
             ModeId.M4_STRATEGIC_POSITIONAL,
         ):
-            policy = modes_config.modes[mode_id]
-            alloc = (total_equity * policy.capital_share).quantized(Rounding.FLOOR)
+            if discovery_config is not None:
+                alloc = Money.of(
+                    str(discovery_config.books.starting_equity_per_mode),
+                    total_equity.currency,
+                )
+            else:
+                policy = modes_config.modes[mode_id]
+                alloc = (total_equity * policy.capital_share).quantized(Rounding.FLOOR)
             ledgers[mode_id] = ModeLedger(
                 mode_id=mode_id,
                 allocated_capital=alloc,
                 high_water_mark=alloc,
             )
         return ledgers
+
+    @property
+    def discovery_config(self) -> DiscoveryConfig | None:
+        return self._discovery_config
 
     @property
     def total_equity(self) -> Money:
@@ -345,13 +403,22 @@ class FourModeBook:
         *,
         total_equity: Money | None = None,
         modes_config: ModesConfig | None = None,
+        discovery_config: DiscoveryConfig | None = None,
     ) -> FourModeBook:
         """Restore each mode's equity, reservations, and day loss."""
         cfg = modes_config or load_modes_config()
-        book_equity = total_equity or DEFAULT_TOTAL_EQUITY
-        currency = book_equity.currency
+        currency = total_equity.currency if total_equity is not None else Currency.INR
+        if total_equity is None and discovery_config is not None:
+            book_equity = Money.of(
+                str(discovery_config.books.starting_equity_per_mode * len(cfg.modes)),
+                currency,
+            )
+        else:
+            book_equity = total_equity or DEFAULT_TOTAL_EQUITY
 
-        base_allocations, balances = _init_mode_balances(cfg, book_equity, currency)
+        base_allocations, balances = _init_mode_balances(
+            cfg, book_equity, currency, discovery_config=discovery_config
+        )
         lifecycles = store.list_position_lifecycle()
         intent_to_mode = {
             r.intent.intent_id: r.intent.mode_id
@@ -376,15 +443,34 @@ class FourModeBook:
         )
 
         final_ledgers = _assemble_final_ledgers(base_allocations, balances, currency)
+        if total_equity is None and discovery_config is not None:
+            computed_total_equity = Money(
+                sum(
+                    (
+                        item.allocated_capital.amount
+                        for item in final_ledgers.values()
+                    ),
+                    Decimal("0"),
+                ),
+                currency,
+            )
+        else:
+            computed_total_equity = book_equity
+
         return FourModeBook(
-            total_equity=book_equity,
+            total_equity=computed_total_equity,
             modes_config=cfg,
+            discovery_config=discovery_config,
             ledgers=final_ledgers,
         )
 
 
 def _init_mode_balances(
-    cfg: ModesConfig, book_equity: Money, currency: Currency
+    cfg: ModesConfig,
+    book_equity: Money,
+    currency: Currency,
+    *,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> tuple[dict[ModeId, Money], dict[str, dict[ModeId, Money]]]:
     mode_ids = (
         ModeId.M1_CAS,
@@ -405,8 +491,15 @@ def _init_mode_balances(
         "unrealized": {},
     }
     for m in mode_ids:
-        policy = cfg.modes[m]
-        base_alloc[m] = (book_equity * policy.capital_share).quantized(Rounding.FLOOR)
+        if discovery_config is not None:
+            base_alloc[m] = Money.of(
+                str(discovery_config.books.starting_equity_per_mode), currency
+            )
+        else:
+            policy = cfg.modes[m]
+            base_alloc[m] = (book_equity * policy.capital_share).quantized(
+                Rounding.FLOOR
+            )
         for cat_dict in balances.values():
             cat_dict[m] = Money.zero(currency)
     return base_alloc, balances

@@ -41,7 +41,7 @@ def following_week_epoch(
     calendar: TradingCalendarPort,
     already_listed: set[date],
 ) -> int | None:
-    """Epoch of the following-week expiry when that chain is not already loaded."""
+    """Epoch of the supplemental chain when the calendar pick is already loaded."""
     epochs = expiry_epochs(chain.payload)
     if not epochs:
         return None
@@ -51,9 +51,17 @@ def following_week_epoch(
     selected = selection.selected_expiry
     if selected is None or not selection.eligible:
         return None
-    if selected in already_listed:
-        return None
-    return epochs.get(selected)
+    if selected not in already_listed:
+        return epochs.get(selected)
+    # Default Fyers chain often equals the calendar following-week expiry. Advance
+    # to the next listed expiry so M3/M4 can bind weekly_dte_min+ contracts.
+    for expiry in sorted(epochs):
+        if expiry in already_listed:
+            continue
+        if (expiry - as_of).days <= 1:
+            continue
+        return epochs.get(expiry)
+    return None
 
 
 def _parse_date(value: object) -> date | None:

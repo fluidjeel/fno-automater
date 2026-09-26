@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from trading.broker.paper import PaperBroker
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
+from trading.config.discovery import DiscoveryConfig, load_discovery_config
 from trading.config.paper_data import load_paper_data_requirements
 from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import Environment
@@ -45,6 +46,7 @@ from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.paper_data import PaperDataRequirements
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
+    EntryProfile,
     Exchange,
     ExecutionMode,
     InstrumentKind,
@@ -72,6 +74,7 @@ from trading.portfolio.risk_journal import (
     PortfolioRiskJournal,
     build_portfolio_risk_record,
 )
+from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.candidates import (
     build_future_snapshot,
     build_option_candidates,
@@ -151,6 +154,7 @@ class PositionalReviewConfig(BaseModel):
 class PaperSessionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    entry_profile: EntryProfile = EntryProfile.STRICT
     routing_profile: SessionRoutingProfile = SessionRoutingProfile.LEGACY
     poll_interval_seconds: int = Field(ge=1)
     eod_local: str
@@ -239,10 +243,20 @@ class PaperSession:
         protection: ProtectionCoordinator | None = None,
         session_heartbeat_path: Path | None = None,
         sleeper: Callable[[float], None] = time.sleep,
+        discovery_config: DiscoveryConfig | None = None,
     ) -> None:
         self._runner = runner
         self._clock = clock
         self._config = session_config
+        self._discovery_config = discovery_config
+        if self._config.entry_profile is EntryProfile.DISCOVERY:
+            self._profile_version = (
+                discovery_config.profile_version
+                if discovery_config is not None
+                else "discovery-v1"
+            )
+        else:
+            self._profile_version = "strict"
         self._open, self._close = session_hours
         self._zone = timezone
         self._notifier = notifier
@@ -340,6 +354,12 @@ class PaperSession:
 
     def run(self, *, once: bool = False) -> int:
         """Poll until EOD. ``once`` runs a single tick then returns."""
+        if self._config.entry_profile is EntryProfile.DISCOVERY:
+            banner = "ENTRY PROFILE: DISCOVERY (temporary)"
+        else:
+            banner = "ENTRY PROFILE: STRICT"
+        print(banner, flush=True)
+        logging.getLogger(__name__).info("%s", banner)
         recovery = self._runner.recover_lifecycle()
         for alert in recovery.alerts:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
@@ -481,6 +501,8 @@ class PaperSession:
                 "cycle_count": self._cycle_count,
                 "had_requests": had_requests,
                 "new_entries_enabled": self._config.new_entries_enabled,
+                "entry_profile": self._config.entry_profile.value,
+                "profile_version": self._profile_version,
                 "system_state": result.system_state.value if result else None,
                 "entries_blocked": result.entries_blocked if result else None,
                 "route_winner": route.paper_winner if route is not None else None,
@@ -635,8 +657,13 @@ def run_paper_session(
     session_cfg = load_paper_session_config(repo_root / "config" / "paper_session.yaml")
     modes_path = repo_root / "config" / "modes.yaml"
     modes_config = load_modes_config(modes_path) if modes_path.is_file() else None
+    discovery_path = repo_root / "config" / "discovery.yaml"
     session_cfg, startup_warnings = validate_startup_configuration(
-        session_cfg, modes_config, enforce_g3_shadow=True
+        session_cfg,
+        modes_config,
+        enforce_g3_shadow=True,
+        environment=account.config.environment,
+        discovery_path=discovery_path,
     )
     for warning in startup_warnings:
         logging.getLogger(__name__).warning("Startup validation warning: %s", warning)
@@ -648,12 +675,26 @@ def run_paper_session(
         repo_root / "config" / "data_pipeline.yaml"
     )
     paper_data = load_paper_data_requirements(repo_root / "config" / "paper_data.yaml")
+    discovery_cfg: DiscoveryConfig | None = None
+    if session_cfg.entry_profile is EntryProfile.DISCOVERY and discovery_path.is_file():
+        discovery_cfg = load_discovery_config(discovery_path)
+
+    store = TradingStore.open(repo_root / session_cfg.store_path, clock=clock)
+    session_date = clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
+    mode_book = FourModeBook.reconstruct_from_store(
+        store, session_date, modes_config=modes_config, discovery_config=discovery_cfg
+    )
+    funds_equity = (
+        mode_book.total_equity
+        if discovery_cfg is not None
+        else Money.of("700000", Currency.INR)
+    )
     funds = BrokerFunds(
         account_id=account.config.account_id,
         as_of=clock.now_utc(),
-        equity=Money.of("700000", Currency.INR),
+        equity=funds_equity,
         margin_used=Money.zero(Currency.INR),
-        margin_available=Money.of("700000", Currency.INR),
+        margin_available=funds_equity,
     )
     ids = SequentialIdFactory(clock.now_utc())
     broker = PaperBroker.for_session(
@@ -671,7 +712,6 @@ def run_paper_session(
         auth_status = run_telegram_auth(repo_root)
         if auth_status != 0:
             return auth_status
-    store = TradingStore.open(repo_root / session_cfg.store_path, clock=clock)
     runner = PaperRunner(
         account_config=account,
         risk_policy=risk,
@@ -682,6 +722,7 @@ def run_paper_session(
         fill_model=evaluation.config.fill_model,
         execution_mode=ExecutionMode.PAPER,
         paper_data_requirements=paper_data,
+        discovery_config=discovery_cfg,
     )
     settings = FyersSettings.from_repo_root_with_cache(repo_root)
     if notifier is None:
@@ -709,6 +750,8 @@ def run_paper_session(
                 pipeline_cfg=pipeline_cfg,
                 settings=settings,
                 paper_data=paper_data,
+                mode_book=mode_book,
+                discovery_config=discovery_cfg,
             )
         else:
             request_builder = _live_request_builder(
@@ -757,6 +800,7 @@ def run_paper_session(
         protection=protection,
         session_heartbeat_path=repo_root / session_cfg.session_heartbeat_path,
         sleeper=sleeper or time.sleep,
+        discovery_config=discovery_cfg,
     )
     return session.run(once=once)
 
@@ -1159,6 +1203,8 @@ def _four_mode_request_builder(
     pipeline_cfg: DataPipelineConfig,
     settings: FyersSettings,
     paper_data: PaperDataRequirements | None = None,
+    mode_book: FourModeBook | None = None,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -1334,6 +1380,15 @@ def _four_mode_request_builder(
             m1_stance = session_cfg.mode_stances.get(
                 ModeId.M1_CAS.value, ExecutionMode.SHADOW
             )
+            if mode_book is not None:
+                m1_cap = mode_book.get_ledger(ModeId.M1_CAS).allocated_capital.amount
+            elif discovery_config is not None:
+                m1_cap = discovery_config.books.starting_equity_per_mode
+            else:
+                m1_cap = (
+                    modes_config.modes[ModeId.M1_CAS].capital_share
+                    * Decimal("700000")
+                )
             gate = evaluate_m1_provider_event(
                 item=item,
                 event=event if isinstance(event, M1ProviderEvent) else None,
@@ -1345,8 +1400,7 @@ def _four_mode_request_builder(
                 latency_report=latency_report,
                 session_date=session_day.isoformat(),
                 episode_ledger=repo_root / "data" / "paper" / "m1_episodes.json",
-                mode_capital=modes_config.modes[ModeId.M1_CAS].capital_share
-                * Decimal("700000"),
+                mode_capital=m1_cap,
             )
             if gate.latency_limitation:
                 logging.getLogger(__name__).warning(

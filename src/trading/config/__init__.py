@@ -7,6 +7,11 @@ from trading.config.agent import (
     load_agent_config,
     load_agent_config_text,
 )
+from trading.config.discovery import (
+    DiscoveryConfig,
+    DiscoveryConfigError,
+    load_discovery_config,
+)
 from trading.config.evaluation import (
     EligibilityThresholds,
     EvaluationConfig,
@@ -49,6 +54,8 @@ __all__ = [
     "AppConfig",
     "ConfigLoadError",
     "ConfigNotVerifiedError",
+    "DiscoveryConfig",
+    "DiscoveryConfigError",
     "EligibilityThresholds",
     "Environment",
     "EvaluationConfig",
@@ -74,6 +81,7 @@ __all__ = [
     "load_agent_config_text",
     "load_config",
     "load_config_text",
+    "load_discovery_config",
     "load_evaluation_config",
     "load_paper_data_requirements",
     "load_risk_policy",

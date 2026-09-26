@@ -1,0 +1,79 @@
+schema_version: "1"
+profile_version: "discovery-v1"
+books:
+  starting_equity_per_mode: "700000"     # each mode independent
+  compounding: DAILY_REALIZED_NET        # equity fixed at session start
+  drawdown_alert_fraction: "0.20"        # Telegram only, never blocks
+modes:
+  M1_CAS:
+    per_trade_guide: "0.01"
+    open_risk_cap: "0.12"
+    max_new_entries_per_day: 6
+    max_open_positions: 2
+  M2_DIRECTIONAL:
+    per_trade_guide: "0.02"
+    open_risk_cap: "0.12"
+    max_new_entries_per_day: 4
+    max_open_positions: 2
+  M3_TACTICAL_POSITIONAL:
+    per_trade_guide: "0.02"
+    open_risk_cap: "0.12"
+    max_new_entries_per_day: 3
+    max_open_positions: 4
+  M4_STRATEGIC_POSITIONAL:
+    per_trade_guide: "0.03"
+    open_risk_cap: "0.12"
+    max_new_entries_per_day: 3
+    max_open_positions: 4
+bug_guard_trade_risk_fraction: "0.10"
+hard_quote_max_age_ms: 300000
+min_dte_new_entry:
+  default: 1
+  M2_DIRECTIONAL: 2
+fills:
+  model: "touch-v1"
+  shadow_model: "conservative-v1"
+soft_reason_codes:
+  - EVENT_BLACKOUT
+  - MIN_LOT_EXCEEDS_BUDGET
+  - DEPTH_INSUFFICIENT
+  - SLIPPAGE_EXCEEDED
+  - SPREAD_TOO_WIDE
+  - SETUP_COOLDOWN
+  - WARMUP_INCOMPLETE
+  - RISK_LIMIT_DAILY_LOSS
+  - RISK_LIMIT_STRATEGY
+  - CONCENTRATION_LIMIT
+  - CAMPAIGN_LOSS_LIMIT
+  - EXACT_DUPLICATE_SUPPRESSED
+  - ECONOMIC_OVERLAP_SUPPRESSED
+  - OPPOSING_EXPOSURE_REJECTED
+  - M4_POSITION_CAP_REACHED
+  - DATA_DEGRADED
+selection:            # strict first, fallback only if nothing passes strict
+  m2_delta:
+    strict: ["0.45", "0.65"]
+    fallback: ["0.30", "0.70"]
+  m1_delta:
+    strict: ["0.20", "0.40"]
+    fallback: ["0.10", "0.50"]
+  long_delta:
+    strict: ["0.45", "0.60"]
+    fallback: ["0.30", "0.70"]
+  short_delta:
+    strict: ["0.20", "0.35"]
+    fallback: ["0.10", "0.45"]
+  min_open_interest:
+    strict: 1000
+    fallback: 100
+  max_spread_fraction:
+    strict: "0.05"
+    fallback: "0.10"
+  weekly_dte:
+    strict: [5, 12]
+    fallback: [2, 14]
+  near_strikes_each_side: 5
+  following_week_strikes_each_side: 10
+direction:
+  fallback_trend_threshold: "0.30"   # used when strict trend is not UP/DOWN
+  fallback_min_bars: 14

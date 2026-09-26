@@ -1,8 +1,31 @@
 # Task Ledger
 
-ACTIVE_PLAN_VERSION: 13
+ACTIVE_PLAN_VERSION: 15
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: (Stage E complete; no READY desk slices).
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A2.
+
+## PAPER Discovery Mode (`docs/plans/DISCOVERY_MODE_STORIES.md`)
+
+Build in order. Each story is `BLOCKED` until the previous one is `DONE`.
+Sprint A is the Monday 2026-09-28 target.
+
+| ID | Status | Outcome |
+| --- | --- | --- |
+| DISC-A0 | DONE | Profile switch + `config/discovery.yaml` + LIVE guard |
+| DISC-A1 | DONE | Four independent ₹7L books, daily compounding |
+| DISC-A2 | READY | Strike first, size last; 1-lot minimum; bug guard; 12% mode cap |
+| DISC-A3 | BLOCKED | Event blackout + daily-loss freezes soft; drawdown alert |
+| DISC-A4 | BLOCKED | `touch-v1` paper fills + strict fill verdict |
+| DISC-A5 | BLOCKED | Staleness from quote time, not bar time |
+| DISC-A6 | BLOCKED | M2 direction fallback, two-pass strike pick, binder reasons |
+| DISC-A7 | BLOCKED | Straddle/strangle PAPER; M4 cap config; G2 name fix |
+| DISC-A8 | BLOCKED | Within-mode duplicates only; daily entry caps |
+| DISC-A9 | BLOCKED | Decision + reasoning record for every evaluation and exit |
+| DISC-A10 | BLOCKED | Session survives feed errors (Fyers 401) |
+| DISC-A11 | BLOCKED | `EXP-DISC` cohort identity; never promotion evidence |
+| DISC-A12 | BLOCKED | Deploy + Monday readiness |
+| DISC-B1..B4 | BLOCKED | M1 poll, M3/M4 fallback, EOD report/alerts, dashboard |
+| DISC-C1..C3 | BLOCKED | Soft-rule evidence, tightening steps, trailing (optional) |
 
 ## Agent Desk Stage 0 — measurement prerequisites (PART 16 / PART 15 A0)
 

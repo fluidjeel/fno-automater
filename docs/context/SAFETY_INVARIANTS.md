@@ -50,3 +50,18 @@ These requirements override convenience, strategy behavior, and AI output.
 
 Any code review touching these invariants requires explicit failure tests.
 
+## PAPER discovery exception (temporary)
+
+When the PAPER entry profile is `DISCOVERY` (`DISCOVERY_MODE.md`), invariant 6
+narrows. "Critical state" then means only:
+
+- price presence and quote age;
+- instrument identity;
+- recovery and reconciliation;
+- storage and order-outcome state.
+
+Other quality and policy checks are evaluated and recorded as
+`strict_would_block`; they do not block new PAPER exposure. All other
+invariants apply unchanged. `DISCOVERY` must fail validation under
+`Environment.LIVE`. The target remains the `STRICT` profile.
+

@@ -31,6 +31,7 @@ __all__ = [
     "DriverCode",
     "EligibilityStatus",
     "EntryGateId",
+    "EntryProfile",
     "Environment",
     "EventClass",
     "Exchange",
@@ -128,6 +129,14 @@ class Environment(StrEnum):
     @property
     def touches_real_capital(self) -> bool:
         return self is Environment.LIVE
+
+
+@unique
+class EntryProfile(StrEnum):
+    """Entry profile: STRICT (default) or temporary PAPER DISCOVERY."""
+
+    STRICT = "STRICT"
+    DISCOVERY = "DISCOVERY"
 
 
 @unique

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from trading.config.discovery import load_discovery_config
 from trading.domain.contracts.mode_policy import ModesConfig
-from trading.domain.enums import ExecutionMode, FamilyId, ModeId
+from trading.domain.enums import (
+    EntryProfile,
+    Environment,
+    ExecutionMode,
+    FamilyId,
+    ModeId,
+)
 from trading.domain.family_gates import (
     CALENDAR_FAMILIES,
     G1_EXCEEDS_BUDGET_FAMILIES,
@@ -145,13 +153,58 @@ def _validate_g3_cas_loop(
     return session_config, warnings
 
 
+def _validate_discovery_profile(
+    session_config: PaperSessionConfig,
+    environment: Environment | None,
+    broker: object | None,
+    discovery_path: Path | None,
+) -> None:
+    if session_config.entry_profile is not EntryProfile.DISCOVERY:
+        return
+    if environment is not None and environment is not Environment.PAPER:
+        raise StartupValidationError(
+            f"DISCOVERY entry profile cannot run under Environment.{environment.name}; "
+            "only Environment.PAPER is permitted."
+        )
+    if broker is not None:
+        broker_mod = type(broker).__module__
+        if any(
+            broker_mod == prefix or broker_mod.startswith(f"{prefix}.")
+            for prefix in ("trading.broker.fyers",)
+        ) or getattr(broker, "is_live", False):
+            raise StartupValidationError(
+                f"{type(broker).__name__} is a real broker adapter; "
+                "DISCOVERY entry profile requires the paper broker."
+            )
+    disc_path = discovery_path or Path("config/discovery.yaml")
+    if not disc_path.is_file():
+        raise StartupValidationError(
+            f"DISCOVERY entry profile requires {disc_path} to exist."
+        )
+    try:
+        load_discovery_config(disc_path)
+    except Exception as exc:
+        raise StartupValidationError(
+            f"Malformed discovery configuration in {disc_path}: {exc}"
+        ) from exc
+
+
 def validate_startup_configuration(
     session_config: PaperSessionConfig,
     modes_config: ModesConfig | None = None,
     *,
     enforce_g3_shadow: bool = False,
+    environment: Environment | None = None,
+    broker: object | None = None,
+    discovery_path: Path | None = None,
 ) -> tuple[PaperSessionConfig, list[str]]:
-    """Validate session configuration against Gates G1, G2, G3 and NIFTY rules."""
+    """Validate session configuration against Gates G1, G2, G3, DISCOVERY rules."""
+    _validate_discovery_profile(
+        session_config,
+        environment=environment,
+        broker=broker,
+        discovery_path=discovery_path,
+    )
     _validate_known_stances(session_config, modes_config)
     _validate_commodity_stances(session_config)
     _validate_budget_and_lifecycle(session_config)

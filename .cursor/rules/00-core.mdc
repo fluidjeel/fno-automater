@@ -18,7 +18,10 @@ never implement from it.
 4. Layer 2 recalculates every financially authoritative value at decision time.
 5. Broker orders, fills, positions and funds are external truth.
 6. Unknown, stale, inconsistent or invalid critical state blocks new exposure.
-   Existing positions keep deterministic protection regardless.
+ Existing positions keep deterministic protection regardless.
+7. PAPER `DISCOVERY` profile (temporary, `docs/context/DISCOVERY_MODE.md`):
+ soft checks record `strict_would_block` instead of blocking. Hard rules,
+ exits and invariants stay. Target remains `STRICT`. Never under LIVE.
 
 ## Layer ownership
 

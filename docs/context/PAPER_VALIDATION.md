@@ -21,6 +21,14 @@ pre-change and post-change results when judging promotion.
 A position opened under version V keeps V's exit policy. New config applies only
 to new trades. Intents and orders carry `experiment_id` and `execution_mode`.
 
+## Discovery cohorts (temporary)
+
+Under the `DISCOVERY` profile (`DISCOVERY_MODE.md`), the paper broker fills at
+the displayed ask or bid plus charges. Every order also records the
+`conservative-v1` verdict. `EXP-DISC` cohorts measure edge and lifecycle
+correctness. They are never pooled with `STRICT` cohorts and never count
+toward promotion.
+
 ## Conservative fills
 
 Promotion scorecards re-price recorded intents through the conservative fill

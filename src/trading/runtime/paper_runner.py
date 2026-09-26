@@ -19,6 +19,7 @@ from trading.ai.packets import build_delta_packet
 from trading.ai.position import maybe_log_position_shadow
 from trading.broker.paper import PaperBroker
 from trading.config.charge_policy import LoadedChargePolicy, load_charge_policy
+from trading.config.discovery import DiscoveryConfig
 from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, MissingMonitorResolution
@@ -334,6 +335,7 @@ class PaperRunner:
         charge_policy: LoadedChargePolicy | None = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         paper_data_requirements: PaperDataRequirements | None = None,
+        discovery_config: DiscoveryConfig | None = None,
     ) -> None:
         assert_paper_isolation(
             account_config.config.environment,
@@ -352,13 +354,16 @@ class PaperRunner:
         self._ids = id_factory
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
+        self._discovery_config = discovery_config
         self._exit_depth_gaps: tuple[str, ...] = ()
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
             store, clock=clock, id_factory=id_factory
         )
         session_date = clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
-        mode_book = FourModeBook.reconstruct_from_store(store, session_date)
+        mode_book = FourModeBook.reconstruct_from_store(
+            store, session_date, discovery_config=discovery_config
+        )
         self._services = _Services(
             store=store,
             broker=broker,
@@ -494,6 +499,10 @@ class PaperRunner:
     @property
     def trade_manager(self) -> TradeManager:
         return self._services.trade_manager
+
+    @property
+    def mode_book(self) -> FourModeBook | None:
+        return self._services.gateway.mode_book
 
     @property
     def protection_degraded(self) -> bool:
