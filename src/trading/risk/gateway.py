@@ -35,10 +35,17 @@ from trading.domain.enums import (
     Trigger,
 )
 from trading.domain.ids import IdFactory
-from trading.domain.primitives import Lots, LotSize, Money, Percent
+from trading.domain.primitives import Lots, LotSize, Money, Percent, Rounding
 from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
 from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.research.registry import is_experimental_off_strict_book
+from trading.risk.discovery_sizing import (
+    apply_discovery_lots,
+    collect_strict_would_block,
+    discovery_guide_budget,
+    evaluate_discovery_hard_limits,
+    rescale_approved_legs,
+)
 from trading.risk.limits import (
     build_sizing_limits,
     evaluate_campaign_limit,
@@ -111,6 +118,7 @@ class _StructureKind(StrEnum):
 class _SizingOutcome:
     approved_lots: int
     bounds: LotBounds
+    cost_per_lot: Money
     recalculated_max_loss: Money
     estimated_margin: Money
     approved_legs: tuple[ApprovedLeg, ...]
@@ -441,6 +449,9 @@ class RiskGateway:
         if intent.mode_id is not None and self._mode_book is not None:
             mode_ledger = self._mode_book.get_ledger(intent.mode_id)
 
+        discovery_config = (
+            self._mode_book.discovery_config if self._mode_book is not None else None
+        )
         limits = build_sizing_limits(
             portfolio,
             account_risk,
@@ -450,6 +461,7 @@ class RiskGateway:
             mode_id=intent.mode_id,
             modes_config=self._modes_config,
             mode_ledger=mode_ledger,
+            discovery_config=discovery_config,
         )
         sizing_request = SizingRequest(
             request_id=self._ids.new_id("SIZE-REQ"),
@@ -488,7 +500,12 @@ class RiskGateway:
                 decided_at=now,
                 audit=audit,
             )
-        if sizing.approved_lots <= 0:
+        discovery_active = (
+            discovery_config is not None
+            and intent.mode_id is not None
+            and mode_ledger is not None
+        )
+        if sizing.approved_lots <= 0 and not discovery_active:
             reason = _zero_lot_reason(sizing.bounds, mode_id=intent.mode_id)
             if intent.mode_id is not None and (
                 sizing.bounds.risk_lots <= 0
@@ -499,6 +516,14 @@ class RiskGateway:
                 intent,
                 portfolio,
                 reason_codes=(reason,),
+                decided_at=now,
+                audit=audit,
+            )
+        if sizing.cost_per_lot.is_zero or sizing.cost_per_lot.is_negative:
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
                 decided_at=now,
                 audit=audit,
             )
@@ -513,54 +538,129 @@ class RiskGateway:
                 audit=audit,
             )
 
-        limit_check = evaluate_pre_trade_limits(
-            intent,
-            portfolio,
-            account_risk,
-            policy,
-            limits,
-            recalculated_max_loss=sizing.recalculated_max_loss,
-            approved_lots=sizing.approved_lots,
-            mode_ledger=mode_ledger,
-            modes_config=self._modes_config,
-            mode_book=self._mode_book,
-        )
-        if not limit_check.passed:
-            return self._reject(
-                intent,
-                portfolio,
-                reason_codes=limit_check.reason_codes,
-                applied_limits=limit_check.applied_limits,
-                decided_at=now,
-                audit=audit,
+        strict_would_block: tuple[ReasonCode, ...] = ()
+        approval_reasons: list[ReasonCode] = []
+        if discovery_active:
+            guide = discovery_guide_budget(
+                mode_ledger, discovery_config, intent.mode_id
             )
-
-        campaign_check = evaluate_campaign_limit(
-            request.campaign_id,
-            self._campaign_ledger,
-            recalculated_max_loss=sizing.recalculated_max_loss,
-        )
-        if not campaign_check.passed:
-            return self._reject(
-                intent,
-                portfolio,
-                reason_codes=campaign_check.reason_codes,
-                applied_limits=campaign_check.applied_limits,
-                decided_at=now,
-                audit=audit,
+            discovery_sized = apply_discovery_lots(
+                cost_per_lot=sizing.cost_per_lot,
+                guide=guide,
             )
-
-        if request.exposure_report is not None:
-            exposure_check = evaluate_exposure_limits(request.exposure_report, policy)
-            if not exposure_check.passed:
+            if discovery_sized.approved_lots <= 0:
                 return self._reject(
                     intent,
                     portfolio,
-                    reason_codes=exposure_check.reason_codes,
-                    applied_limits=exposure_check.applied_limits,
+                    reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
                     decided_at=now,
                     audit=audit,
                 )
+            old_lots = sizing.approved_lots if sizing.approved_lots > 0 else 1
+            margin_per_lot = sizing.estimated_margin / old_lots
+            sizing = _SizingOutcome(
+                approved_lots=discovery_sized.approved_lots,
+                bounds=sizing.bounds,
+                cost_per_lot=sizing.cost_per_lot,
+                recalculated_max_loss=discovery_sized.recalculated_max_loss,
+                estimated_margin=(
+                    margin_per_lot * discovery_sized.approved_lots
+                ).quantized(Rounding.CEILING),
+                approved_legs=rescale_approved_legs(
+                    sizing.approved_legs,
+                    discovery_sized.approved_lots,
+                )
+                if sizing.approved_legs
+                else sizing.approved_legs,
+                net_delta_delta=sizing.net_delta_delta,
+            )
+            limit_check = evaluate_discovery_hard_limits(
+                cost_per_lot=sizing.cost_per_lot,
+                recalculated_max_loss=sizing.recalculated_max_loss,
+                approved_lots=sizing.approved_lots,
+                mode_ledger=mode_ledger,
+                discovery=discovery_config,
+                mode_id=intent.mode_id,
+            )
+            if not limit_check.passed:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=limit_check.reason_codes,
+                    applied_limits=limit_check.applied_limits,
+                    decided_at=now,
+                    audit=audit,
+                )
+            strict_would_block = collect_strict_would_block(
+                intent,
+                portfolio,
+                account_risk,
+                policy,
+                limits,
+                recalculated_max_loss=sizing.recalculated_max_loss,
+                approved_lots=sizing.approved_lots,
+                mode_ledger=mode_ledger,
+                modes_config=self._modes_config,
+                mode_book=self._mode_book,
+                exposure_report=request.exposure_report,
+                campaign_id=request.campaign_id,
+                campaign_ledger=self._campaign_ledger,
+            )
+            approval_reasons = [ReasonCode.OK]
+            if discovery_sized.one_lot_over_guide:
+                approval_reasons.append(ReasonCode.ONE_LOT_OVER_GUIDE)
+        else:
+            limit_check = evaluate_pre_trade_limits(
+                intent,
+                portfolio,
+                account_risk,
+                policy,
+                limits,
+                recalculated_max_loss=sizing.recalculated_max_loss,
+                approved_lots=sizing.approved_lots,
+                mode_ledger=mode_ledger,
+                modes_config=self._modes_config,
+                mode_book=self._mode_book,
+            )
+            if not limit_check.passed:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=limit_check.reason_codes,
+                    applied_limits=limit_check.applied_limits,
+                    decided_at=now,
+                    audit=audit,
+                )
+
+            campaign_check = evaluate_campaign_limit(
+                request.campaign_id,
+                self._campaign_ledger,
+                recalculated_max_loss=sizing.recalculated_max_loss,
+            )
+            if not campaign_check.passed:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=campaign_check.reason_codes,
+                    applied_limits=campaign_check.applied_limits,
+                    decided_at=now,
+                    audit=audit,
+                )
+
+            if request.exposure_report is not None:
+                exposure_check = evaluate_exposure_limits(
+                    request.exposure_report, policy
+                )
+                if not exposure_check.passed:
+                    return self._reject(
+                        intent,
+                        portfolio,
+                        reason_codes=exposure_check.reason_codes,
+                        applied_limits=exposure_check.applied_limits,
+                        decided_at=now,
+                        audit=audit,
+                    )
+            approval_reasons = list(limit_check.reason_codes)
 
         decision_id = self._ids.new_id("DEC")
         reservation = self._reservations.try_reserve(
@@ -587,9 +687,13 @@ class RiskGateway:
             )
         if self._mode_book is not None and intent.mode_id is not None:
             global_cap = (
-                policy.max_global_open_risk.to_money()
-                if policy.max_global_open_risk is not None
-                else None
+                None
+                if discovery_active
+                else (
+                    policy.max_global_open_risk.to_money()
+                    if policy.max_global_open_risk is not None
+                    else None
+                )
             )
             if not self._mode_book.try_reserve(
                 intent.mode_id,
@@ -638,7 +742,8 @@ class RiskGateway:
             pre_trade_exposure=pre_trade,
             post_trade_projection=post_trade,
             applied_limits=limit_check.applied_limits,
-            reason_codes=limit_check.reason_codes,
+            reason_codes=tuple(approval_reasons),
+            strict_would_block=strict_would_block,
             decided_at=now,
             expires_at=expires_at,
             decision_snapshot_id=audit["decision_snapshot_id"],
@@ -679,6 +784,11 @@ class RiskGateway:
             decision_timestamp=extra_timestamp,
             leg_quotes=extra_quotes,
         )
+
+
+def _leg_template_lots(approved_lots: int) -> int:
+    """Build leg templates for discovery when strict sizing returned zero lots."""
+    return approved_lots if approved_lots > 0 else 1
 
 
 def _detect_structure(request: RiskGatewayRequest) -> _StructureKind | None:
@@ -884,7 +994,7 @@ def _compute_sizing_outcome(
         approved_lots = spread_sizing.approved_lots
         approved_legs = _approved_spread_legs(
             request.intent,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             spread_sizing.lot_size,
         )
         net_delta_delta = (
@@ -899,6 +1009,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=spread_sizing.bounds,
+            cost_per_lot=spread_sizing.cost_per_lot,
             recalculated_max_loss=spread_sizing.recalculated_max_loss,
             estimated_margin=spread_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -922,7 +1033,7 @@ def _compute_sizing_outcome(
         approved_lots = credit_sizing.approved_lots
         approved_legs = _approved_credit_spread_legs(
             request.intent,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             credit_sizing.lot_size,
         )
         net_delta_delta = (
@@ -937,6 +1048,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=credit_sizing.bounds,
+            cost_per_lot=credit_sizing.cost_per_lot,
             recalculated_max_loss=credit_sizing.recalculated_max_loss,
             estimated_margin=credit_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -960,7 +1072,7 @@ def _compute_sizing_outcome(
         approved_lots = condor_sizing.approved_lots
         approved_legs = _approved_condor_legs(
             condor_sizing.legs,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             condor_sizing.lot_size,
         )
         net_delta_delta = (
@@ -975,6 +1087,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=condor_sizing.bounds,
+            cost_per_lot=condor_sizing.cost_per_lot,
             recalculated_max_loss=condor_sizing.recalculated_max_loss,
             estimated_margin=condor_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -998,7 +1111,7 @@ def _compute_sizing_outcome(
         approved_lots = butterfly_sizing.approved_lots
         approved_legs = _approved_iron_butterfly_legs(
             butterfly_sizing.legs,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             butterfly_sizing.lot_size,
         )
         net_delta_delta = (
@@ -1013,6 +1126,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=butterfly_sizing.bounds,
+            cost_per_lot=butterfly_sizing.cost_per_lot,
             recalculated_max_loss=butterfly_sizing.recalculated_max_loss,
             estimated_margin=butterfly_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -1036,7 +1150,7 @@ def _compute_sizing_outcome(
         approved_lots = fly_sizing.approved_lots
         approved_legs = _approved_butterfly_legs(
             fly_sizing.legs,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             fly_sizing.lot_size,
         )
         net_delta_delta = (
@@ -1051,6 +1165,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=fly_sizing.bounds,
+            cost_per_lot=fly_sizing.cost_per_lot,
             recalculated_max_loss=fly_sizing.recalculated_max_loss,
             estimated_margin=fly_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -1075,7 +1190,7 @@ def _compute_sizing_outcome(
         approved_legs = _approved_volatility_legs(
             straddle_sizing.call_leg,
             straddle_sizing.put_leg,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             straddle_sizing.lot_size,
         )
         net_delta_delta = (
@@ -1090,6 +1205,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=straddle_sizing.bounds,
+            cost_per_lot=straddle_sizing.cost_per_lot,
             recalculated_max_loss=straddle_sizing.recalculated_max_loss,
             estimated_margin=straddle_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -1114,7 +1230,7 @@ def _compute_sizing_outcome(
         approved_legs = _approved_volatility_legs(
             strangle_sizing.call_leg,
             strangle_sizing.put_leg,
-            approved_lots,
+            _leg_template_lots(approved_lots),
             strangle_sizing.lot_size,
         )
         net_delta_delta = (
@@ -1129,6 +1245,7 @@ def _compute_sizing_outcome(
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=strangle_sizing.bounds,
+            cost_per_lot=strangle_sizing.cost_per_lot,
             recalculated_max_loss=strangle_sizing.recalculated_max_loss,
             estimated_margin=strangle_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -1150,20 +1267,18 @@ def _compute_sizing_outcome(
             raise _SizingError(str(exc)) from exc
         approved_lots = future_sizing.approved_lots
         leg = request.intent.legs[0]
+        template_lots = _leg_template_lots(approved_lots)
         approved_legs = (
-            (
-                ApprovedLeg(
-                    leg_id=leg.leg_id,
-                    lots=Lots(approved_lots),
-                    lot_size=future_sizing.lot_size,
-                ),
-            )
-            if approved_lots > 0
-            else ()
+            ApprovedLeg(
+                leg_id=leg.leg_id,
+                lots=Lots(template_lots),
+                lot_size=future_sizing.lot_size,
+            ),
         )
         return _SizingOutcome(
             approved_lots=approved_lots,
             bounds=future_sizing.bounds,
+            cost_per_lot=future_sizing.cost_per_lot,
             recalculated_max_loss=future_sizing.recalculated_max_loss,
             estimated_margin=future_sizing.estimated_margin,
             approved_legs=approved_legs,
@@ -1185,20 +1300,18 @@ def _compute_sizing_outcome(
     )
     approved_lots = option_sizing.approved_lots
     leg = request.intent.legs[0]
+    template_lots = _leg_template_lots(approved_lots)
     approved_legs = (
-        (
-            ApprovedLeg(
-                leg_id=leg.leg_id,
-                lots=Lots(approved_lots),
-                lot_size=option_sizing.lot_size,
-            ),
-        )
-        if approved_lots > 0
-        else ()
+        ApprovedLeg(
+            leg_id=leg.leg_id,
+            lots=Lots(template_lots),
+            lot_size=option_sizing.lot_size,
+        ),
     )
     return _SizingOutcome(
         approved_lots=approved_lots,
         bounds=option_sizing.bounds,
+        cost_per_lot=option_sizing.cost_per_lot,
         recalculated_max_loss=option_sizing.recalculated_max_loss,
         estimated_margin=option_sizing.estimated_margin,
         approved_legs=approved_legs,
