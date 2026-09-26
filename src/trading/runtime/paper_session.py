@@ -92,6 +92,7 @@ from trading.runtime.cas_event_path import (
     record_episode_attempt,
 )
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
+from trading.runtime.discovery_drawdown_alert import DrawdownAlertTracker
 from trading.runtime.event_risk import collect_event_risk
 from trading.runtime.four_mode_producers import (
     build_four_mode_requests,
@@ -283,6 +284,7 @@ class PaperSession:
         self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
         self._m1_ingress: object | None = None
         self._latest_market_state: MarketState | None = None
+        self._drawdown_alerts = DrawdownAlertTracker()
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -453,6 +455,15 @@ class PaperSession:
         self._run_due_reviews(snapshots)
         self._run_due_m2_carry_gate(snapshots, now)
         self._cycle_count += 1
+        if self._discovery_config is not None:
+            mode_book = self._runner.mode_book
+            if mode_book is not None:
+                self._drawdown_alerts.check_and_notify(
+                    mode_book,
+                    self._discovery_config,
+                    session_date=now.astimezone(self._zone).date(),
+                    notify=self._notifier.send,
+                )
         self._write_session_heartbeat(
             now=now, result=result, had_requests=bool(requests)
         )
@@ -1433,6 +1444,8 @@ def _four_mode_request_builder(
                 session_date=session_day.isoformat(),
                 episode_ledger=repo_root / "data" / "paper" / "m1_episodes.json",
                 mode_capital=m1_cap,
+                entry_profile=session_cfg.entry_profile,
+                discovery_config=discovery_config,
             )
             if gate.latency_limitation:
                 logging.getLogger(__name__).warning(

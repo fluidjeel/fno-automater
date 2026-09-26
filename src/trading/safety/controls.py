@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from enum import StrEnum, unique
 from typing import Any
 
+from trading.config.discovery import DiscoveryConfig
 from trading.config.schema import RiskLimits
 from trading.domain.clock import Clock
 from trading.domain.contracts.base import (
@@ -103,9 +104,11 @@ class SafetyControls:
         *,
         clock: Clock,
         id_factory: IdFactory,
+        discovery_config: DiscoveryConfig | None = None,
     ) -> None:
         self._clock = clock
         self._ids = id_factory
+        self._discovery_config = discovery_config
         self._state = _SafetyState()
 
     @property
@@ -295,6 +298,8 @@ class SafetyControls:
             return None
         if not daily_loss_cap_breached(portfolio, account_risk):
             return None
+        if self._discovery_config is not None:
+            return None
         return self._apply(
             kind=SafetyControlKind.DAILY_LOSS_KILL_SWITCH,
             actor="risk-engine",
@@ -429,6 +434,8 @@ class SafetyControls:
         if daily_budget_cap_fraction is None:
             return None
         if not ledger.daily_loss_breached(daily_budget_cap_fraction):
+            return None
+        if self._discovery_config is not None:
             return None
         return self._apply_mode(
             kind=SafetyControlKind.MODE_DAILY_LOSS_KILL_SWITCH,

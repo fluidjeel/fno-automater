@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 
+from trading.config.discovery import DiscoveryConfig
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.paper_data import (
     PaperDataAssessment,
@@ -23,11 +24,12 @@ from trading.domain.contracts.paper_data import (
 )
 from trading.domain.contracts.portfolio import PortfolioSnapshot
 from trading.domain.contracts.snapshot import FeatureSnapshot
-from trading.domain.enums import InstrumentKind, ReasonCode
+from trading.domain.enums import EntryProfile, InstrumentKind, ReasonCode
 from trading.domain.primitives import Money
 from trading.news.contracts import EventRiskState, NewsQuality
+from trading.risk.gate_profile import is_soft
 
-__all__ = ["PaperDataInputs", "assess_paper_data"]
+__all__ = ["PaperDataInputs", "assess_paper_data", "strict_would_block_p0"]
 
 _ZERO = Decimal(0)
 
@@ -51,6 +53,8 @@ def assess_paper_data(
     requirements: PaperDataRequirements,
     inputs: PaperDataInputs,
     *,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    discovery_config: DiscoveryConfig | None = None,
     p1_present: frozenset[PaperDataField] = frozenset(),
     p1_absent: frozenset[PaperDataField] = frozenset(),
 ) -> PaperDataAssessment:
@@ -99,7 +103,7 @@ def assess_paper_data(
             )
         )
     p0_ok = all(
-        row.presence in {PaperDataPresence.PRESENT, PaperDataPresence.SKIPPED}
+        _p0_row_ok(row, entry_profile=entry_profile, discovery_config=discovery_config)
         for row in results
         if row.tier is PaperDataTier.P0
     )
@@ -108,6 +112,39 @@ def assess_paper_data(
         p0_ok=p0_ok,
         results=tuple(results),
     )
+
+
+def _p0_row_ok(
+    row: PaperDataFieldResult,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
+) -> bool:
+    if row.presence in {PaperDataPresence.PRESENT, PaperDataPresence.SKIPPED}:
+        return True
+    if row.reason_code is None:
+        return False
+    return is_soft(row.reason_code, entry_profile, discovery_config)
+
+
+def strict_would_block_p0(
+    assessment: PaperDataAssessment,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
+) -> tuple[ReasonCode, ...]:
+    """P0 failures that are soft under DISCOVERY."""
+    codes = [
+        row.reason_code
+        for row in assessment.results
+        if row.tier is PaperDataTier.P0
+        and row.reason_code is not None
+        and not _p0_row_ok(
+            row, entry_profile=entry_profile, discovery_config=discovery_config
+        )
+        and is_soft(row.reason_code, entry_profile, discovery_config)
+    ]
+    return tuple(dict.fromkeys(codes))
 
 
 def _assess_p0(

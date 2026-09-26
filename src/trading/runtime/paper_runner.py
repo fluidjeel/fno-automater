@@ -109,6 +109,7 @@ from trading.portfolio.fill_charge_recorder import (
 )
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
+from trading.risk.gate_profile import is_soft, partition_reasons
 from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.isolation import assert_paper_isolation
@@ -406,7 +407,11 @@ class PaperRunner:
                 id_factory=id_factory,
                 reservation_service=reservations,
             ),
-            controls=SafetyControls(clock=clock, id_factory=id_factory),
+            controls=SafetyControls(
+                clock=clock,
+                id_factory=id_factory,
+                discovery_config=discovery_config,
+            ),
             reservations=reservations,
         )
         self._arbiter = PortfolioArbiter()
@@ -1976,6 +1981,8 @@ class PaperRunner:
         return None
 
     def _ensure_entries_blocked(self, reason: ReasonCode, detail: str) -> None:
+        if is_soft(reason, self._entry_profile, self._discovery_config):
+            return
         if not self._services.controls.blocks_entry():
             self._services.controls.freeze_entries(
                 actor="paper-lifecycle",
@@ -2653,10 +2660,17 @@ class PaperRunner:
                 instruments=request.instruments,
                 skip=skip,
             ),
+            entry_profile=self._entry_profile,
+            discovery_config=self._discovery_config,
         )
         if assessment.p0_ok:
             return ()
-        return assessment.p0_reason_codes or (ReasonCode.DATA_GAP,)
+        hard, _soft = partition_reasons(
+            assessment.p0_reason_codes or (ReasonCode.DATA_GAP,),
+            self._entry_profile,
+            self._discovery_config,
+        )
+        return hard or (ReasonCode.DATA_GAP,)
 
     def _submit(
         self,
