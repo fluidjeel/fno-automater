@@ -259,9 +259,7 @@ def test_following_week_fetch_failure_records_reason_and_keeps_near_chain(
     )
     underlying = f.snapshot(contract=f.index_contract())
     near = f.snapshot(
-        contract=f.option_contract(
-            symbol="NIFTY26SEP24000CE", strike=Decimal("24000")
-        ),
+        contract=f.option_contract(symbol="NIFTY26SEP24000CE", strike=Decimal("24000")),
         derivatives=DerivativesContext(
             days_to_expiry=10,
             open_interest=5000,
