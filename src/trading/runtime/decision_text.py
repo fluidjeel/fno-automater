@@ -92,9 +92,7 @@ def _microstructure_unconfirmed(
     return f"No trade: microstructure unconfirmed ({detail})."
 
 
-def _conviction_below(
-    ctx: DecisionTextContext, _codes: tuple[ReasonCode, ...]
-) -> str:
+def _conviction_below(ctx: DecisionTextContext, _codes: tuple[ReasonCode, ...]) -> str:
     score = _num(ctx.conviction_score, places=0)
     threshold = _num(ctx.threshold, places=0)
     return f"No trade: conviction score {score} below threshold {threshold}."
@@ -120,9 +118,13 @@ def _blocked(ctx: DecisionTextContext, codes: tuple[ReasonCode, ...]) -> str:
     return f"Blocked: {detail}."
 
 
-_DEFAULT_TEMPLATE: Callable[[DecisionTextContext, tuple[ReasonCode, ...]], str] = _generic
+_DEFAULT_TEMPLATE: Callable[[DecisionTextContext, tuple[ReasonCode, ...]], str] = (
+    _generic
+)
 
-_TEMPLATES: dict[ReasonCode, Callable[[DecisionTextContext, tuple[ReasonCode, ...]], str]] = {
+_TEMPLATES: dict[
+    ReasonCode, Callable[[DecisionTextContext, tuple[ReasonCode, ...]], str]
+] = {
     ReasonCode.DIRECTION_NEUTRAL: _direction_neutral,
     ReasonCode.OPTION_TYPE_MISMATCH: _option_type_mismatch,
     ReasonCode.MICROSTRUCTURE_UNCONFIRMED: _microstructure_unconfirmed,
