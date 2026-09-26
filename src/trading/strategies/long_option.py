@@ -126,12 +126,19 @@ class LongOptionStrategy:
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
         if bias is MacroBias.NEUTRAL:
-            return decision  # no directional signal: no trade, not an error
+            return self._reject(
+                decision, ctx, ReasonCode.DIRECTION_NEUTRAL, "direction neutral"
+            )
 
         option = ctx.candidates[0]
         option_type = _option_type_for(bias)
         if option.contract.option_type is not option_type:
-            return decision  # candidate does not match the read; skip, do not reject
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.OPTION_TYPE_MISMATCH,
+                "candidate option type does not match directional read",
+            )
 
         intent = self._build_intent(ctx, option, bias, option_type, confidence)
         return StrategyDecision(

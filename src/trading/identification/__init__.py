@@ -36,7 +36,10 @@ from trading.identification.config import (
     load_identification_policy,
 )
 from trading.identification.macro import publish_macro_assessment
-from trading.identification.market_state import build_market_state
+from trading.identification.market_state import (
+    apply_discovery_direction_fallback,
+    build_market_state,
+)
 from trading.identification.p1_features import (
     ObservedP1Features,
     blocked_families,
@@ -74,6 +77,7 @@ __all__ = [
     "bind_m2_long_option",
     "bind_short_iron_butterfly",
     "blocked_families",
+    "apply_discovery_direction_fallback",
     "build_market_state",
     "get_calendar_port",
     "iv_bucket_for",

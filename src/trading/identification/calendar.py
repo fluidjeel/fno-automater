@@ -368,6 +368,30 @@ class TradingCalendarPort:
                     reason_code=ReasonCode.OK,
                     audit_note=audit_note,
                 )
+            before_following = [exp for exp in eligible_expiries if exp < monday]
+            if before_following:
+                selected_expiry = max(before_following)
+                is_monthly_sub = self._is_monthly_contract(selected_expiry)
+                audit_note = (
+                    f"Fallback expiry selected: {selected_expiry} "
+                    f"(target week {monday} to {sunday} had no eligible listed expiry)"
+                )
+                if is_monthly_sub:
+                    audit_note += (
+                        f" | Monthly contract fulfills fallback role: {selected_expiry}"
+                    )
+                return M2ExpirySelection(
+                    eligible=True,
+                    selected_expiry=selected_expiry,
+                    as_of=as_of,
+                    dte=(selected_expiry - as_of).days,
+                    target_week_start=monday,
+                    target_week_end=sunday,
+                    is_holiday_substituted=False,
+                    is_monthly_substituted=is_monthly_sub,
+                    reason_code=ReasonCode.OK,
+                    audit_note=audit_note,
+                )
 
         has_0_1_dte = any(0 <= (exp - as_of).days <= 1 for exp in all_expiries)
         if has_0_1_dte:

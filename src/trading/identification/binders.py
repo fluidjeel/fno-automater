@@ -7,6 +7,7 @@ from datetime import date
 from decimal import Decimal
 from typing import cast
 
+from trading.config.discovery import DiscoveryConfig, DiscoverySelectionConfig
 from trading.domain.contracts import CandidateBinding, FeatureSnapshot, MarketState
 from trading.domain.contracts.identification import (
     SetupFeatures,
@@ -15,7 +16,13 @@ from trading.domain.contracts.identification import (
     VolatilityState,
 )
 from trading.domain.contracts.paper_data import PaperDataField
-from trading.domain.enums import FamilyId, InstrumentKind, OptionType, ReasonCode
+from trading.domain.enums import (
+    EntryProfile,
+    FamilyId,
+    InstrumentKind,
+    OptionType,
+    ReasonCode,
+)
 from trading.identification.calendar import (
     M2ExpirySelection,
     TradingCalendarPort,
@@ -43,6 +50,21 @@ __all__ = [
 
 _ZERO = Decimal(0)
 _ONE = Decimal(1)
+_M2_TARGET_DELTA = Decimal("0.55")
+_M2_STRICT_DELTA = (Decimal("0.45"), Decimal("0.65"))
+
+
+@dataclass(frozen=True, slots=True)
+class _M2SelectionPass:
+    """One M2 contract-filter pass (strict or discovery fallback)."""
+
+    delta_min: Decimal
+    delta_max: Decimal
+    min_open_interest: int
+    max_spread_fraction: Decimal
+    dte_min: int
+    dte_max: int
+    label: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -1270,6 +1292,8 @@ def bind_m2_long_option(
     master_symbols: frozenset[str] | None = None,
     p1: ObservedP1Features | None = None,
     allow_fallback_expiry: bool = False,
+    discovery_config: DiscoveryConfig | None = None,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> BoundCandidates:
     all_candidates = candidates
     if master_symbols is not None:
@@ -1277,39 +1301,26 @@ def bind_m2_long_option(
             item for item in candidates if item.contract.symbol in master_symbols
         )
         if not in_master:
-            return BoundCandidates(
-                binding=CandidateBinding(
-                    strategy_id="positional_long_option",
-                    binding_version=policy.binding_version,
-                    selected_symbols=(),
-                    score=_ZERO,
-                    eligible=False,
-                    reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
-                    rejected_symbols=tuple(
-                        sorted(c.contract.symbol for c in all_candidates)
-                    ),
-                ),
-                candidates=(),
-                setup_features=None,
+            return _ineligible_binding(
+                strategy_id="positional_long_option",
+                policy=policy,
+                all_candidates=all_candidates,
+                reason_codes=(ReasonCode.INSTRUMENT_MASTER_ABSENT,),
             )
         candidates = in_master
 
     option_type = _direction_type(market)
+    direction_tags = tuple(
+        code
+        for code in market.reason_codes
+        if code is ReasonCode.DIRECTION_FALLBACK
+    )
     if option_type is None:
-        return BoundCandidates(
-            binding=CandidateBinding(
-                strategy_id="positional_long_option",
-                binding_version=policy.binding_version,
-                selected_symbols=(),
-                score=_ZERO,
-                eligible=False,
-                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
-                rejected_symbols=tuple(
-                    sorted(c.contract.symbol for c in all_candidates)
-                ),
-            ),
-            candidates=(),
-            setup_features=None,
+        return _ineligible_binding(
+            strategy_id="positional_long_option",
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(ReasonCode.DIRECTION_UNRESOLVED,),
         )
 
     cal = calendar or get_calendar_port()
@@ -1325,20 +1336,11 @@ def bind_m2_long_option(
         listed_expiries, as_of=as_of, allow_fallback=allow_fallback_expiry
     )
     if not expiry_sel.eligible or expiry_sel.selected_expiry is None:
-        return BoundCandidates(
-            binding=CandidateBinding(
-                strategy_id="positional_long_option",
-                binding_version=policy.binding_version,
-                selected_symbols=(),
-                score=_ZERO,
-                eligible=False,
-                reason_codes=(expiry_sel.reason_code,),
-                rejected_symbols=tuple(
-                    sorted(c.contract.symbol for c in all_candidates)
-                ),
-            ),
-            candidates=(),
-            setup_features=None,
+        return _ineligible_binding(
+            strategy_id="positional_long_option",
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(expiry_sel.reason_code,),
         )
 
     expiry_candidates = tuple(
@@ -1346,49 +1348,56 @@ def bind_m2_long_option(
         for item in candidates
         if item.contract.expiry == expiry_sel.selected_expiry
     )
-    eligible = [
-        item
-        for item in expiry_candidates
-        if item.contract.option_type is option_type
-        and _common_reason(item, policy) is None
-        and _abs_delta_in_range(item, Decimal("0.45"), Decimal("0.65"))
-    ]
-    if not eligible:
-        return BoundCandidates(
-            binding=CandidateBinding(
-                strategy_id="positional_long_option",
-                binding_version=policy.binding_version,
-                selected_symbols=(),
-                score=_ZERO,
-                eligible=False,
-                reason_codes=(
-                    _dominant_reason(expiry_candidates or candidates, policy),
-                ),
-                rejected_symbols=tuple(
-                    sorted(c.contract.symbol for c in all_candidates)
-                ),
+    passes = _m2_selection_passes(
+        policy,
+        discovery_config=discovery_config,
+        entry_profile=entry_profile,
+    )
+    selected: FeatureSnapshot | None = None
+    pass_tags: dict[str, Decimal] = {}
+    fallback_reasons: list[ReasonCode] = []
+    for index, pass_cfg in enumerate(passes):
+        survivors = _m2_survivors(
+            expiry_candidates,
+            option_type=option_type,
+            pass_cfg=pass_cfg,
+            policy=policy,
+        )
+        if not survivors:
+            continue
+        selected = _pick_closest_delta(survivors)
+        if index > 0:
+            fallback_reasons.append(ReasonCode.M2_DELTA_FALLBACK)
+            pass_tags["M2_DELTA_FALLBACK"] = _abs_delta(selected) or _ZERO
+        break
+
+    if selected is None:
+        pool = expiry_candidates or candidates
+        return _ineligible_binding(
+            strategy_id="positional_long_option",
+            policy=policy,
+            all_candidates=all_candidates,
+            reason_codes=(
+                _dominant_reason(pool, policy),
             ),
-            candidates=(),
-            setup_features=None,
         )
 
-    ranked = sorted(
-        (
-            (
-                _candidate_score(
-                    item,
-                    candidates,
-                    policy,
-                    delta_range=(Decimal("0.45"), Decimal("0.65")),
-                    p1=p1,
-                ),
-                item,
-            )
-            for item in eligible
-        ),
-        key=lambda pair: (-pair[0], pair[1].contract.symbol),
+    delta_range = (
+        passes[0].delta_min,
+        passes[0].delta_max,
     )
-    score, selected = ranked[0]
+    if ReasonCode.M2_DELTA_FALLBACK in fallback_reasons:
+        delta_range = (
+            passes[-1].delta_min,
+            passes[-1].delta_max,
+        )
+    score = _candidate_score(
+        selected,
+        candidates,
+        policy,
+        delta_range=delta_range,
+        p1=p1,
+    )
     selected_symbol = selected.contract.symbol
     rejected = tuple(
         sorted(
@@ -1397,12 +1406,28 @@ def bind_m2_long_option(
             if item.contract.symbol != selected_symbol
         )
     )
+    extra_components: dict[str, Decimal] = {
+        "m2_dte": Decimal(expiry_sel.dte or 0),
+        "is_holiday_substituted": Decimal(
+            1 if expiry_sel.is_holiday_substituted else 0
+        ),
+        "is_monthly_substituted": Decimal(
+            1 if expiry_sel.is_monthly_substituted else 0
+        ),
+    }
+    if expiry_sel.audit_note and "Fallback expiry" in expiry_sel.audit_note:
+        extra_components["m2_expiry_fallback"] = Decimal(1)
+    extra_components.update(pass_tags)
+    binding_reasons = tuple(
+        dict.fromkeys((*direction_tags, *fallback_reasons))
+    )
     binding = CandidateBinding(
         strategy_id="positional_long_option",
         binding_version=policy.binding_version,
         selected_symbols=(selected_symbol,),
         score=score,
         eligible=True,
+        reason_codes=binding_reasons,
         rejected_symbols=rejected,
     )
     return BoundCandidates(
@@ -1417,15 +1442,7 @@ def bind_m2_long_option(
             rejected=rejected,
             p1=p1,
             dte=expiry_sel.dte,
-            extra_score_components={
-                "m2_dte": Decimal(expiry_sel.dte or 0),
-                "is_holiday_substituted": Decimal(
-                    1 if expiry_sel.is_holiday_substituted else 0
-                ),
-                "is_monthly_substituted": Decimal(
-                    1 if expiry_sel.is_monthly_substituted else 0
-                ),
-            },
+            extra_score_components=extra_components,
         ),
     )
 
@@ -1577,7 +1594,11 @@ def bind_m1_cas_option(
 
 
 def _common_reason(  # noqa: PLR0911 - explicit fail-closed gate precedence
-    candidate: FeatureSnapshot, policy: IdentificationPolicy
+    candidate: FeatureSnapshot,
+    policy: IdentificationPolicy,
+    *,
+    min_open_interest: int | None = None,
+    max_spread_fraction: Decimal | None = None,
 ) -> ReasonCode | None:
     derivatives = candidate.derivatives
     if (
@@ -1591,10 +1612,12 @@ def _common_reason(  # noqa: PLR0911 - explicit fail-closed gate precedence
         return ReasonCode.INSTRUMENT_UNKNOWN
     if candidate.features.get("top_of_book_observed", _ZERO) != 1:
         return ReasonCode.PRICE_UNAVAILABLE
-    if (
-        derivatives.open_interest is None
-        or derivatives.open_interest < policy.contracts.min_open_interest
-    ):
+    oi_floor = (
+        policy.contracts.min_open_interest
+        if min_open_interest is None
+        else min_open_interest
+    )
+    if derivatives.open_interest is None or derivatives.open_interest < oi_floor:
         return ReasonCode.DEPTH_INSUFFICIENT
     greeks = derivatives.greeks
     if (
@@ -1607,7 +1630,12 @@ def _common_reason(  # noqa: PLR0911 - explicit fail-closed gate precedence
     spread = _spread_fraction(candidate)
     if spread is None:
         return ReasonCode.PRICE_UNAVAILABLE
-    if spread > policy.contracts.max_spread_fraction:
+    spread_cap = (
+        policy.contracts.max_spread_fraction
+        if max_spread_fraction is None
+        else max_spread_fraction
+    )
+    if spread > spread_cap:
         return ReasonCode.SPREAD_TOO_WIDE
     return None
 
@@ -1969,6 +1997,104 @@ def _direction_type(market: MarketState) -> OptionType | None:
     if market.trend.value == "DOWN":
         return OptionType.PUT
     return None
+
+
+def _m2_selection_passes(
+    policy: IdentificationPolicy,
+    *,
+    discovery_config: DiscoveryConfig | None,
+    entry_profile: EntryProfile,
+) -> tuple[_M2SelectionPass, ...]:
+    if discovery_config is not None and entry_profile is EntryProfile.DISCOVERY:
+        selection = discovery_config.selection
+        strict = _m2_pass_from_discovery(selection, strict=True)
+        fallback = _m2_pass_from_discovery(selection, strict=False)
+        return (strict, fallback)
+    strict = _M2SelectionPass(
+        delta_min=_M2_STRICT_DELTA[0],
+        delta_max=_M2_STRICT_DELTA[1],
+        min_open_interest=policy.contracts.min_open_interest,
+        max_spread_fraction=policy.contracts.max_spread_fraction,
+        dte_min=0,
+        dte_max=365,
+        label="strict",
+    )
+    return (strict,)
+
+
+def _m2_pass_from_discovery(
+    selection: DiscoverySelectionConfig, *, strict: bool
+) -> _M2SelectionPass:
+    delta = selection.m2_delta.strict if strict else selection.m2_delta.fallback
+    dte = selection.weekly_dte.strict if strict else selection.weekly_dte.fallback
+    oi = (
+        selection.min_open_interest.strict
+        if strict
+        else selection.min_open_interest.fallback
+    )
+    spread = (
+        selection.max_spread_fraction.strict
+        if strict
+        else selection.max_spread_fraction.fallback
+    )
+    return _M2SelectionPass(
+        delta_min=delta[0],
+        delta_max=delta[1],
+        min_open_interest=oi,
+        max_spread_fraction=spread,
+        dte_min=dte[0],
+        dte_max=dte[1],
+        label="strict" if strict else "fallback",
+    )
+
+
+def _m2_survivors(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    option_type: OptionType,
+    pass_cfg: _M2SelectionPass,
+    policy: IdentificationPolicy,
+) -> tuple[FeatureSnapshot, ...]:
+    survivors: list[FeatureSnapshot] = []
+    for item in candidates:
+        if item.contract.option_type is not option_type:
+            continue
+        if _common_reason(
+            item,
+            policy,
+            min_open_interest=pass_cfg.min_open_interest,
+            max_spread_fraction=pass_cfg.max_spread_fraction,
+        ) is not None:
+            continue
+        derivatives = item.derivatives
+        if derivatives is None:
+            continue
+        if not (
+            pass_cfg.dte_min
+            <= derivatives.days_to_expiry
+            <= pass_cfg.dte_max
+        ):
+            continue
+        if not _abs_delta_in_range(
+            item, pass_cfg.delta_min, pass_cfg.delta_max
+        ):
+            continue
+        survivors.append(item)
+    return tuple(survivors)
+
+
+def _pick_closest_delta(
+    candidates: tuple[FeatureSnapshot, ...],
+    *,
+    target: Decimal = _M2_TARGET_DELTA,
+) -> FeatureSnapshot:
+    return min(
+        candidates,
+        key=lambda item: (
+            abs((_abs_delta(item) or _ZERO) - target),
+            item.contract.symbol,
+        ),
+    )
 
 
 def _abs_delta(candidate: FeatureSnapshot) -> Decimal | None:
