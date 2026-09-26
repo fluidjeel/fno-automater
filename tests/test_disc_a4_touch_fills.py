@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
@@ -185,7 +186,7 @@ class TestIronCondorProtectionFirst:
     def test_entry_long_wings_before_shorts_and_exit_covers_shorts_first(
         self, tmp_path: Path
     ) -> None:
-        clock = FrozenClock(f.NOW)
+        clock = FrozenClock(f.NOW + timedelta(seconds=60))
         store_path = tmp_path / "condor.sqlite"
         from trading.storage.trading_store import TradingStore
 
