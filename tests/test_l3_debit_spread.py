@@ -115,7 +115,7 @@ def test_neutral_emits_nothing() -> None:
     ctx = _ctx(_bull_call(), underlying=_underlying("24000", "24000"))
     decision = DebitSpreadStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.DIRECTION_NEUTRAL
 
 
 def test_deterministic_intent_id() -> None:
@@ -154,7 +154,7 @@ def test_candidates_are_always_the_type_the_read_requires() -> None:
     """
     decision = DebitSpreadStrategy().evaluate(_ctx(_bear_put()))
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.OPTION_TYPE_MISMATCH
 
 
 def test_bearish_read_over_call_candidates_emits_nothing() -> None:
@@ -162,7 +162,7 @@ def test_bearish_read_over_call_candidates_emits_nothing() -> None:
     ctx = _ctx(_bull_call(), underlying=_underlying("23900", "24000"))
     decision = DebitSpreadStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.OPTION_TYPE_MISMATCH
 
 
 def test_emitted_legs_always_match_the_setup_code() -> None:

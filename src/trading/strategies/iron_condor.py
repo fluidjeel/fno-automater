@@ -124,7 +124,7 @@ class IronCondorStrategy:
             return self._reject(
                 decision,
                 ctx,
-                ReasonCode.DATA_INVALID,
+                ReasonCode.REGIME_NOT_RANGE,
                 f"iron condor requires neutral regime, got {macro_bias.value}",
             )
 

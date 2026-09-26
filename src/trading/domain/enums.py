@@ -28,6 +28,8 @@ __all__ = [
     "DeskRole",
     "DifferenceClass",
     "DirectionalClaim",
+    "DiscoveryDecisionKind",
+    "DiscoveryStage",
     "DriverCode",
     "EligibilityStatus",
     "EntryGateId",
@@ -137,6 +139,29 @@ class EntryProfile(StrEnum):
 
     STRICT = "STRICT"
     DISCOVERY = "DISCOVERY"
+
+
+@unique
+class DiscoveryDecisionKind(StrEnum):
+    """Outcome class for a durable decision record."""
+
+    TRADE = "TRADE"
+    NO_TRADE = "NO_TRADE"
+    BLOCKED_HARD = "BLOCKED_HARD"
+
+
+@unique
+class DiscoveryStage(StrEnum):
+    """Pipeline stage where a decision record was emitted."""
+
+    DATA = "DATA"
+    DIRECTION = "DIRECTION"
+    BIND = "BIND"
+    STRATEGY = "STRATEGY"
+    ARBITER = "ARBITER"
+    RISK = "RISK"
+    FILL = "FILL"
+    EXIT = "EXIT"
 
 
 @unique
@@ -776,6 +801,10 @@ class ReasonCode(StrEnum):
     DIRECTION_UNRESOLVED = "DIRECTION_UNRESOLVED"
     DIRECTION_NEUTRAL = "DIRECTION_NEUTRAL"
     OPTION_TYPE_MISMATCH = "OPTION_TYPE_MISMATCH"
+    MICROSTRUCTURE_UNCONFIRMED = "MICROSTRUCTURE_UNCONFIRMED"
+    CONVICTION_BELOW_THRESHOLD = "CONVICTION_BELOW_THRESHOLD"
+    REGIME_NOT_RANGE = "REGIME_NOT_RANGE"
+    VOL_COMPRESSED = "VOL_COMPRESSED"
     M2_DELTA_FALLBACK = "M2_DELTA_FALLBACK"
     CLOCK_DRIFT = "CLOCK_DRIFT"
     SNAPSHOT_MISMATCH = "SNAPSHOT_MISMATCH"

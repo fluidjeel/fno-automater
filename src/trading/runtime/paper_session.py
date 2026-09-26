@@ -438,6 +438,12 @@ class PaperSession:
             result = self._runner.run_cycle(requests)
             self._results.append(result)
             self._runner.persist_cycle_evidence(result, as_of=now)
+            self._runner.persist_discovery_decisions(
+                result,
+                requests,
+                as_of=now,
+                market_state=self._latest_market_state,
+            )
             for outcome in result.outcomes:
                 experiment_id = next(
                     (

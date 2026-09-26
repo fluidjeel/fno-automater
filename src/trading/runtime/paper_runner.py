@@ -55,6 +55,7 @@ from trading.domain.enums import (
     CarryGateAction,
     DeskRole,
     DifferenceClass,
+    DiscoveryStage,
     EntryProfile,
     Exchange,
     ExecutionMode,
@@ -114,6 +115,10 @@ from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequ
 from trading.risk.gate_profile import is_soft, partition_reasons
 from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
+from trading.runtime.discovery_decision_recorder import (
+    persist_cycle_decisions,
+    persist_exit_decision,
+)
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.review_schedule import ReviewSlot
 from trading.safety import ReadinessEvaluator, ReadinessRequest, SafetyControls
@@ -133,7 +138,7 @@ from trading.trade.carry_gate import (
     load_carry_gate_config,
     resolve_carry_market,
 )
-from trading.trade.exits import ExitEvaluation, ExitKind
+from trading.trade.exits import ExitEvaluation, ExitKind, strategy_unrealized_pnl
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
@@ -253,6 +258,62 @@ class PaperStrategyOutcome:
     route_decision: RouteDecision | None = None
     decision_quotes: tuple[tuple[str, MarketQuote], ...] = ()
     execution_mode: ExecutionMode = ExecutionMode.PAPER
+    mode_id: ModeId | None = None
+    family_id: FamilyId | None = None
+    experiment_id: str | None = None
+    rejection_details: tuple[str, ...] = ()
+    strict_would_block: tuple[ReasonCode, ...] = ()
+    binding_reason_codes: tuple[ReasonCode, ...] = ()
+    record_stage: DiscoveryStage | None = None
+
+
+def _outcome_from_request(
+    request: PaperStrategyRequest,
+    *,
+    strategy_id: str,
+    snapshot_id: str,
+    intents: tuple[TradeIntent, ...],
+    rejection_reasons: tuple[ReasonCode, ...],
+    decisions: tuple[RiskDecision, ...],
+    order_events: tuple[OrderEvent, ...],
+    entry_blocked_reasons: tuple[ReasonCode, ...] = (),
+    strategy_version: str = "unknown",
+    executed: bool = True,
+    setup_features: SetupFeatures | None = None,
+    route_decision: RouteDecision | None = None,
+    decision_quotes: tuple[tuple[str, MarketQuote], ...] = (),
+    execution_mode: ExecutionMode | None = None,
+    rejection_details: tuple[str, ...] = (),
+    strict_would_block: tuple[ReasonCode, ...] = (),
+    record_stage: DiscoveryStage | None = None,
+) -> PaperStrategyOutcome:
+    """Attach request lineage so decision records can key (mode, family)."""
+    return PaperStrategyOutcome(
+        strategy_id=strategy_id,
+        snapshot_id=snapshot_id,
+        intents=intents,
+        rejection_reasons=rejection_reasons,
+        decisions=decisions,
+        order_events=order_events,
+        entry_blocked_reasons=entry_blocked_reasons,
+        strategy_version=strategy_version,
+        executed=executed,
+        setup_features=setup_features
+        if setup_features is not None
+        else request.setup_features,
+        route_decision=route_decision
+        if route_decision is not None
+        else request.route_decision,
+        decision_quotes=decision_quotes or _decision_quotes(request),
+        execution_mode=execution_mode or request.execution_mode,
+        mode_id=request.forced_mode_id,
+        family_id=request.forced_family_id,
+        experiment_id=request.experiment_id,
+        rejection_details=rejection_details,
+        strict_would_block=strict_would_block,
+        binding_reason_codes=request.binding_reason_codes,
+        record_stage=record_stage,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +368,8 @@ class _StrategyEvalRecord:
     early_outcome: PaperStrategyOutcome | None = None
     intents: tuple[TradeIntent, ...] = ()
     rejection_reasons: tuple[ReasonCode, ...] = ()
+    rejection_details: tuple[str, ...] = ()
+    strict_would_block: tuple[ReasonCode, ...] = ()
     strategy: object | None = None
     portfolio: object | None = None
     can_execute: bool = False
@@ -368,6 +431,12 @@ class PaperRunner:
             if discovery_config is not None
             else EntryProfile.STRICT
         )
+        self._profile_version = (
+            discovery_config.profile_version
+            if discovery_config is not None
+            else "strict"
+        )
+        self._code_version = account_config.version
         self._exit_depth_gaps: tuple[str, ...] = ()
         self._readiness = ReadinessEvaluator()
         reservations = CapitalReservationService(
@@ -503,6 +572,30 @@ class PaperRunner:
             entries_blocked=entries_blocked,
             route_decision=route_decision,
             arbitration_result=arb_result,
+        )
+
+    def persist_discovery_decisions(
+        self,
+        result: PaperCycleResult,
+        requests: Sequence[PaperStrategyRequest],
+        *,
+        as_of: datetime,
+        market_state: MarketState | None = None,
+    ) -> tuple[int, ...]:
+        """Append one DISCOVERY_DECISION per evaluated (mode, family) pair."""
+        cycle_id = self._ids.new_id("CYC")
+        return persist_cycle_decisions(
+            self._services.store,
+            self._ids,
+            result,
+            tuple(requests),
+            cycle_id=cycle_id,
+            as_of=as_of,
+            profile_version=self._profile_version,
+            code_version=self._code_version,
+            entry_profile=self._entry_profile,
+            discovery_config=self._discovery_config,
+            market_state=market_state,
         )
 
     def persist_cycle_evidence(
@@ -799,6 +892,23 @@ class PaperRunner:
                 intent,
                 leg_snapshots=leg_snapshots,
             )
+            if evaluation.should_exit:
+                monitor = feature.market.last
+                pnl = strategy_unrealized_pnl(position, intent, leg_snapshots)
+                persist_exit_decision(
+                    self._services.store,
+                    self._ids,
+                    cycle_id=self._ids.new_id("CYC"),
+                    as_of=self._clock.now_utc(),
+                    profile_version=self._profile_version,
+                    code_version=self._code_version,
+                    intent=intent,
+                    position=position,
+                    exit_kind=evaluation.kind,
+                    detail=evaluation.detail,
+                    monitor_price=monitor,
+                    realized_pnl=pnl,
+                )
             if not evaluation.should_exit and evaluation.updated_policy is None:
                 continue
             updated = self._services.trade_manager.apply_exit_evaluation(
@@ -2333,7 +2443,8 @@ class PaperRunner:
             )
         )
         if not readiness.entries_permitted:
-            early = PaperStrategyOutcome(
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -2342,15 +2453,13 @@ class PaperRunner:
                 order_events=(),
                 entry_blocked_reasons=readiness.reason_codes,
                 executed=request.execute,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                record_stage=DiscoveryStage.DATA,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
         if not request.candidates and request.binding_reason_codes:
-            early = PaperStrategyOutcome(
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -2359,16 +2468,14 @@ class PaperRunner:
                 order_events=(),
                 entry_blocked_reasons=request.binding_reason_codes,
                 executed=request.execute,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                record_stage=DiscoveryStage.BIND,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
         p0_block = self._paper_p0_block_reasons(request, skip_margin=True)
         if p0_block and request.execute:
-            early = PaperStrategyOutcome(
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -2377,17 +2484,15 @@ class PaperRunner:
                 order_events=(),
                 entry_blocked_reasons=p0_block,
                 executed=request.execute,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                record_stage=DiscoveryStage.DATA,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
         try:
             strategy = build_strategy(request.strategy_id)
         except KeyError:
-            early = PaperStrategyOutcome(
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -2395,10 +2500,7 @@ class PaperRunner:
                 decisions=(),
                 order_events=(),
                 executed=request.execute,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                rejection_details=("unknown strategy_id",),
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
@@ -2423,6 +2525,7 @@ class PaperRunner:
             forced_mode_id=request.forced_mode_id,
             forced_family_id=request.forced_family_id,
             campaign_id=request.campaign_id,
+            binding_reason_codes=request.binding_reason_codes,
         )
 
         if request.shortlist is not None:
@@ -2489,8 +2592,22 @@ class PaperRunner:
             for intent in decision.intents
         )
         rejection_reasons = tuple(item.reason for item in decision.rejections)
+        rejection_details = tuple(item.detail for item in decision.rejections)
+        strict_would_block = decision.strict_would_block
         if not decision.intents:
-            early = PaperStrategyOutcome(
+            stage = (
+                DiscoveryStage.DIRECTION
+                if any(
+                    code in rejection_reasons
+                    for code in (
+                        ReasonCode.DIRECTION_NEUTRAL,
+                        ReasonCode.DIRECTION_UNRESOLVED,
+                    )
+                )
+                else DiscoveryStage.STRATEGY
+            )
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=(),
@@ -2499,15 +2616,15 @@ class PaperRunner:
                 order_events=(),
                 strategy_version=getattr(strategy, "strategy_version", "unknown"),
                 executed=request.execute,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                rejection_details=rejection_details,
+                strict_would_block=strict_would_block,
+                record_stage=stage,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
         if not request.execute:
-            early = PaperStrategyOutcome(
+            early = _outcome_from_request(
+                request,
                 strategy_id=request.strategy_id,
                 snapshot_id=request.underlying.snapshot_id,
                 intents=intents,
@@ -2516,10 +2633,8 @@ class PaperRunner:
                 order_events=(),
                 strategy_version=getattr(strategy, "strategy_version", "unknown"),
                 executed=False,
-                setup_features=request.setup_features,
-                route_decision=request.route_decision,
-                decision_quotes=_decision_quotes(request),
-                execution_mode=request.execution_mode,
+                rejection_details=rejection_details,
+                strict_would_block=strict_would_block,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
 
@@ -2527,6 +2642,8 @@ class PaperRunner:
             request=request,
             intents=intents,
             rejection_reasons=rejection_reasons,
+            rejection_details=rejection_details,
+            strict_would_block=strict_would_block,
             strategy=strategy,
             portfolio=portfolio,
             can_execute=True,
@@ -2617,7 +2734,20 @@ class PaperRunner:
             events = self._submit(intent, risk, request)
             order_events.extend(events)
 
-        return PaperStrategyOutcome(
+        strict_shadows = tuple(
+            dict.fromkeys(
+                (
+                    *rec.strict_would_block,
+                    *(
+                        code
+                        for decision in risk_decisions
+                        for code in decision.strict_would_block
+                    ),
+                )
+            )
+        )
+        return _outcome_from_request(
+            request,
             strategy_id=request.strategy_id,
             snapshot_id=request.underlying.snapshot_id,
             intents=intents,
@@ -2626,10 +2756,8 @@ class PaperRunner:
             order_events=tuple(order_events),
             strategy_version=getattr(strategy, "strategy_version", "unknown"),
             executed=True,
-            setup_features=request.setup_features,
-            route_decision=request.route_decision,
-            decision_quotes=_decision_quotes(request),
-            execution_mode=request.execution_mode,
+            rejection_details=rec.rejection_details,
+            strict_would_block=strict_shadows,
         )
 
     def _run_strategy(

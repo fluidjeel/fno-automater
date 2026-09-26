@@ -151,14 +151,14 @@ def test_neutral_emits_nothing() -> None:
         _ctx(_bull_put(), underlying=_underlying("24000", "24000"))
     )
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.DIRECTION_NEUTRAL
 
 
 def test_option_type_mismatch_emits_nothing() -> None:
     # Bullish read, but the caller supplied calls instead of puts.
     decision = MultiLegOptionsStrategy().evaluate(_ctx(_bear_call()))
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.OPTION_TYPE_MISMATCH
 
 
 def test_mixed_option_types_are_rejected() -> None:

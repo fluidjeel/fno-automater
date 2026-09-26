@@ -171,7 +171,7 @@ def test_neutral_emits_nothing() -> None:
         _ctx((_option(OptionType.CALL),), underlying=_underlying("24000", "24000"))
     )
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.DIRECTION_NEUTRAL
 
 
 def test_mandatory_time_exit_is_short_and_dated_from_now() -> None:
@@ -306,14 +306,14 @@ def test_microstructure_disagreement_emits_nothing() -> None:
     )
     decision = CasMicrostructureStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.MICROSTRUCTURE_UNCONFIRMED
 
 
 def test_option_type_mismatch_emits_nothing() -> None:
     ctx = _ctx((_option(OptionType.PUT),))
     decision = CasMicrostructureStrategy().evaluate(ctx)
     assert not decision.emits_intent
-    assert decision.rejections == ()
+    assert decision.rejections[0].reason is ReasonCode.MICROSTRUCTURE_UNCONFIRMED
 
 
 def test_fresh_bearish_macro_overrides_bullish_technical() -> None:

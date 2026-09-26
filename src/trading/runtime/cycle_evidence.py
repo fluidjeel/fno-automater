@@ -31,6 +31,7 @@ def build_cycle_evidence(
             execution_mode=outcome.execution_mode,
             executed=outcome.executed,
             rejection_reasons=outcome.rejection_reasons,
+            rejection_details=tuple(outcome.rejection_details),
             entry_blocked_reasons=outcome.entry_blocked_reasons,
             intent_count=len(outcome.intents),
             setup_features=outcome.setup_features,

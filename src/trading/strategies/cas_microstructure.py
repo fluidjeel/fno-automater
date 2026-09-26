@@ -201,16 +201,26 @@ class CasMicrostructureStrategy:
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
         )
         if bias is MacroBias.NEUTRAL:
-            return decision  # no directional signal: no trade, not an error
+            return self._reject(
+                decision, ctx, ReasonCode.DIRECTION_NEUTRAL, "direction neutral"
+            )
 
         option = ctx.candidates[0]
         option_type = _option_type_for(bias)
-        mismatched = (
-            option.contract.option_type is not option_type
-            or not self._microstructure_confirms(ctx.underlying, bias)
-        )
-        if mismatched:
-            return decision  # candidate or measured pressure: no trade, not an error
+        if option.contract.option_type is not option_type:
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.MICROSTRUCTURE_UNCONFIRMED,
+                "candidate option type or microstructure did not confirm direction",
+            )
+        if not self._microstructure_confirms(ctx.underlying, bias):
+            return self._reject(
+                decision,
+                ctx,
+                ReasonCode.MICROSTRUCTURE_UNCONFIRMED,
+                "CAS microstructure pressure did not confirm direction",
+            )
 
         intent = self._build_intent(ctx, option, bias, option_type, confidence)
         return StrategyDecision(
