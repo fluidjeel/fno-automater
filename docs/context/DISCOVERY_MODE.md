@@ -79,14 +79,16 @@ How lots are set:
   with a **minimum of 1 lot**.
 - If one lot already costs more than the guide, the system still takes 1 lot
   and tags it `ONE_LOT_OVER_GUIDE`.
-- **Bug guard:** one trade may not risk more than 10% of mode equity (₹70,000
-  at start). Anything larger is almost certainly a data or pricing bug. It is
-  blocked with a reason.
-- A new entry is blocked when that mode's open risk would pass 12% of its
-  equity.
+- **Bug guard (soft):** one trade may not risk more than 10% of mode equity
+  (₹70,000 at start) under STRICT. In DISCOVERY the guard downsizes to 1 lot
+  and records `strict_would_block`; it never rejects.
+- **Open-risk cap (soft):** the 12% per-mode cap may downsize lots but never
+  rejects. Exceeding the cap records `strict_would_block`.
 - **No daily loss stop** in DISCOVERY. The manual kill switch and
   `new_entries_enabled: false` still work. A Telegram alert (no block) fires
   when a mode's equity falls 20% below ₹7L.
+- **Daily entry cap and max open positions (soft):** counted for telemetry
+  only; they record `strict_would_block` but do not suppress candidates.
 
 The per-trade guide, open-risk cap, trade caps and bug guard are config
 values, not code constants.
@@ -115,13 +117,18 @@ values, not code constants.
 - Recovery or reconciliation incomplete, storage failure, or unknown order
   outcome.
 - Outside the mode's entry window. M1 time exit stays at or before 15:25.
-- Bug guard, per-mode open-risk cap, daily entry cap, max open positions.
 - An identical position (same contracts, same side) is already open in the
   same mode.
 - The family is `SUSPENDED` (calendars), or entries are disabled manually.
 
 **Soft rules no longer block.** They are still evaluated and recorded as
 `strict_would_block`:
+
+- Bug guard (`bug_guard_trade_risk_fraction`): downsize to ≥1 lot.
+- Per-mode open-risk cap (`open_risk_cap`): may downsize; never reject.
+- Daily entry cap and max open positions per mode.
+- Capital reservation shortfalls (`CAPITAL_UNAVAILABLE`) and all STRICT portfolio
+  overlays listed below.
 
 - Event blackout and event caution.
 - `MIN_LOT_EXCEEDS_BUDGET` under strict budgets.

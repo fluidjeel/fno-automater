@@ -169,7 +169,7 @@ class TestDiscoverySizingFormula:
         assert result.approved_lots == 1
         assert result.one_lot_over_guide is True
 
-    def test_bug_guard_rejects_seventy_five_thousand_one_lot(self) -> None:
+    def test_bug_guard_records_shadow_at_one_lot(self) -> None:
         ledger = _m4_ledger()
         bug_cap = discovery_bug_guard_cap(ledger, DISCOVERY_CFG)
         assert bug_cap == _money("70000")
@@ -181,11 +181,10 @@ class TestDiscoverySizingFormula:
             discovery=DISCOVERY_CFG,
             mode_id=ModeId.M4_STRATEGIC_POSITIONAL,
         )
-        assert not check.passed
-        assert ReasonCode.RISK_LIMIT_TRADE in check.reason_codes
+        assert check.passed
         assert "bug_guard_trade_risk_fraction" in check.applied_limits
 
-    def test_m2_open_risk_cap_rejects_while_m3_unaffected(self) -> None:
+    def test_m2_open_risk_cap_downsizes_with_shadow_while_m3_unaffected(self) -> None:
         ledger_m2 = ModeLedger(
             mode_id=ModeId.M2_DIRECTIONAL,
             allocated_capital=_money("700000"),
@@ -204,8 +203,8 @@ class TestDiscoverySizingFormula:
             discovery=DISCOVERY_CFG,
             mode_id=ModeId.M2_DIRECTIONAL,
         )
-        assert not check.passed
-        assert ReasonCode.RISK_LIMIT_PORTFOLIO in check.reason_codes
+        assert check.passed
+        assert "open_risk_cap" in check.applied_limits
 
         ledger_m3 = ModeLedger(
             mode_id=ModeId.M3_TACTICAL_POSITIONAL,
@@ -275,7 +274,7 @@ class TestDiscoveryGateway:
         assert ReasonCode.ONE_LOT_OVER_GUIDE in decision.reason_codes
         assert ReasonCode.MIN_LOT_EXCEEDS_BUDGET in decision.strict_would_block
 
-    def test_m2_open_risk_rejected_at_gateway(
+    def test_m2_open_risk_approves_at_gateway_with_shadow(
         self,
         store: TradingStore,
         broker: PaperBroker,
@@ -300,17 +299,17 @@ class TestDiscoveryGateway:
                 event_risk_state=f.event_risk_state(),
             )
         )
-        assert decision.action is RiskAction.REJECT
-        assert ReasonCode.RISK_LIMIT_PORTFOLIO in decision.reason_codes
+        assert decision.action in {RiskAction.APPROVE, RiskAction.RESIZE}
+        assert ReasonCode.RISK_LIMIT_PORTFOLIO in decision.strict_would_block
 
-    def test_concurrent_reservations_cannot_overspend_mode_cap(
+    def test_discovery_allows_oversubscribed_reservations(
         self,
         store: TradingStore,
         broker: PaperBroker,
         clock: FrozenClock,
         id_factory: SequentialIdFactory,
     ) -> None:
-        """Reservation before submit; concurrent proposals respect per-mode open risk."""
+        """DISCOVERY may exceed the 12% guide; STRICT reservation caps stay enforced."""
         book = FourModeBook(discovery_config=DISCOVERY_CFG)
         gateway = _discovery_gateway(store, broker, clock, id_factory, mode_book=book)
         legs = _straddle_leg_snapshots()
@@ -351,7 +350,7 @@ class TestDiscoveryGateway:
             if r.capital_reservation_id is not None
             and r.action in {RiskAction.APPROVE, RiskAction.RESIZE}
         ]
-        assert len(reserved) >= 1
+        assert len(reserved) == 2
         total_reserved = sum(
             (r.reserved_capital.amount for r in reserved if r.reserved_capital),
             Decimal("0"),
@@ -361,7 +360,7 @@ class TestDiscoveryGateway:
             DISCOVERY_CFG,
             ModeId.M4_STRATEGIC_POSITIONAL,
         )
-        assert total_reserved <= open_cap.amount
+        assert total_reserved > open_cap.amount * Decimal("0.5")
 
     def test_strict_path_unchanged_without_discovery_book(
         self,

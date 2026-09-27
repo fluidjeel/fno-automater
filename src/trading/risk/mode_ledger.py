@@ -340,6 +340,7 @@ class FourModeBook:
         amount: Money,
         *,
         global_cap: Money | None = None,
+        discovery_oversubscribe: bool = False,
     ) -> bool:
         """Reserve amount if available in mode (and under the global cap).
 
@@ -348,7 +349,7 @@ class FourModeBook:
         """
         with self._reserve_lock:
             ledger = self.get_ledger(mode_id)
-            if not ledger.can_reserve(amount):
+            if not discovery_oversubscribe and not ledger.can_reserve(amount):
                 return False
             if global_cap is not None:
                 projected = self.total_open_risk() + amount
