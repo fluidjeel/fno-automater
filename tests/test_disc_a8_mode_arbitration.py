@@ -142,8 +142,8 @@ class TestDiscA8CrossModeDuplicateAllowed:
 
 
 class TestDiscA8DailyEntryCap:
-    def test_m2_fifth_entry_rejected_m3_unaffected(self) -> None:
-        """M2 at daily cap rejects a 5th entry; M3 remains able to trade."""
+    def test_m2_fifth_entry_soft_warning_m3_unaffected(self) -> None:
+        """M2 at daily cap records DAILY_ENTRY_CAP shadow; M3 still trades."""
         arbiter = _discovery_arbiter()
         mode_daily_entries = {ModeId.M2_DIRECTIONAL: 4}
         fifth_m2 = _m2_long_call("INTENT-M2-5")
@@ -153,12 +153,13 @@ class TestDiscA8DailyEntryCap:
             now=NOW,
             mode_daily_entries=mode_daily_entries,
         )
-        assert {intent.intent_id for intent in result.approved_intents} == {
-            "INTENT-M3-OK"
-        }
-        assert len(result.suppressed_intents) == 1
-        assert result.suppressed_intents[0].reason_code is ReasonCode.DAILY_ENTRY_CAP
-        assert result.suppressed_intents[0].candidate_mode_id is ModeId.M2_DIRECTIONAL
+        approved_ids = {intent.intent_id for intent in result.approved_intents}
+        assert approved_ids == {"INTENT-M2-5", "INTENT-M3-OK"}
+        assert len(result.suppressed_intents) == 0
+        assert any(
+            warning.reason_code is ReasonCode.DAILY_ENTRY_CAP
+            for warning in result.soft_warnings
+        )
 
     def test_count_mode_entries_today_from_lifecycle(self, tmp_path: Path) -> None:
         clock = FrozenClock(NOW)

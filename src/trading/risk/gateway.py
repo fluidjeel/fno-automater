@@ -42,10 +42,10 @@ from trading.news.contracts import EventRiskState, EventRiskStatus, NewsQuality
 from trading.portfolio.campaign_drawdown import CampaignLedger
 from trading.research.registry import is_experimental_off_strict_book
 from trading.risk.discovery_sizing import (
+    apply_discovery_cap_sizing,
     apply_discovery_lots,
     collect_strict_would_block,
     discovery_guide_budget,
-    evaluate_discovery_hard_limits,
     rescale_approved_legs,
 )
 from trading.risk.gate_profile import is_soft, partition_reasons
@@ -563,6 +563,7 @@ class RiskGateway:
 
         strict_would_block: tuple[ReasonCode, ...] = ()
         approval_reasons: list[ReasonCode] = []
+        applied_limits: tuple[str, ...] = ()
         if (
             discovery_config is not None
             and intent.mode_id is not None
@@ -600,7 +601,7 @@ class RiskGateway:
                 else sizing.approved_legs,
                 net_delta_delta=sizing.net_delta_delta,
             )
-            limit_check = evaluate_discovery_hard_limits(
+            cap_sizing = apply_discovery_cap_sizing(
                 cost_per_lot=sizing.cost_per_lot,
                 recalculated_max_loss=sizing.recalculated_max_loss,
                 approved_lots=sizing.approved_lots,
@@ -608,15 +609,34 @@ class RiskGateway:
                 discovery=discovery_config,
                 mode_id=mode_id,
             )
-            if not limit_check.passed:
+            if cap_sizing.approved_lots <= 0:
                 return self._reject(
                     intent,
                     portfolio,
-                    reason_codes=limit_check.reason_codes,
-                    applied_limits=limit_check.applied_limits,
+                    reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
                     decided_at=now,
                     audit=audit,
                 )
+            if cap_sizing.approved_lots != sizing.approved_lots:
+                old_lots = sizing.approved_lots if sizing.approved_lots > 0 else 1
+                margin_per_lot = sizing.estimated_margin / old_lots
+                sizing = _SizingOutcome(
+                    approved_lots=cap_sizing.approved_lots,
+                    bounds=sizing.bounds,
+                    cost_per_lot=sizing.cost_per_lot,
+                    recalculated_max_loss=cap_sizing.recalculated_max_loss,
+                    estimated_margin=(
+                        margin_per_lot * cap_sizing.approved_lots
+                    ).quantized(Rounding.CEILING),
+                    approved_legs=rescale_approved_legs(
+                        sizing.approved_legs,
+                        cap_sizing.approved_lots,
+                    )
+                    if sizing.approved_legs
+                    else sizing.approved_legs,
+                    net_delta_delta=sizing.net_delta_delta,
+                )
+            applied_limits = cap_sizing.applied_limits
             strict_would_block = collect_strict_would_block(
                 intent,
                 portfolio,
@@ -631,6 +651,9 @@ class RiskGateway:
                 exposure_report=request.exposure_report,
                 campaign_id=request.campaign_id,
                 campaign_ledger=self._campaign_ledger,
+            )
+            strict_would_block = tuple(
+                dict.fromkeys((*cap_sizing.strict_would_block, *strict_would_block))
             )
             approval_reasons = [ReasonCode.OK]
             if discovery_sized.one_lot_over_guide:
@@ -687,13 +710,20 @@ class RiskGateway:
                         audit=audit,
                     )
             approval_reasons = list(limit_check.reason_codes)
+            applied_limits = limit_check.applied_limits
 
         decision_id = self._ids.new_id("DEC")
+        reservation_margin = limits.margin_available
+        if discovery_active and mode_ledger is not None:
+            reservation_margin = max(
+                reservation_margin,
+                mode_ledger.allocated_capital * 100,
+            )
         reservation = self._reservations.try_reserve(
             intent_id=intent.intent_id,
             strategy_id=intent.strategy_id,
             amount=sizing.recalculated_max_loss,
-            margin_available=limits.margin_available,
+            margin_available=reservation_margin,
             risk_decision_id=decision_id,
             mode_id=intent.mode_id,
             idempotency_key=intent.intent_id,
@@ -725,6 +755,7 @@ class RiskGateway:
                 intent.mode_id,
                 sizing.recalculated_max_loss,
                 global_cap=global_cap,
+                discovery_oversubscribe=discovery_active,
             ):
                 self._reservations.release(
                     reservation.reservation_id,
@@ -767,7 +798,7 @@ class RiskGateway:
             margin_required=sizing.estimated_margin,
             pre_trade_exposure=pre_trade,
             post_trade_projection=post_trade,
-            applied_limits=limit_check.applied_limits,
+            applied_limits=applied_limits,
             reason_codes=tuple(approval_reasons),
             strict_would_block=tuple(
                 dict.fromkeys((*early_strict_would_block, *strict_would_block))

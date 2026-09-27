@@ -26,7 +26,9 @@ from trading.risk.limits import (
 from trading.risk.mode_ledger import FourModeBook, ModeLedger
 
 __all__ = [
+    "DiscoveryCapSizingResult",
     "DiscoverySizingResult",
+    "apply_discovery_cap_sizing",
     "apply_discovery_lots",
     "collect_strict_would_block",
     "discovery_bug_guard_cap",
@@ -44,6 +46,16 @@ class DiscoverySizingResult:
     approved_lots: int
     recalculated_max_loss: Money
     one_lot_over_guide: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryCapSizingResult:
+    """Lots after soft cap downsizing plus strict_would_block shadows."""
+
+    approved_lots: int
+    recalculated_max_loss: Money
+    strict_would_block: tuple[ReasonCode, ...]
+    applied_limits: tuple[str, ...]
 
 
 def discovery_guide_budget(
@@ -103,6 +115,59 @@ def apply_discovery_lots(
     )
 
 
+def apply_discovery_cap_sizing(
+    *,
+    cost_per_lot: Money,
+    recalculated_max_loss: Money,
+    approved_lots: int,
+    mode_ledger: ModeLedger,
+    discovery: DiscoveryConfig,
+    mode_id: ModeId,
+) -> DiscoveryCapSizingResult:
+    """Downsize to soft caps; never reject when at least one lot is affordable."""
+    zero = Money.zero(cost_per_lot.currency)
+    if approved_lots <= 0:
+        return DiscoveryCapSizingResult(
+            approved_lots=0,
+            recalculated_max_loss=zero,
+            strict_would_block=(),
+            applied_limits=(),
+        )
+    shadow: list[ReasonCode] = []
+    applied: list[str] = []
+    lots = approved_lots
+    bug_cap = discovery_bug_guard_cap(mode_ledger, discovery)
+    if cost_per_lot > bug_cap:
+        lots = 1
+        shadow.append(ReasonCode.RISK_LIMIT_TRADE)
+        applied.append("bug_guard_trade_risk_fraction")
+    open_cap = discovery_open_risk_cap(mode_ledger, discovery, mode_id)
+    remaining = open_cap - mode_ledger.open_risk
+    if remaining.is_zero or remaining.is_negative:
+        lots = max(1, min(lots, 1))
+        shadow.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+        applied.append("open_risk_cap")
+    else:
+        cap_lots = max(1, floor_divide_money(remaining, cost_per_lot))
+        if cap_lots < lots:
+            lots = cap_lots
+            applied.append("open_risk_cap")
+            if (cost_per_lot * lots).quantized(Rounding.CEILING) > remaining:
+                shadow.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+    recalculated = (cost_per_lot * lots).quantized(Rounding.CEILING)
+    projected = mode_ledger.open_risk + recalculated
+    if projected > open_cap and ReasonCode.RISK_LIMIT_PORTFOLIO not in shadow:
+        shadow.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
+        if "open_risk_cap" not in applied:
+            applied.append("open_risk_cap")
+    return DiscoveryCapSizingResult(
+        approved_lots=lots,
+        recalculated_max_loss=recalculated,
+        strict_would_block=tuple(dict.fromkeys(shadow)),
+        applied_limits=tuple(applied),
+    )
+
+
 def evaluate_discovery_hard_limits(
     *,
     cost_per_lot: Money,
@@ -112,34 +177,31 @@ def evaluate_discovery_hard_limits(
     discovery: DiscoveryConfig,
     mode_id: ModeId,
 ) -> LimitEvaluation:
-    """Hard DISCOVERY gates: bug guard and per-mode open-risk cap."""
+    """DISCOVERY cap guide: downsize and record strict_would_block; never reject."""
     if approved_lots <= 0:
         return LimitEvaluation(
             passed=False,
             reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
             applied_limits=("minimum_lot",),
         )
-    reasons: list[ReasonCode] = []
-    applied: list[str] = []
-    bug_cap = discovery_bug_guard_cap(mode_ledger, discovery)
-    if cost_per_lot > bug_cap:
-        reasons.append(ReasonCode.RISK_LIMIT_TRADE)
-        applied.append("bug_guard_trade_risk_fraction")
-    open_cap = discovery_open_risk_cap(mode_ledger, discovery, mode_id)
-    projected_open = mode_ledger.open_risk + recalculated_max_loss
-    if projected_open > open_cap:
-        reasons.append(ReasonCode.RISK_LIMIT_PORTFOLIO)
-        applied.append("open_risk_cap")
-    if reasons:
+    capped = apply_discovery_cap_sizing(
+        cost_per_lot=cost_per_lot,
+        recalculated_max_loss=recalculated_max_loss,
+        approved_lots=approved_lots,
+        mode_ledger=mode_ledger,
+        discovery=discovery,
+        mode_id=mode_id,
+    )
+    if capped.approved_lots <= 0:
         return LimitEvaluation(
             passed=False,
-            reason_codes=tuple(reasons),
-            applied_limits=tuple(applied),
+            reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
+            applied_limits=("minimum_lot",),
         )
     return LimitEvaluation(
         passed=True,
         reason_codes=(ReasonCode.OK,),
-        applied_limits=(),
+        applied_limits=capped.applied_limits,
     )
 
 

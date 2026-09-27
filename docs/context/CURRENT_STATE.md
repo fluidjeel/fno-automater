@@ -1,10 +1,9 @@
 # Current State
 
-LAST_UPDATED: 2026-09-26
+LAST_UPDATED: 2026-09-27
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A0..A11_DONE; review fixes landed (EOD cohort IDs, per-mode feed
-errors, full-family decision matrix); Oracle rsync + restart still pending
-(DISC-A12)
+STATUS: DISC-A0..A11_DONE; DISC-A13_DONE (capital caps soft in DISCOVERY PAPER);
+Oracle rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
 
@@ -23,7 +22,8 @@ errors, full-family decision matrix); Oracle rsync + restart still pending
 | Books | Four independent ₹7L per mode; daily compounding from prior realised net |
 | Fills | `touch-v1` with `conservative-v1` shadow verdict |
 | Straddle/strangle | `PAPER` under DISCOVERY |
-| Calendars | `SUSPENDED` (unchanged) |
+| Calendars | `SUSPENDED` (dual-expiry lifecycle unproven; no change in A13) |
+| Capital caps in DISCOVERY | Soft only — downsize and/or `strict_would_block`; never reject |
 
 ## Mode stances (file and loaded)
 

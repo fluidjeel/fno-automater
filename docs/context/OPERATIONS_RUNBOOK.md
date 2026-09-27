@@ -116,7 +116,7 @@ Repeats for the same fault are suppressed for 15 minutes.
   `config/paper_session.yaml`, then
   `sudo systemctl restart fno-paper-session.service`. Positions opened under
   DISCOVERY keep their frozen exit policy after rollback; only new entries
-  revert to STRICT rules.
+  revert to STRICT rules (capital caps hard-block again).
 - Rollback to legacy one-winner router:
   `cp config/paper_session_legacy.yaml config/paper_session.yaml` then
   `sudo systemctl restart fno-paper-session.service`.

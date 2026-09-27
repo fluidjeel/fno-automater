@@ -292,16 +292,14 @@ class PortfolioArbiter:
                 daily_cap = self._discovery.modes[mode_id.value].max_new_entries_per_day
                 entries_today = mode_entry_counts.get(mode_id, 0)
                 if entries_today >= daily_cap:
-                    _log_suppression(
+                    _log_soft_warning(
                         reason_code=ReasonCode.DAILY_ENTRY_CAP,
                         incumbent_id=f"{mode_id.value}:{entries_today}",
                         detail=(
                             f"Daily entry cap {daily_cap} reached for {mode_id.value}; "
                             f"entries today: {entries_today}"
                         ),
-                        action="SUPPRESSED_DAILY_ENTRY_CAP",
                     )
-                    continue
                 open_cap = self._discovery.modes[mode_id.value].max_open_positions
                 open_count = mode_open_counts.get(mode_id, 0)
                 if open_count >= open_cap:
@@ -309,16 +307,14 @@ class PortfolioArbiter:
                         _first_mode_incumbent(existing_positions, approved, mode_id)
                         or f"{mode_id.value}_CAP"
                     )
-                    _log_suppression(
+                    _log_soft_warning(
                         reason_code=ReasonCode.OPEN_POSITION_CAP,
                         incumbent_id=incumbent_id,
                         detail=(
                             f"Open position cap {open_cap} reached for {mode_id.value}; "
                             f"incumbent: {incumbent_id}"
                         ),
-                        action="SUPPRESSED_OPEN_POSITION_CAP",
                     )
-                    continue
             elif (
                 candidate.mode_id is ModeId.M4_STRATEGIC_POSITIONAL
                 and count_m4_positions(

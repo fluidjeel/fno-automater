@@ -2,7 +2,7 @@
 
 ACTIVE_PLAN_VERSION: 15
 
-Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A12.
+Use statuses `READY`, `IN_PROGRESS`, `BLOCKED`, `DONE`. Next READY: DISC-A12 deploy (Oracle rsync pending).
 
 ## PAPER Discovery Mode (`docs/plans/DISCOVERY_MODE_STORIES.md`)
 
@@ -23,6 +23,7 @@ Sprint A is the Monday 2026-09-28 target.
 | DISC-A9 | DONE | Decision + reasoning record for every evaluation and exit |
 | DISC-A10 | DONE | Session survives feed errors (Fyers 401) |
 | DISC-A11 | DONE | `EXP-DISC` cohort identity; never promotion evidence |
+| DISC-A13 | DONE | DISCOVERY PAPER fully autonomous; capital/risk caps never hard-block entries; `strict_would_block` telemetry preserved |
 | DISC-A12 | READY | Deploy + Monday readiness (config in repo; review fixes: EOD cohort IDs, feed-error attribution, family matrix recording; Oracle rsync + restart pending) |
 | DISC-B1..B4 | BLOCKED | M1 poll, M3/M4 fallback, EOD report/alerts, dashboard |
 | DISC-C1..C3 | BLOCKED | Soft-rule evidence, tightening steps, trailing (optional) |
