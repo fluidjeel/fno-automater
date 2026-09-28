@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
-from trading.broker.paper import PaperBroker
+from trading.broker.paper import PaperBroker, repair_paper_broker_from_store
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
 from trading.config.discovery import DiscoveryConfig, load_discovery_config
@@ -40,7 +40,6 @@ from trading.domain.enums import (
     OrderState,
     ReasonCode,
     ReconciliationTrigger,
-    Severity,
     Side,
     TradeState,
 )
@@ -168,11 +167,7 @@ def retry_stuck_paper_exits(
     )
     if verbose:
         log.append(f"entries_released={not boot.result.entries_blocked}")
-    if ctx.state_path.parent.exists():
-        ctx.state_path.write_text(
-            json.dumps(ctx.broker.dump_state(), indent=2) + "\n",
-            encoding="utf-8",
-        )
+    ctx.broker.persist_state()
     ctx.store.close()
     return PaperExitRecoveryResult(
         trade_ids=tuple(recovered),
@@ -244,6 +239,13 @@ def _open_recovery_context(repo_root: Path, *, clock: Clock) -> _RecoveryContext
     state_path = repo_root / session_cfg.broker_state_path
     if state_path.is_file():
         broker.load_state(json.loads(state_path.read_text(encoding="utf-8")))
+    broker.bind_state_path(state_path)
+    repair_paper_broker_from_store(
+        broker,
+        store,
+        id_factory=ids,
+        clock=clock,
+    )
     runner = PaperRunner(
         account_config=account,
         risk_policy=risk,
@@ -521,30 +523,10 @@ def _is_stuck_exit_record(
     broker: PaperBroker,
     record: PositionLifecycleRecord,
 ) -> bool:
-    if record.position.state is TradeState.EXIT_PENDING:
-        return True
-    if record.exit_order_ids:
-        return True
-    scope = f"trade/{record.trade_id}/lifecycle"
-    if _has_unresolved_lifecycle_event(store, scope):
-        return True
+    """True only when a terminal-failed exit order or idempotency key blocks retry."""
     return _broker_has_failed_exit_orders(broker, record.trade_id) or bool(
         _exit_idempotency_keys_from_store(store, record.trade_id)
     )
-
-
-def _has_unresolved_lifecycle_event(store: TradingStore, scope: str) -> bool:
-    for stored in store.read_events():
-        if stored.event_type is not TradingEventType.RECONCILIATION_EVENT:
-            continue
-        event = stored.deserialize()
-        if not isinstance(event, ReconciliationEvent):
-            continue
-        if event.scope != scope:
-            continue
-        if event.severity is Severity.CRITICAL and not event.is_resolved:
-            return True
-    return False
 
 
 def _resolve_lifecycle_reconciliation(

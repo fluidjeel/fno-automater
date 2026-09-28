@@ -9,6 +9,7 @@ from pathlib import Path
 
 from trading.analytics.fills import simulate_fill
 from trading.broker.paper.fixtures import PaperBrokerFixtures
+from trading.broker.paper.persistence import atomic_write_json
 from trading.broker.ports import (
     BrokerError,
     BrokerFunds,
@@ -20,6 +21,7 @@ from trading.broker.ports import (
 )
 from trading.config.evaluation import FillModelConfig
 from trading.domain.clock import Clock
+from trading.domain.contracts import PositionLifecycleRecord
 from trading.domain.contracts.order import OrderCommand, OrderEvent
 from trading.domain.contracts.portfolio import (
     PendingOrderSummary,
@@ -37,7 +39,7 @@ from trading.domain.enums import (
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Money, Price
 
-__all__ = ["PaperBroker", "margin_preview_key"]
+__all__ = ["PaperBroker", "atomic_write_json", "margin_preview_key"]
 
 
 def margin_preview_key(symbol: str, side: Side, quantity_contracts: int) -> str:
@@ -72,6 +74,7 @@ class PaperBroker:
         shadow_fill_model: FillModelConfig | None = None,
         synthetic_margin: bool = False,
         future_margin_fraction: Decimal | None = None,
+        state_path: Path | None = None,
     ) -> None:
         self._clock = clock
         self._ids = id_factory
@@ -80,6 +83,7 @@ class PaperBroker:
         self._shadow_fill_model = shadow_fill_model
         self._synthetic_margin = synthetic_margin
         self._future_margin_fraction = future_margin_fraction
+        self._state_path = state_path
         self._quotes: dict[str, MarketQuote] = {}
         self._state = _PaperState(
             funds=fixtures.account,
@@ -177,6 +181,7 @@ class PaperBroker:
                 self._apply_fill(request, event, event.average_fill_price)
         self._state.orders_by_internal_id[order.identity.internal_order_id] = event
         self._state.orders_by_idempotency_key[key] = event
+        self.persist_state()
         return event
 
     def cancel(self, internal_order_id: str) -> OrderEvent:
@@ -204,7 +209,43 @@ class PaperBroker:
         self._state.orders_by_internal_id[internal_order_id] = cancelled
         key = existing.identity.idempotency_key
         self._state.orders_by_idempotency_key[key] = cancelled
+        self.persist_state()
         return cancelled
+
+    def bind_state_path(self, path: Path) -> None:
+        """Attach broker_state.json for atomic persistence after each mutation."""
+        self._state_path = path
+
+    def persist_state(self) -> None:
+        """Atomically write broker_state.json when a state path is configured."""
+        if self._state_path is None:
+            return
+        atomic_write_json(self._state_path, self.dump_state())
+
+    def import_order_event(self, event: OrderEvent, *, strategy_id: str) -> None:
+        """Restore one persisted fill into the broker mirror without resubmitting."""
+        key = event.identity.idempotency_key
+        if key in self._state.orders_by_idempotency_key:
+            return
+        self._state.orders_by_idempotency_key[key] = event
+        self._state.orders_by_internal_id[event.identity.internal_order_id] = event
+        if event.state is OrderState.FILLED and event.average_fill_price is not None:
+            self._apply_fill_from_event(event, strategy_id=strategy_id)
+
+    def import_positions_from_lifecycle(self, record: PositionLifecycleRecord) -> None:
+        """Overwrite broker legs for one trade from the persisted lifecycle snapshot."""
+        currency = self._state.funds.equity.currency
+        for leg in record.position.legs:
+            position_key = _position_key(record.trade_id, leg.contract.symbol)
+            self._state.positions[position_key] = PositionRecord(
+                trade_id=record.trade_id,
+                strategy_id=record.intent.strategy_id,
+                contract=leg.contract,
+                side=leg.side,
+                quantity_contracts=leg.quantity_contracts,
+                average_price=leg.average_entry_price,
+                unrealized_pnl=Money.zero(currency),
+            )
 
     def get_order(self, internal_order_id: str) -> OrderEvent | None:
         return self._state.orders_by_internal_id.get(internal_order_id)
@@ -338,6 +379,71 @@ class PaperBroker:
             key = event.identity.idempotency_key
             self._state.orders_by_idempotency_key[key] = event
             self._state.orders_by_internal_id[event.identity.internal_order_id] = event
+
+    def _apply_fill_from_event(self, event: OrderEvent, *, strategy_id: str) -> None:
+        command = event.command
+        trade_id = event.identity.trade_id
+        fill_price = event.average_fill_price
+        if fill_price is None:
+            raise BrokerError("filled order event is missing average_fill_price")
+        currency = self._state.funds.equity.currency
+        position_key = _position_key(trade_id, command.contract.symbol)
+        existing = self._state.positions.get(position_key)
+        closing = existing is not None and existing.side is not command.side
+        if existing is None:
+            self._state.positions[position_key] = PositionRecord(
+                trade_id=trade_id,
+                strategy_id=strategy_id,
+                contract=command.contract,
+                side=command.side,
+                quantity_contracts=command.quantity_contracts,
+                average_price=fill_price,
+                unrealized_pnl=Money.zero(currency),
+            )
+        elif closing:
+            remaining = existing.quantity_contracts - command.quantity_contracts
+            if command.quantity_contracts > existing.quantity_contracts:
+                raise BrokerError("close quantity exceeds open position")
+            if remaining == 0:
+                del self._state.positions[position_key]
+            else:
+                self._state.positions[position_key] = existing.model_copy(
+                    update={"quantity_contracts": remaining},
+                )
+        else:
+            self._state.positions[position_key] = self._merge_position(
+                existing,
+                command.quantity_contracts,
+                fill_price,
+            )
+
+        if closing and existing is not None:
+            margin_delta = self._margin_delta(
+                command,
+                command.quantity_contracts,
+                position_side=existing.side,
+            )
+        else:
+            margin_delta = self._margin_delta(command, command.quantity_contracts)
+        funds = self._state.funds
+        if closing:
+            if margin_delta.amount > funds.margin_used.amount:
+                margin_delta = funds.margin_used
+            self._state.funds = funds.model_copy(
+                update={
+                    "as_of": event.received_at,
+                    "margin_used": funds.margin_used - margin_delta,
+                    "margin_available": funds.margin_available + margin_delta,
+                }
+            )
+        else:
+            self._state.funds = funds.model_copy(
+                update={
+                    "as_of": event.received_at,
+                    "margin_used": funds.margin_used + margin_delta,
+                    "margin_available": funds.margin_available - margin_delta,
+                }
+            )
 
     def _apply_fill(
         self,

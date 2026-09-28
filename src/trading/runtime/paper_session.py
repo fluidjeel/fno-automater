@@ -18,7 +18,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from trading.broker.paper import PaperBroker
+from trading.broker.paper import PaperBroker, repair_paper_broker_from_store
 from trading.broker.ports import BrokerFunds
 from trading.config import load_config, load_evaluation_config, load_risk_policy
 from trading.config.discovery import (
@@ -431,7 +431,7 @@ class PaperSession:
             local = now.astimezone(self._zone)
             if self._past_eod(local.time()):
                 self._runner.flush_lifecycle()
-                self._persist_broker()
+                self._runner.broker.persist_state()
                 self._send_eod(now)
                 return 0
             in_window = self._open <= local.time() <= self._close
@@ -441,7 +441,6 @@ class PaperSession:
             if self._protection is not None:
                 self._protection.refresh_subscriptions()
                 self._protection.tick()
-            self._persist_broker()
             if once:
                 return 0
             self._sleeper(float(self._config.poll_interval_seconds))
@@ -733,15 +732,6 @@ class PaperSession:
         )
         self._eod_sent = True
 
-    def _persist_broker(self) -> None:
-        if self._broker_state_path is None:
-            return
-        self._broker_state_path.parent.mkdir(parents=True, exist_ok=True)
-        self._broker_state_path.write_text(
-            json.dumps(self._runner.broker.dump_state()),
-            encoding="utf-8",
-        )
-
 
 class _TelegramNotifier:
     def __init__(self, token: str, chat_id: str) -> None:
@@ -848,6 +838,13 @@ def run_paper_session(
     state_path = repo_root / session_cfg.broker_state_path
     if state_path.is_file():
         broker.load_state(json.loads(state_path.read_text(encoding="utf-8")))
+    broker.bind_state_path(state_path)
+    repair_paper_broker_from_store(
+        broker,
+        store,
+        id_factory=ids,
+        clock=clock,
+    )
     if not skip_auth:
         auth_status = run_telegram_auth(repo_root)
         if auth_status != 0:
