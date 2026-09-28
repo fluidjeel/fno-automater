@@ -39,6 +39,8 @@ fills:
   model: "touch-v1"
   shadow_model: "conservative-v1"
 soft_reason_codes:
+  - MARGIN_INSUFFICIENT
+  - MARGIN_OVERSUBSCRIBED
   - EVENT_BLACKOUT
   - MIN_LOT_EXCEEDS_BUDGET
   - DEPTH_INSUFFICIENT

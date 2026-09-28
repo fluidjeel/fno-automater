@@ -11,6 +11,7 @@ from trading.config.schema import RiskLimits
 from trading.domain.contracts.common import ExposureSnapshot
 from trading.domain.contracts.exposure import ExposureReport
 from trading.domain.contracts.intent import TradeIntent
+from trading.domain.contracts.margin_projection import MarginProjectionAdjustment
 from trading.domain.contracts.mode_policy import ModesConfig, load_modes_config
 from trading.domain.contracts.portfolio import PortfolioSnapshot, UnderlyingExposure
 from trading.domain.contracts.sizing import SizingLimits
@@ -28,6 +29,7 @@ __all__ = [
     "floor_divide_money",
     "open_trade_slots",
     "premium_budget_used",
+    "project_discovery_post_trade_exposure",
     "project_post_trade_exposure",
 ]
 
@@ -323,6 +325,43 @@ def project_post_trade_exposure(
         realized_pnl_today=exposure.realized_pnl_today,
         unrealized_pnl=exposure.unrealized_pnl,
     )
+
+
+def project_discovery_post_trade_exposure(
+    portfolio: PortfolioSnapshot,
+    *,
+    margin_required: Money,
+    premium_paid: Money,
+    net_delta_delta: int,
+) -> tuple[ExposureSnapshot, MarginProjectionAdjustment | None]:
+    """Project exposure under DISCOVERY, clamping negative broker margin."""
+    exposure = portfolio.exposure
+    pre_available = exposure.margin_available
+    raw_available = pre_available - margin_required
+    clamped_available = (
+        Money.zero(pre_available.currency)
+        if raw_available.is_negative
+        else raw_available
+    )
+    adjustment: MarginProjectionAdjustment | None = None
+    if raw_available.is_negative:
+        adjustment = MarginProjectionAdjustment(
+            pre_trade_margin_available=pre_available,
+            margin_required=margin_required,
+            oversubscription=(-raw_available).quantized(Rounding.CEILING),
+        )
+    snapshot = ExposureSnapshot(
+        as_of=exposure.as_of,
+        equity=exposure.equity,
+        margin_used=exposure.margin_used + margin_required,
+        margin_available=clamped_available,
+        open_trade_count=exposure.open_trade_count + 1,
+        net_delta=Decimal(exposure.net_delta) + Decimal(net_delta_delta),
+        gross_notional=exposure.gross_notional + premium_paid,
+        realized_pnl_today=exposure.realized_pnl_today,
+        unrealized_pnl=exposure.unrealized_pnl,
+    )
+    return snapshot, adjustment
 
 
 def evaluate_exposure_limits(
