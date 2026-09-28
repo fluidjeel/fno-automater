@@ -131,6 +131,14 @@ class DiscoverySelectionConfig(StrictModel):
     weekly_dte: DteBand
     near_strikes_each_side: StrictInt = Field(ge=0)
     following_week_strikes_each_side: StrictInt = Field(ge=0)
+    monthly_strikes_each_side: StrictInt | None = Field(default=None, ge=0)
+    monthly_chain_cache_ttl_seconds: StrictInt = Field(default=90, ge=1)
+
+    def monthly_strikes(self) -> int:
+        """Strike width for monthly chain fetch; defaults to following-week width."""
+        if self.monthly_strikes_each_side is not None:
+            return self.monthly_strikes_each_side
+        return self.following_week_strikes_each_side
 
 
 class DiscoveryDirectionConfig(StrictModel):

@@ -274,12 +274,20 @@ def _candidates_for_mode(
     """Filter the merged chain per mode.
 
     Following-week rows carry ≥7-DTE expiries when the loaded chain is nearer;
-    M2, M3 and M4 all need them. M1 CAS trades the near chain only.
+    M2, M3 and M4 all need them. M1 CAS trades the near chain only. Monthly
+    rows serve M3/M4 monthly DTE binders and must not alter M2 expiry semantics.
     """
     if mode_id is ModeId.M1_CAS:
         return tuple(
             item
             for item in candidates
             if item.features.get("following_week_chain", Decimal(0)) != Decimal(1)
+            and item.features.get("monthly_chain", Decimal(0)) != Decimal(1)
+        )
+    if mode_id is ModeId.M2_DIRECTIONAL:
+        return tuple(
+            item
+            for item in candidates
+            if item.features.get("monthly_chain", Decimal(0)) != Decimal(1)
         )
     return tuple(candidates)
