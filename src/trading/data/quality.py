@@ -114,7 +114,7 @@ def assess_option_chain(
     warmup_complete: bool = True,
 ) -> DataQualityReport:
     """Assign quality state from event age and payload completeness."""
-    age_ms = _age_ms(now, event.event_time)
+    age_ms = _age_ms(now, event.receive_time)
     strike_count = int(event.payload.get("strike_count", 0))
     return _report_for_age(
         age_ms=age_ms,
@@ -133,7 +133,7 @@ def assess_quote_snapshot(
     warmup_complete: bool = True,
 ) -> DataQualityReport:
     """Assign quality state for a quote snapshot."""
-    age_ms = _age_ms(now, event.event_time)
+    age_ms = _age_ms(now, event.receive_time)
     quote_count = int(event.payload.get("quote_count", 0))
     return _report_for_age(
         age_ms=age_ms,

@@ -172,16 +172,17 @@ def _status_capture(now: datetime, status: str = "OPEN") -> RawMarketCapture:
 
 
 def _stale_capture(now: datetime, *, age_seconds: int) -> RawMarketCapture:
-    """A chain received now but stamped in the past, so its age exceeds freshness."""
+    """A chain whose receive_time exceeds freshness; bar timestamps do not gate age."""
+    received_at = now - timedelta(seconds=age_seconds)
     payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
     data = payload.get("data")
     if isinstance(data, dict):
-        data["timestamp"] = int(now.timestamp()) - age_seconds
+        data["timestamp"] = int(received_at.timestamp())
     return RawMarketCapture(
         capture_id="cap-stale-1",
         provider="fyers",
         endpoint="/data/options-chain-v3",
-        received_at=now,
+        received_at=received_at,
         payload=payload,
         http_status=200,
     )
@@ -969,7 +970,7 @@ class TestPipelineAndReplay:
         ).replay(
             _underlying(),
             start=now.replace(hour=0),
-            end=now.replace(hour=23),
+            end=now,
         )
         assert len(replay.snapshots) == 1
         assert replay.snapshots[0].quality.state is DataQuality.STALE
@@ -982,7 +983,7 @@ class TestPipelineAndReplay:
         ).replay(
             _underlying(),
             start=now.replace(hour=0),
-            end=now.replace(hour=23),
+            end=now,
         )
         assert [item.model_dump_json() for item in again.snapshots] == [
             item.model_dump_json() for item in replay.snapshots
