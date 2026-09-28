@@ -371,11 +371,15 @@ def strategy_unrealized_pnl(
         return None
     leg_by_id = {leg.leg_id: leg for leg in position.legs}
     total = Decimal(0)
+    contributed = False
     for intent_leg in intent.legs:
         position_leg = leg_by_id.get(intent_leg.leg_id)
+        if position_leg is None:
+            continue
         snapshot = _snapshot_for_leg(intent_leg, leg_snapshots)
-        if position_leg is None or snapshot is None:
+        if snapshot is None:
             return None
+        contributed = True
         leg_pnl = _leg_unrealized_pnl(
             intent_leg.side,
             position_leg.average_entry_price,
@@ -385,6 +389,8 @@ def strategy_unrealized_pnl(
         if leg_pnl is None:
             return None
         total += leg_pnl
+    if not contributed:
+        return None
     return Money(total.quantize(Decimal("0.01")), Currency.INR)
 
 

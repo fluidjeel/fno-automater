@@ -1446,6 +1446,28 @@ def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ops_retry_stuck_paper_exits(args: argparse.Namespace) -> int:
+    """PAPER-only: retry stuck EXIT_PENDING legs at operator-supplied quotes."""
+    from trading.ops.paper_exit_recovery import retry_stuck_paper_exits
+
+    quotes_path = Path(args.quotes_json) if args.quotes_json else None
+    if quotes_path is not None and not quotes_path.is_absolute():
+        quotes_path = _repo_root() / quotes_path
+    result = retry_stuck_paper_exits(
+        _repo_root(),
+        quotes_json=quotes_path,
+        trade_id=args.trade_id or None,
+        dry_run=bool(args.dry_run),
+    )
+    print(result.detail)
+    if result.trade_ids:
+        print("closed:", ",".join(result.trade_ids))
+    if result.resolved_event_ids:
+        print("resolved:", ",".join(result.resolved_event_ids))
+    print(f"entries_released={result.entries_released}")
+    return 0
+
+
 def _cmd_ops_telegram_bot(args: argparse.Namespace) -> int:
     import threading
 
@@ -2094,6 +2116,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     alert_failure.add_argument("unit", help="systemd unit name")
     alert_failure.set_defaults(func=_cmd_ops_alert_unit_failure)
+
+    retry_exits = ops_sub.add_parser(
+        "retry-stuck-paper-exits",
+        help=(
+            "PAPER only: force-retry stuck EXIT_PENDING or rejected-exit trades "
+            "at current quotes and resolve lifecycle reconciliation events"
+        ),
+    )
+    retry_exits.add_argument(
+        "--quotes-json",
+        required=True,
+        help=(
+            "JSON map of symbol -> {bid, ask} with current exit prices "
+            "(e.g. data/paper/recovery_quotes.json)"
+        ),
+    )
+    retry_exits.add_argument(
+        "--trade-id",
+        default="",
+        help="optional single trade_id; default retries all stuck PAPER trades",
+    )
+    retry_exits.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list stuck trades without submitting exits",
+    )
+    retry_exits.set_defaults(func=_cmd_ops_retry_stuck_paper_exits)
 
     tg_bot = ops_sub.add_parser(
         "telegram-bot", help="run two-way interactive Telegram bot"

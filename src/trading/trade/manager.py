@@ -271,11 +271,11 @@ class TradeManager:
                 )
             self._positions[trade_id] = updated
             return updated
-        if (
-            event.state
-            in {OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED}
-            and position.state is TradeState.CLOSING
-        ):
+        if event.state in {
+            OrderState.REJECTED,
+            OrderState.CANCELLED,
+            OrderState.EXPIRED,
+        } and position.state in {TradeState.CLOSING, TradeState.EXIT_PENDING}:
             reopened = self._transition(
                 position,
                 TradeState.OPEN,
