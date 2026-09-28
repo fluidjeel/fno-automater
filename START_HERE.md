@@ -5,6 +5,9 @@ every live decision; AI improves research, context and evaluation outside the
 live path. This is an automated trading system with AI support, not an AI
 trading system.
 
+**Before changing paper runner, exits, protection, depth, or Discovery gates:**
+read [`docs/context/FIX_LOG.md`](docs/context/FIX_LOG.md).
+
 ## Layout
 
 | Path | Contents |

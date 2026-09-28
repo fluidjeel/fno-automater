@@ -29,6 +29,7 @@ Sprint A is the Monday 2026-09-28 target.
 | DISC-A16 | DONE | CAS depth dedup, DUPLICATE flag, top5 fix, multi-symbol health; stale-rank prune + qty-only slot drop |
 | DISC-A17 | DONE | Monthly-window chain fetch for M3/M4 binders (20-35 DTE); TTL cache; `monthly_chain` feature tag |
 | DISC-A20 | DONE | Protection monitor WS + REST quote delivery; `last_quote_at` heartbeat; held-leg subscriptions |
+| DOCS | DONE | `docs/context/FIX_LOG.md` — 2026-09-28 Discovery paper session findings |
 | DISC-A12 | READY | Deploy + Monday readiness (config in repo; review fixes: EOD cohort IDs, feed-error attribution, family matrix recording; Oracle rsync + restart pending) |
 | DISC-B1..B4 | BLOCKED | M1 poll, M3/M4 fallback, EOD report/alerts, dashboard |
 | DISC-C1..C3 | BLOCKED | Soft-rule evidence, tightening steps, trailing (optional) |
