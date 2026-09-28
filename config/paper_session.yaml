@@ -53,3 +53,8 @@ cas_event_driven:
   prefer_delta_min: "0.15"
   prefer_delta_max: "0.40"
   measured_latency_path: data/paper/m1_latency_report.json
+
+# Session startup takes ~60s before the first protection heartbeat; the
+# minute watchdog restarted it in a loop at the 30s default (2026-09-28).
+protection:
+  watchdog_max_silence_seconds: 180
