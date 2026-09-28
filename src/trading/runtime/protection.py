@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -68,6 +69,7 @@ class ProtectionCoordinator:
     _last_m1_symbol: str | None
     _last_m1_quote: MarketQuote | None
     _last_m1_received_at: datetime | None
+    _heartbeat_lock: threading.RLock
 
     def __init__(
         self,
@@ -90,6 +92,7 @@ class ProtectionCoordinator:
         self._pending_alerts = []
         self._last_heartbeat_write = None
         self._last_quote_at = None
+        self._heartbeat_lock = threading.RLock()
         self._dedupe = {}
         self._quotes_dirty = False
         self._pending_m1 = False
@@ -290,36 +293,43 @@ class ProtectionCoordinator:
         self._write_heartbeat()
 
     def _write_heartbeat(self, *, force: bool = False) -> None:
-        now = self.clock.now_utc()
-        if not force and self._last_heartbeat_write is not None:
-            elapsed = now - self._last_heartbeat_write
-            if elapsed < timedelta(seconds=self.config.heartbeat_interval_seconds):
-                return
-        open_count = self.runner.open_position_count()
-        heartbeat = ProtectionHeartbeat(
-            as_of=now,
-            open_positions=open_count,
-            monitor_active=self.config.enabled,
-            last_quote_at=self._last_quote_at,
-            ws_connected=self.ws.ws_connected if self.ws is not None else False,
-            protection_degraded=self.runner.protection_degraded,
-        )
-        self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
-        self.heartbeat_path.write_text(
-            heartbeat.model_dump_json(indent=2),
-            encoding="utf-8",
-        )
-        session_state = SessionProtectionState(
-            as_of=now,
-            open_positions=open_count,
-            monitor_active=self.config.enabled,
-            ws_connected=heartbeat.ws_connected,
-            protection_degraded=heartbeat.protection_degraded,
-            last_quote_at=self._last_quote_at,
-            monitor_symbols=tuple(sorted(self.runner.monitor_symbols())),
-        )
-        self.runner.persist_session_protection(session_state)
-        self._last_heartbeat_write = now
+        """Snapshot and write the heartbeat atomically w.r.t. other threads.
+
+        WS quote callbacks and the session thread both write the heartbeat;
+        without serialisation a stale snapshot (``last_quote_at=None``) taken
+        before a quote arrived can overwrite a fresher one.
+        """
+        with self._heartbeat_lock:
+            now = self.clock.now_utc()
+            if not force and self._last_heartbeat_write is not None:
+                elapsed = now - self._last_heartbeat_write
+                if elapsed < timedelta(seconds=self.config.heartbeat_interval_seconds):
+                    return
+            open_count = self.runner.open_position_count()
+            heartbeat = ProtectionHeartbeat(
+                as_of=now,
+                open_positions=open_count,
+                monitor_active=self.config.enabled,
+                last_quote_at=self._last_quote_at,
+                ws_connected=self.ws.ws_connected if self.ws is not None else False,
+                protection_degraded=self.runner.protection_degraded,
+            )
+            self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+            self.heartbeat_path.write_text(
+                heartbeat.model_dump_json(indent=2),
+                encoding="utf-8",
+            )
+            session_state = SessionProtectionState(
+                as_of=now,
+                open_positions=open_count,
+                monitor_active=self.config.enabled,
+                ws_connected=heartbeat.ws_connected,
+                protection_degraded=heartbeat.protection_degraded,
+                last_quote_at=self._last_quote_at,
+                monitor_symbols=tuple(sorted(self.runner.monitor_symbols())),
+            )
+            self.runner.persist_session_protection(session_state)
+            self._last_heartbeat_write = now
 
 
 def build_protection_coordinator(
