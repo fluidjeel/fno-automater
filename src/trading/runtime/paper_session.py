@@ -636,18 +636,24 @@ class PaperSession:
     def _record_portfolio_risk(self, snapshots: dict[str, FeatureSnapshot]) -> None:
         if self._risk_journal is None or self._risk_policy is None:
             return
-        now = self._clock.now_utc()
-        record = build_portfolio_risk_record(
-            broker=self._runner.broker,
-            account_id=self._account_id,
-            positions=self._runner.trade_manager.list_positions(),
-            open_book=self._runner.open_book,
-            snapshots=snapshots,
-            risk_policy=self._risk_policy,
-            id_factory=self._runner.id_factory,
-            as_of=now,
-        )
-        self._risk_journal.append(record)
+        try:
+            now = self._clock.now_utc()
+            record = build_portfolio_risk_record(
+                broker=self._runner.broker,
+                account_id=self._account_id,
+                positions=self._runner.trade_manager.list_positions(),
+                open_book=self._runner.open_book,
+                snapshots=snapshots,
+                risk_policy=self._risk_policy,
+                id_factory=self._runner.id_factory,
+                as_of=now,
+            )
+            self._risk_journal.append(record)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                "portfolio risk telemetry failed; tick continues",
+                exc_info=True,
+            )
 
     def _has_open_positions(self) -> bool:
         return any(
