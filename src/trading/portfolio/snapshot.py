@@ -5,6 +5,7 @@ Invariant 5: broker-reported funds, positions and orders are external truth.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from decimal import Decimal
 
@@ -19,7 +20,13 @@ from trading.domain.contracts.reservation import CapitalReservation
 from trading.domain.ids import IdFactory
 from trading.domain.primitives import Currency, Money
 
-__all__ = ["build_broker_snapshot", "sum_active_reservations"]
+_logger = logging.getLogger(__name__)
+
+__all__ = [
+    "build_broker_snapshot",
+    "clamp_broker_margin_available",
+    "sum_active_reservations",
+]
 
 
 def sum_active_reservations(
@@ -68,6 +75,23 @@ def build_broker_snapshot(
     )
 
 
+def clamp_broker_margin_available(
+    funds: BrokerFunds,
+) -> tuple[Money, Money | None]:
+    """Clamp negative broker margin so ExposureSnapshot validation cannot fail."""
+    if not funds.margin_available.is_negative:
+        return funds.margin_available, None
+    overdraft = (-funds.margin_available).quantized()
+    _logger.warning(
+        "MARGIN_OVERDRAWN: margin_available=%s equity=%s margin_used=%s overdraft=%s",
+        funds.margin_available,
+        funds.equity,
+        funds.margin_used,
+        overdraft,
+    )
+    return Money.zero(funds.margin_available.currency), overdraft
+
+
 def _exposure_from_broker(
     funds: BrokerFunds,
     positions: tuple[PositionRecord, ...],
@@ -81,11 +105,12 @@ def _exposure_from_broker(
         gross_notional = gross_notional + Money.of(str(notional), currency)
         unrealized_pnl = unrealized_pnl + position.unrealized_pnl
         net_delta += Decimal(position.signed_quantity)
+    margin_available, _overdraft = clamp_broker_margin_available(funds)
     return ExposureSnapshot(
         as_of=funds.as_of,
         equity=funds.equity,
         margin_used=funds.margin_used,
-        margin_available=funds.margin_available,
+        margin_available=margin_available,
         open_trade_count=len(positions),
         net_delta=net_delta,
         gross_notional=gross_notional,
