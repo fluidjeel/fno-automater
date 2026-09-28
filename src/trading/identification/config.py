@@ -8,9 +8,12 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading.domain.enums import ModeId
+
 __all__ = [
     "AllowRule",
     "AllowTablePolicy",
+    "ContractOverrides",
     "IdentificationPolicy",
     "TimeWindow",
     "load_identification_policy",
@@ -78,6 +81,22 @@ class AllowTablePolicy(_Frozen):
     rules: tuple[AllowRule, ...]
 
 
+class ContractOverrides(_Frozen):
+    """Per-mode replacements for individual ``ContractPolicy`` fields."""
+
+    min_open_interest: int | None = Field(default=None, ge=0)
+    max_spread_fraction: Decimal | None = Field(default=None, gt=0, le=1)
+    long_delta_min: Decimal | None = Field(default=None, ge=0, le=1)
+    long_delta_max: Decimal | None = Field(default=None, ge=0, le=1)
+    short_delta_min: Decimal | None = Field(default=None, ge=0, le=1)
+    short_delta_max: Decimal | None = Field(default=None, ge=0, le=1)
+    weekly_dte_min: int | None = Field(default=None, ge=0)
+    weekly_dte_max: int | None = Field(default=None, ge=0)
+    monthly_dte_min: int | None = Field(default=None, ge=0)
+    monthly_dte_max: int | None = Field(default=None, ge=0)
+    min_reward_risk: Decimal | None = Field(default=None, gt=0)
+
+
 class IdentificationPolicy(_Frozen):
     policy_version: str
     feature_version: str
@@ -89,6 +108,20 @@ class IdentificationPolicy(_Frozen):
     contracts: ContractPolicy
     router: RouterPolicy
     allow_table: AllowTablePolicy
+    mode_contracts: dict[ModeId, ContractOverrides] = Field(default_factory=dict)
+
+    def for_mode(self, mode_id: ModeId) -> IdentificationPolicy:
+        """This policy with ``mode_id``'s contract overrides applied."""
+        overrides = self.mode_contracts.get(mode_id)
+        if overrides is None:
+            return self
+        contracts = ContractPolicy.model_validate(
+            {
+                **self.contracts.model_dump(),
+                **overrides.model_dump(exclude_none=True),
+            }
+        )
+        return self.model_copy(update={"contracts": contracts})
 
 
 def load_identification_policy(path: Path) -> IdentificationPolicy:

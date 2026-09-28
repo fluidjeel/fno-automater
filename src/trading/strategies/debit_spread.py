@@ -121,6 +121,7 @@ class DebitSpreadStrategy:
             ctx.macro,
             ctx.now,
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
+            mode_direction=ctx.mode_direction,
         )
         if bias is MacroBias.NEUTRAL:
             return self._reject(

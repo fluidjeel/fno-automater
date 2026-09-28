@@ -30,6 +30,7 @@ from trading.data.cas_features import with_cas_feature_set
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
     EntryFreezeRecord,
+    ExitTemplate,
     FeatureSnapshot,
     InstrumentSpec,
     IntentLeg,
@@ -53,6 +54,7 @@ from trading.domain.contracts.common import (
     Versions,
 )
 from trading.domain.contracts.entry import StrikeShortlist
+from trading.domain.contracts.forecast import ModeForecast
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
@@ -262,6 +264,10 @@ class PaperStrategyRequest:
     forced_family_id: FamilyId | None = None
     campaign_id: str | None = None
     binding_reason_codes: tuple[ReasonCode, ...] = ()
+    mode_direction: int = 0
+    underlying_stop_below: Decimal | None = None
+    underlying_stop_above: Decimal | None = None
+    thesis_time_exit: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +294,23 @@ class PaperStrategyOutcome:
     strict_would_block: tuple[ReasonCode, ...] = ()
     binding_reason_codes: tuple[ReasonCode, ...] = ()
     record_stage: DiscoveryStage | None = None
+
+
+def _thesis_exit_template(
+    template: ExitTemplate, request: PaperStrategyRequest
+) -> ExitTemplate:
+    """Attach the mode's underlying invalidation; a thesis may only tighten time."""
+    update: dict[str, object] = {}
+    if request.underlying_stop_below is not None:
+        update["underlying_stop_below"] = request.underlying_stop_below
+    if request.underlying_stop_above is not None:
+        update["underlying_stop_above"] = request.underlying_stop_above
+    thesis_exit = request.thesis_time_exit
+    if thesis_exit is not None and (
+        template.time_exit is None or thesis_exit < template.time_exit
+    ):
+        update["time_exit"] = thesis_exit
+    return template.model_copy(update=update) if update else template
 
 
 def _outcome_from_request(
@@ -668,6 +691,20 @@ class PaperRunner:
             produced=tuple(produced) if produced is not None else None,
         )
 
+    def persist_mode_forecasts(
+        self, forecasts: Sequence[ModeForecast]
+    ) -> tuple[int, ...]:
+        """Append one MODE_FORECAST per forecast, traded or not."""
+        return tuple(
+            self._services.store.append(
+                TradingEventType.MODE_FORECAST,
+                forecast,
+                event_id=forecast.forecast_id,
+                recorded_at=forecast.as_of,
+            )
+            for forecast in forecasts
+        )
+
     def persist_cycle_evidence(
         self, result: PaperCycleResult, *, as_of: datetime
     ) -> int:
@@ -720,6 +757,62 @@ class PaperRunner:
                 continue
             symbols.update(leg.contract.symbol for leg in position.legs)
         return tuple(sorted(symbols))
+
+    def open_mode_legs(self) -> tuple[tuple[str, ModeId, int], ...]:
+        """Open legs as ``(symbol, mode, signed contracts)`` for basket gates."""
+        rows: list[tuple[str, ModeId, int]] = []
+        for position in self._services.trade_manager.list_positions():
+            booked = self._open_book.get(position.trade_id)
+            if position.state is TradeState.CLOSED or booked is None:
+                continue
+            mode_id = booked[0].mode_id
+            if mode_id is None:
+                continue
+            rows.extend(
+                (
+                    leg.contract.symbol,
+                    mode_id,
+                    leg.quantity_contracts
+                    if leg.side is Side.BUY
+                    else -leg.quantity_contracts,
+                )
+                for leg in position.legs
+            )
+        return tuple(rows)
+
+    def exit_invalidated_theses(
+        self,
+        mode_id: ModeId,
+        *,
+        invalidated: Callable[[TradeIntent], bool],
+        detail: str,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> tuple[OrderEvent, ...]:
+        """Exit open ``mode_id`` trades whose thesis the mode's forecaster dropped."""
+        events: list[OrderEvent] = []
+        working = {**self._protection_snapshots, **snapshots}
+        for position in self._services.trade_manager.list_positions():
+            booked = self._open_book.get(position.trade_id)
+            if position.state is not TradeState.OPEN or booked is None:
+                continue
+            intent, decision = booked
+            if intent.mode_id is not mode_id or not invalidated(intent):
+                continue
+            self._services.trade_manager.apply_exit_evaluation(
+                position.trade_id,
+                ExitEvaluation(
+                    kind=ExitKind.STOP,
+                    reason_code=ReasonCode.FORECAST_SIGNAL_DECAY,
+                    detail=detail,
+                    updated_policy=position.exit_policy,
+                ),
+            )
+            self._write_lifecycle(position.trade_id)
+            pending = self._services.trade_manager.get_position(position.trade_id)
+            if pending is None or pending.state is not TradeState.EXIT_PENDING:
+                continue
+            events.extend(self._submit_exit(intent, decision, pending, working))
+        return tuple(events)
 
     def seed_protection_snapshots(
         self, snapshots: Mapping[str, FeatureSnapshot]
@@ -2974,6 +3067,7 @@ class PaperRunner:
                 entry_profile=self._entry_profile,
                 strict_quote_max_age_ms=strict_ms,
                 hard_quote_max_age_ms=hard_ms,
+                mode_direction=request.mode_direction,
             )
         )
         intent_updates: dict[str, object] = {
@@ -2987,6 +3081,9 @@ class PaperRunner:
             intent.model_copy(
                 update={
                     **intent_updates,
+                    "exit_template": _thesis_exit_template(
+                        intent.exit_template, request
+                    ),
                     "strategy_confidence": (
                         intent.strategy_confidence
                         if request.setup_features is None

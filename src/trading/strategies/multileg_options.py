@@ -165,6 +165,7 @@ class MultiLegOptionsStrategy:
             ctx.macro,
             ctx.now,
             min_confidence=DEFAULT_MACRO_MIN_CONFIDENCE,
+            mode_direction=ctx.mode_direction,
         )
         option_type = _option_type_for(bias)
         if (

@@ -80,6 +80,27 @@ class ExitEngine:
         leg_snapshots: Mapping[str, FeatureSnapshot] | None = None,
     ) -> ExitEvaluation:
         """Return an exit signal and any tightened stop policy."""
+        breach = _underlying_breach(intent.exit_template, feature, leg_snapshots)
+        if position.state is TradeState.OPEN and breach is not None:
+            return ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail=breach,
+                updated_policy=position.exit_policy,
+            )
+        return self._evaluate_rules(
+            position, feature, intent, now=now, leg_snapshots=leg_snapshots
+        )
+
+    def _evaluate_rules(
+        self,
+        position: PositionState,
+        feature: FeatureSnapshot,
+        intent: TradeIntent,
+        *,
+        now: datetime,
+        leg_snapshots: Mapping[str, FeatureSnapshot] | None,
+    ) -> ExitEvaluation:
         if position.state is not TradeState.OPEN:
             return _no_exit(position.exit_policy)
         scope = position.exit_policy.scope
@@ -620,6 +641,30 @@ def _target_hit(side: Side, monitor: Price, target: Price) -> bool:
     if side is Side.BUY:
         return monitor.value >= target.value
     return monitor.value <= target.value
+
+
+def _underlying_breach(
+    template: ExitTemplate,
+    feature: FeatureSnapshot,
+    leg_snapshots: Mapping[str, FeatureSnapshot] | None,
+) -> str | None:
+    """Describe a breached thesis level on the underlying, if any."""
+    below, above = template.underlying_stop_below, template.underlying_stop_above
+    if below is None and above is None:
+        return None
+    spot: Decimal | None = None
+    for snapshot in (feature, *(leg_snapshots or {}).values()):
+        derivatives = snapshot.derivatives
+        if derivatives is not None and derivatives.underlying_price is not None:
+            spot = derivatives.underlying_price.value
+            break
+    if spot is None:
+        return None
+    if below is not None and spot <= below:
+        return f"underlying invalidation: spot {spot} at or below {below}"
+    if above is not None and spot >= above:
+        return f"underlying invalidation: spot {spot} at or above {above}"
+    return None
 
 
 def _no_exit(policy: ExitPolicy) -> ExitEvaluation:

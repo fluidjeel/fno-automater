@@ -122,7 +122,7 @@ def bind_family(
     """Invoke the family binder with mode-specific kwargs."""
     kwargs: dict[str, object] = {
         "market": market,
-        "policy": policy,
+        "policy": policy.for_mode(spec.mode_id),
         "p1": p1,
     }
     if spec.mode_id in {ModeId.M1_CAS, ModeId.M2_DIRECTIONAL}:

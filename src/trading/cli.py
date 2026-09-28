@@ -1565,6 +1565,139 @@ def _cmd_evaluate_counterfactual(args: argparse.Namespace) -> int:
     return 0
 
 
+def _forecast_evidence(
+    args: argparse.Namespace,
+) -> tuple[Any, tuple[Any, ...], tuple[Any, ...], tuple[Any, ...], tuple[Any, ...]]:
+    """Forecast config, forecasts, stored labels, decisions and underlying bars."""
+    from trading.analytics.forecast_labels import (
+        bars_from_payloads,
+        split_forecast_records,
+    )
+    from trading.config.forecast import load_forecast_config
+    from trading.domain.contracts.discovery_decision import DiscoveryDecision
+    from trading.storage.trading_store import TradingEventType
+
+    root = _repo_root()
+    config, _version = load_forecast_config(root / args.config)
+    pipeline = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    symbol = args.symbol or pipeline.underlyings[0].symbol
+    now = WallClock().now_utc()
+    events = JsonlEventStore(root / pipeline.storage.root).read_canonical(
+        symbol=symbol, start=datetime(2020, 1, 1, tzinfo=UTC), end=now
+    )
+    bars = bars_from_payloads(
+        (
+            event.payload
+            for event in events
+            if event.event_type == "BAR_SNAPSHOT"
+            and event.payload.get("resolution") == str(config.bar_seconds // 60)
+        ),
+        bar_seconds=config.bar_seconds,
+        as_of=now,
+    )
+    wanted = {
+        TradingEventType.MODE_FORECAST,
+        TradingEventType.FORECAST_LABEL,
+        TradingEventType.DISCOVERY_DECISION,
+    }
+    store = TradingStore.open(Path(args.store), clock=WallClock())
+    try:
+        payloads = [
+            event.deserialize()
+            for event in store.read_events()
+            if event.event_type in wanted
+        ]
+    finally:
+        store.close()
+    forecasts, labels = split_forecast_records(payloads)
+    decisions = tuple(item for item in payloads if isinstance(item, DiscoveryDecision))
+    return config, forecasts, labels, decisions, bars
+
+
+def _cmd_evaluate_forecast_calibration(args: argparse.Namespace) -> int:
+    """Label forecasts from underlying bars and print per-mode calibration."""
+    from itertools import count
+
+    from trading.analytics.forecast_calibration import (
+        calibrate_modes,
+        format_calibration_report,
+    )
+    from trading.analytics.forecast_labels import LabelTiming, label_forecasts
+    from trading.domain.enums import ModeId
+
+    config, forecasts, stored, _decisions, bars = _forecast_evidence(args)
+    sequence = count(1)
+    labels = (
+        *stored,
+        *label_forecasts(
+            forecasts,
+            bars,
+            timing=LabelTiming(
+                bar_seconds=config.bar_seconds,
+                session_minutes=config.session_minutes,
+                annual_trading_days=config.annual_trading_days,
+            ),
+            labelled_at=WallClock().now_utc(),
+            new_id=lambda prefix: f"{prefix}-{next(sequence)}",
+            already_labelled=frozenset(label.forecast_id for label in stored),
+        ),
+    )
+    models = {
+        ModeId.M1_CAS: config.m1.model,
+        ModeId.M2_DIRECTIONAL: config.m2.model,
+        ModeId.M3_TACTICAL_POSITIONAL: config.m3.model,
+        ModeId.M4_STRATEGIC_POSITIONAL: config.m4.model,
+    }
+    results = calibrate_modes(
+        forecasts,
+        labels,
+        current_models={
+            mode: (model.intercept, model.coefficients)
+            for mode, model in models.items()
+        },
+        min_refit_samples=args.min_refit_samples,
+    )
+    print(format_calibration_report(results))
+    print(
+        f"# forecasts={len(forecasts)} labels={len(labels)} bars={len(bars)}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _cmd_evaluate_missed_moves(args: argparse.Namespace) -> int:
+    """Print large moves per mode horizon and which gates kept each mode out."""
+    from trading.analytics.missed_moves import (
+        detect_large_moves,
+        format_missed_moves,
+        missed_moves,
+    )
+    from trading.domain.enums import ModeId
+
+    config, forecasts, _labels, decisions, bars = _forecast_evidence(args)
+    horizons = {
+        ModeId.M1_CAS: config.m1.horizon_minutes,
+        ModeId.M2_DIRECTIONAL: config.m2.horizon_minutes,
+        ModeId.M3_TACTICAL_POSITIONAL: config.m3.horizon_minutes,
+        ModeId.M4_STRATEGIC_POSITIONAL: config.m4.horizon_minutes,
+    }
+    rows = {}
+    for mode_id, minutes in horizons.items():
+        moves = detect_large_moves(
+            bars,
+            horizon_bars=max(1, minutes * 60 // config.bar_seconds),
+            bar_seconds=config.bar_seconds,
+            threshold_atr=Decimal(str(args.threshold_atr)),
+            atr_windows=args.atr_windows,
+            session_bars=config.session_minutes * 60 // config.bar_seconds,
+        )
+        rows[mode_id] = missed_moves(
+            mode_id, moves, forecasts=forecasts, decisions=decisions
+        )
+    print(format_missed_moves(rows))
+    return 0
+
+
 def _cmd_risk_one_lot(args: argparse.Namespace) -> int:
     repo = _repo_root()
     from trading.domain.primitives import Currency, Money
@@ -1960,6 +2093,33 @@ def main(argv: list[str] | None = None) -> int:
         help="path to counterfactual trades JSON file",
     )
     cf_parser.set_defaults(func=_cmd_evaluate_counterfactual)
+
+    for command, help_text, handler in (
+        (
+            "forecast-calibration",
+            "label mode forecasts and print per-mode calibration and refit proposal",
+            _cmd_evaluate_forecast_calibration,
+        ),
+        (
+            "missed-moves",
+            "list large moves per mode horizon and the gates that kept each mode out",
+            _cmd_evaluate_missed_moves,
+        ),
+    ):
+        forecast_parser = evaluate_sub.add_parser(command, help=help_text)
+        forecast_parser.add_argument(
+            "--store", default="data/paper/trading.sqlite", help="trading store path"
+        )
+        forecast_parser.add_argument(
+            "--config", default="config/forecast.yaml", help="forecast config path"
+        )
+        forecast_parser.add_argument(
+            "--symbol", default="", help="underlying symbol (default: first pipeline)"
+        )
+        forecast_parser.add_argument("--min-refit-samples", type=int, default=200)
+        forecast_parser.add_argument("--threshold-atr", type=float, default=1.5)
+        forecast_parser.add_argument("--atr-windows", type=int, default=10)
+        forecast_parser.set_defaults(func=handler)
 
     risk = sub.add_parser("risk", help="Layer 2 risk, limits and affordability")
     risk_sub = risk.add_subparsers(dest="risk_cmd", required=True)

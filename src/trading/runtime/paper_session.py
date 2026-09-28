@@ -28,6 +28,7 @@ from trading.config.discovery import (
     load_discovery_config,
 )
 from trading.config.evaluation import discovery_fill_models
+from trading.config.forecast import load_forecast_config
 from trading.config.paper_data import load_paper_data_requirements
 from trading.config.risk_policy import RiskPolicyConfig
 from trading.config.schema import Environment
@@ -66,6 +67,7 @@ from trading.domain.enums import (
 )
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, Price, TickSize
+from trading.forecast.bars import Bar, parse_bars
 from trading.identification import (
     allowed_families_for,
     apply_discovery_direction_fallback,
@@ -108,6 +110,13 @@ from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.discovery_data_feed_alert import DataFeedAlertTracker
 from trading.runtime.discovery_drawdown_alert import DrawdownAlertTracker
 from trading.runtime.event_risk import collect_event_risk
+from trading.runtime.forecast_inputs import ReferenceInputLoader
+from trading.runtime.forecast_stage import (
+    ForecastCycleInputs,
+    ForecastStage,
+    OpenLeg,
+    intent_direction,
+)
 from trading.runtime.four_mode_producers import (
     build_four_mode_requests,
     iter_recordable_family_slots,
@@ -486,6 +495,10 @@ class PaperSession:
         if isinstance(latest, MarketState):
             self._latest_market_state = latest
         self._persist_supplemental_feed_errors(now)
+        forecasts = getattr(self._builder, "latest_forecasts", ())
+        if isinstance(forecasts, tuple) and forecasts:
+            self._runner.persist_mode_forecasts(forecasts)
+        self._exit_decayed_m1(snapshots)
         requests = self._entry_requests(requests)
         result: PaperCycleResult | None = None
         if requests:
@@ -530,6 +543,22 @@ class PaperSession:
             now=now, result=result, had_requests=bool(requests)
         )
         return result
+
+    def _exit_decayed_m1(self, snapshots: dict[str, FeatureSnapshot]) -> None:
+        """Close M1 trades whose order-flow thesis faded, when exits are enforced."""
+        stage = getattr(self._builder, "forecast_stage", None)
+        if not isinstance(stage, ForecastStage) or not stage.enforce_exits(
+            ModeId.M1_CAS
+        ):
+            return
+        self._runner.exit_invalidated_theses(
+            ModeId.M1_CAS,
+            invalidated=lambda intent: stage.m1_signal_decayed(
+                intent_direction(intent)
+            ),
+            detail="M1 order-flow signal decayed below exit probability",
+            snapshots=snapshots,
+        )
 
     def _recordable_family_slots(self) -> tuple[tuple[ModeId, str], ...]:
         """Every routable (mode, family) pair that should receive a decision row."""
@@ -927,6 +956,13 @@ def run_paper_session(
                     "Four-mode routing requires config/modes.yaml"
                 )
                 return 1
+            forecast_stage = None
+            forecast_path = repo_root / "config" / "forecast.yaml"
+            if forecast_path.is_file():
+                forecast_cfg, forecast_version = load_forecast_config(forecast_path)
+                forecast_stage = ForecastStage(
+                    forecast_cfg, config_version=forecast_version, new_id=ids.new_id
+                )
             request_builder = _four_mode_request_builder(
                 repo_root,
                 clock=clock,
@@ -940,6 +976,9 @@ def run_paper_session(
                 discovery_fingerprint=discovery_fingerprint,
                 feed=shared_feed,
                 instrument_registry=instrument_registry,
+                forecast_stage=forecast_stage,
+                forecast_ids=ids,
+                open_mode_legs=runner.open_mode_legs,
             )
         else:
             request_builder = _live_request_builder(
@@ -1476,10 +1515,14 @@ def _four_mode_request_builder(
     discovery_fingerprint: str | None = None,
     feed: ResilientFyersMarketFeed | None = None,
     instrument_registry: InstrumentRegistry | None = None,
+    forecast_stage: ForecastStage | None = None,
+    forecast_ids: SequentialIdFactory | None = None,
+    open_mode_legs: Callable[[], tuple[tuple[str, ModeId, int], ...]] | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
     """Four-mode producers: independent family bindings, no legacy one-winner router."""
+    reference_loader = ReferenceInputLoader(repo_root / "data" / "reference")
     resolved_feed = feed or _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
     catalog = InstrumentSpecStore(
@@ -1808,6 +1851,37 @@ def _four_mode_request_builder(
                     execution_mode=mode if execute else ExecutionMode.SHADOW,
                 )
             )
+        forecast = None
+        if forecast_stage is not None and forecast_ids is not None:
+            forecast = forecast_stage.evaluate(
+                adjusted,
+                ForecastCycleInputs(
+                    cycle_id=forecast_ids.new_id("FCY"),
+                    as_of=now,
+                    zone=zone,
+                    underlying=index_underlying,
+                    bars=_forecast_bars(bar_event, forecast_stage, now),
+                    market=market_state,
+                    p1=p1,
+                    chain=option_candidates,
+                    instruments=instruments,
+                    charges_per_lot_leg=(
+                        identification.contracts.estimated_round_trip_cost_per_lot
+                    ),
+                    max_spread_fraction=identification.contracts.max_spread_fraction,
+                    min_open_interest=identification.contracts.min_open_interest,
+                    vix_history=vix_history,
+                    macro=macro,
+                    reference=reference_loader.load(),
+                    open_legs=tuple(
+                        OpenLeg(symbol, mode_id, Decimal(units))
+                        for symbol, mode_id, units in (
+                            open_mode_legs() if open_mode_legs is not None else ()
+                        )
+                    ),
+                ),
+            )
+            adjusted = list(forecast.produced)
         requests = build_four_mode_requests(
             adjusted,
             index_underlying=index_underlying,
@@ -1817,15 +1891,32 @@ def _four_mode_request_builder(
             experiment_prefix=session_cfg.experiment_prefix,
             now=now,
             discovery_fingerprint=discovery_fingerprint,
+            overlays=None if forecast is None else forecast.overlays,
+            directions=None if forecast is None else forecast.directions,
         )
         build.latest_market_state = market_state  # type: ignore[attr-defined]
         build.latest_produced = tuple(adjusted)  # type: ignore[attr-defined]
+        build.latest_forecasts = (  # type: ignore[attr-defined]
+            () if forecast is None else forecast.forecasts
+        )
         return requests, snapshots
 
     build.m1_holder = m1_holder  # type: ignore[attr-defined]
     build.feed_errors = feed_errors  # type: ignore[attr-defined]
     build.latest_market_state = None  # type: ignore[attr-defined]
+    build.latest_forecasts = ()  # type: ignore[attr-defined]
+    build.forecast_stage = forecast_stage  # type: ignore[attr-defined]
     return build
+
+
+def _forecast_bars(
+    event: CanonicalMarketEvent | None, stage: ForecastStage, now: datetime
+) -> tuple[Bar, ...]:
+    """Completed underlying bars from the cycle's BAR_SNAPSHOT, or none."""
+    rows = None if event is None else event.payload.get("bars")
+    if not isinstance(rows, list):
+        return ()
+    return parse_bars(rows, bar_seconds=stage.config.bar_seconds, as_of=now)
 
 
 def _vix_history(

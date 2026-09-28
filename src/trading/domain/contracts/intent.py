@@ -93,6 +93,8 @@ class ExitTemplate(StrictModel):
     exit_before_expiry_days: StrictInt | None = Field(default=None, ge=0)
     invalidation_note: NonEmptyStr
     partial_fill_policy: NonEmptyStr
+    underlying_stop_below: ExactDecimal | None = Field(default=None, gt=0)
+    underlying_stop_above: ExactDecimal | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _trailing_is_fully_specified_and_tightening(self) -> ExitTemplate:

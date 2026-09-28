@@ -29,6 +29,7 @@ from trading.identification.config import IdentificationPolicy
 from trading.identification.p1_features import ObservedP1Features
 from trading.news.contracts import EventRiskState
 from trading.runtime.cohort import experiment_id_for
+from trading.runtime.forecast_stage import ExitOverlay
 from trading.runtime.paper_runner import PaperStrategyRequest
 from trading.runtime.session_routing import (
     FamilyProducerSpec,
@@ -237,11 +238,15 @@ def build_four_mode_requests(
     experiment_prefix: str,
     now: datetime,
     discovery_fingerprint: str | None = None,
+    overlays: Mapping[tuple[ModeId, FamilyId], ExitOverlay] | None = None,
+    directions: Mapping[tuple[ModeId, FamilyId], int] | None = None,
 ) -> tuple[PaperStrategyRequest, ...]:
     """Map producer outputs to PaperStrategyRequest rows for PaperRunner."""
     requests: list[PaperStrategyRequest] = []
     for item in produced:
         strategy_key = f"{item.spec.mode_id.value}:{item.spec.family_id.value}"
+        slot = (item.spec.mode_id, item.spec.family_id)
+        overlay = (overlays or {}).get(slot, ExitOverlay())
         requests.append(
             PaperStrategyRequest(
                 strategy_id=item.spec.strategy_id,
@@ -263,6 +268,10 @@ def build_four_mode_requests(
                 forced_mode_id=item.spec.mode_id,
                 forced_family_id=item.spec.family_id,
                 binding_reason_codes=item.bound.binding.reason_codes,
+                mode_direction=(directions or {}).get(slot, 0),
+                underlying_stop_below=overlay.underlying_stop_below,
+                underlying_stop_above=overlay.underlying_stop_above,
+                thesis_time_exit=overlay.time_exit,
             )
         )
     return tuple(requests)

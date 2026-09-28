@@ -73,6 +73,7 @@ class StrategyContext:
     entry_profile: EntryProfile = EntryProfile.STRICT
     strict_quote_max_age_ms: int = 120_000
     hard_quote_max_age_ms: int | None = None
+    mode_direction: int = 0
 
 
 class Strategy(Protocol):

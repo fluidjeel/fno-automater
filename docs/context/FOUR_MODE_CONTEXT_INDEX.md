@@ -31,6 +31,13 @@ Four NIFTY option modes share one Layer 2 arbiter. M1 is microstructure long opt
 | Cycle evidence | `src/trading/runtime/cycle_evidence.py`, `src/trading/domain/contracts/cycle_evidence.py` |
 | Dashboard four-mode panel | `src/trading/dashboard/static/app.js`, `collector.py` |
 | CLI operator view | `trading evaluate operator-view` |
+| Per-mode forecasters (M1 order flow, M2 breakout, M3 swing, M4 weekly regime) | `src/trading/forecast/m1.py` .. `m4.py`, config `config/forecast.yaml` |
+| Forecast gate, strike placement, NIFTY-level exit overlays | `src/trading/runtime/forecast_stage.py` (measure-only unless a mode sets `enforce` / `enforce_exits`) |
+| Forecast ledger | `ModeForecast` in `src/trading/domain/contracts/forecast.py`, `MODE_FORECAST` store events |
+| Underlying invalidation exits | `ExitTemplate.underlying_stop_below/above`, `src/trading/trade/exits.py` |
+| Per-mode contract overrides | `mode_contracts` in `config/identification.yaml`, `IdentificationPolicy.for_mode` |
+| Outcome labels and calibration | `src/trading/analytics/forecast_labels.py`, `forecast_calibration.py`; `trading evaluate forecast-calibration` |
+| Missed-move ledger | `src/trading/analytics/missed_moves.py`; `trading evaluate missed-moves` |
 
 ## Current phase
 

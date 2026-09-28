@@ -31,6 +31,14 @@ contracts:
   min_reward_risk: "1.50"
   estimated_round_trip_cost_per_lot: "200"
 
+# Per-mode contract overrides; unspecified fields inherit `contracts`.
+# M3 swing verticals need the same >=7 DTE floor the strategy enforces, so the
+# binder stops offering 5-6 DTE pairs the strategy would reject.
+mode_contracts:
+  M3_TACTICAL_POSITIONAL:
+    weekly_dte_min: 7
+  M4_STRATEGIC_POSITIONAL: {}
+
 router:
   low_iv_percentile: "40"
   low_iv_rv_ratio: "1.15"

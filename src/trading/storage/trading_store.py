@@ -40,6 +40,7 @@ from trading.domain.contracts.agent_budget import AgentBudgetSnapshot
 from trading.domain.contracts.campaign import CampaignRecord
 from trading.domain.contracts.discovery_decision import DiscoveryDecision
 from trading.domain.contracts.fill_charges import FillChargeRecord
+from trading.domain.contracts.forecast import ForecastLabel, ModeForecast
 from trading.domain.enums import (
     DeskRole,
     Exchange,
@@ -86,6 +87,8 @@ class TradingEventType(StrEnum):
     ENTRY_FREEZE = "entry_freeze"
     CYCLE_EVIDENCE = "cycle_evidence"
     DISCOVERY_DECISION = "discovery_decision"
+    MODE_FORECAST = "mode_forecast"
+    FORECAST_LABEL = "forecast_label"
 
 
 _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
@@ -99,6 +102,8 @@ _PAYLOAD_TYPES: dict[TradingEventType, type[VersionedModel]] = {
     TradingEventType.ENTRY_FREEZE: EntryFreezeRecord,
     TradingEventType.CYCLE_EVIDENCE: PaperCycleEvidence,
     TradingEventType.DISCOVERY_DECISION: DiscoveryDecision,
+    TradingEventType.MODE_FORECAST: ModeForecast,
+    TradingEventType.FORECAST_LABEL: ForecastLabel,
 }
 
 

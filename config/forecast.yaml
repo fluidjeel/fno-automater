@@ -1,0 +1,150 @@
+# Per-mode forecast models. PAPER-only research hypotheses.
+#
+# Every coefficient below is an UNCALIBRATED PRIOR: sign-sensible, deliberately
+# small, so forecasts stay near 50% until the calibration report
+# (`trading evaluate forecast-calibration`) refits them on labelled outcomes.
+# Changing any value changes the config checksum and therefore the cohort.
+#
+# enforce: false        -> forecasts are recorded and scored only (measurement).
+# enforce: true         -> the forecast gate can stop a family from executing.
+# enforce_exits: true   -> NIFTY-level invalidation and thesis time exits are
+#                          attached to new intents of that mode.
+# Promote a mode to enforce only when its out-of-sample calibration beats both
+# the implied-only baseline and the current rules.
+
+schema_version: "1"
+model_version: "mode-forecast-v1"
+annual_trading_days: 252
+session_minutes: 375
+bar_seconds: 300
+
+m1:
+  enforce: false
+  enforce_exits: false
+  horizon_minutes: 15
+  record_interval_seconds: 60
+  min_directional_margin: "0.04"
+  event_threshold_sigma: "0.5"
+  target_sigma: "1.0"
+  stop_sigma: "1.0"
+  min_edge_fraction: "0.05"
+  ofi_short_seconds: 60
+  ofi_long_seconds: 300
+  cost_hurdle_multiple: "2.5"
+  decay_exit_probability: "0.50"
+  blocked_time_buckets: []
+  model:
+    intercept: "0"
+    coefficients:
+      ofi_short: "0.60"
+      ofi_long: "0.40"
+      microprice_drift_bps: "0.02"
+      cas_pressure: "0.50"
+      futures_lead_bps: "0.03"
+      trend_context: "0.20"
+
+m2:
+  enforce: false
+  enforce_exits: false
+  horizon_minutes: 240
+  record_interval_seconds: 300
+  min_directional_margin: "0.06"
+  event_threshold_sigma: "0.5"
+  target_sigma: "1.0"
+  stop_sigma: "0.75"
+  min_edge_fraction: "0.05"
+  opening_range_minutes: 15
+  breakout_min_range_atr: "0.8"
+  invalidation_buffer_atr: "0.25"
+  daily_trend_sma: 20
+  model:
+    intercept: "0"
+    coefficients:
+      orb_break_confirmed: "0.35"
+      prior_day_break: "0.25"
+      gap_z: "0.10"
+      daily_trend: "0.15"
+      mtf_alignment: "0.30"
+      normalized_60m: "0.20"
+      vwap_distance: "0.15"
+      signed_range_expansion: "0.10"
+      pcr_change: "0.40"
+      oi_wall_shift: "0.20"
+      vix_change: "-2.0"
+      premarket_bias: "20"
+      macro_bias: "0.20"
+
+m3:
+  enforce: false
+  enforce_exits: false
+  horizon_minutes: 1875
+  record_interval_seconds: 1800
+  min_directional_margin: "0.06"
+  event_threshold_sigma: "0.5"
+  target_sigma: "1.0"
+  stop_sigma: "1.0"
+  min_edge_fraction: "0.05"
+  entry_windows_ist:
+    - {start: "10:30", end: "11:00"}
+    - {start: "14:30", end: "15:00"}
+  swing_lookback_bars: 30
+  daily_trend_sma: 20
+  debit_max_iv_percentile: "45"
+  credit_min_iv_percentile: "55"
+  credit_short_quantile: "0.80"
+  debit_target_quantile: "0.65"
+  credit_width_points: "200"
+  invalidation_buffer_atr: "0.25"
+  model:
+    intercept: "0"
+    coefficients:
+      daily_trend: "0.25"
+      swing_structure: "0.30"
+      momentum_5d: "0.20"
+      range_position: "-0.20"
+      fii_positioning: "1.0"
+      macro_bias: "0.20"
+
+m4:
+  enforce: false
+  enforce_exits: false
+  horizon_minutes: 5625
+  record_interval_seconds: 3600
+  min_directional_margin: "0.05"
+  event_threshold_sigma: "0.75"
+  target_sigma: "1.0"
+  stop_sigma: "1.0"
+  min_edge_fraction: "0.03"
+  entry_windows_ist:
+    - {start: "09:45", end: "10:30"}
+  har:
+    intercept: "0"
+    daily: "0.35"
+    weekly: "0.35"
+    monthly: "0.25"
+  fast_sma: 20
+  slow_sma: 50
+  short_vol_min_ratio: "1.15"
+  long_vol_max_ratio: "0.90"
+  range_margin: "0.06"
+  directional_margin: "0.10"
+  event_min_importance: 2
+  event_cheap_ratio: "0.80"
+  shock_gap_sigma: "2.0"
+  shock_vix_change: "0.15"
+  max_net_delta_units: "150"
+  short_strike_buffer_fraction: "0.003"
+  model:
+    intercept: "0"
+    coefficients:
+      trend_fast: "0.20"
+      trend_slow: "0.20"
+      momentum_10d: "0.15"
+      fii_positioning: "1.5"
+      fii_cash_5d: "0.10"
+      spx_5d_change: "3.0"
+      dxy_5d_change: "-3.0"
+      us10y_5d_change_bp: "-0.005"
+      crude_5d_change: "-1.0"
+      usdinr_5d_change: "-5.0"
+      macro_bias: "0.20"

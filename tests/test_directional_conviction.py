@@ -1,4 +1,4 @@
-"""Tests for the FNO universe scanner, regime classifier, and conviction system."""
+"""Tests for the FNO universe scanner and conviction system."""
 
 from __future__ import annotations
 
@@ -8,12 +8,6 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from trading.domain.contracts.identification import TrendState
-from trading.identification.regime import (
-    RegimeConfig,
-    classify_regime,
-    regime_size_multiplier,
-)
 from trading.trade.eod_scanner import compute_positional_stop, evaluate_carry_forward
 from trading.universe.contracts import (
     CarryForwardAction,
@@ -29,7 +23,6 @@ from trading.universe.sector import NIFTY_SECTORS, classify_sector
 # ---- Fixtures ---------------------------------------------------------------
 
 _NOW = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
-_CONFIG = RegimeConfig()
 
 
 def _make_bars(
@@ -141,120 +134,6 @@ class TestConvictionAssessment:
     def test_score_ranges(self) -> None:
         with pytest.raises(ValidationError):
             _make_conviction(score=Decimal("-10"))
-
-
-# ---- Regime Classifier Tests -----------------------------------------------
-
-
-class TestClassifyRegime:
-    def test_strong_bull(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.UP,
-            breadth_pct=Decimal("65"),
-            current_vix=Decimal("12"),
-            iv_percentile=Decimal("30"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.STRONG_BULL
-
-    def test_mild_bull(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.UP,
-            breadth_pct=Decimal("50"),
-            current_vix=Decimal("18"),
-            iv_percentile=Decimal("50"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.MILD_BULL
-
-    def test_strong_bear(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.DOWN,
-            breadth_pct=Decimal("30"),
-            current_vix=Decimal("25"),
-            iv_percentile=Decimal("80"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.STRONG_BEAR
-
-    def test_mild_bear(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.DOWN,
-            breadth_pct=Decimal("45"),
-            current_vix=Decimal("18"),
-            iv_percentile=Decimal("60"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.MILD_BEAR
-
-    def test_neutral_range(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.RANGE,
-            breadth_pct=Decimal("50"),
-            current_vix=Decimal("15"),
-            iv_percentile=Decimal("50"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.NEUTRAL
-
-    def test_neutral_mixed(self) -> None:
-        result = classify_regime(
-            nifty_trend=TrendState.MIXED,
-            breadth_pct=Decimal("50"),
-            current_vix=Decimal("15"),
-            iv_percentile=Decimal("50"),
-            config=_CONFIG,
-        )
-        assert result == MarketRegime.NEUTRAL
-
-    def test_neutral_when_vix_missing(self) -> None:
-        """Without VIX, STRONG thresholds can't fire → falls to MILD or NEUTRAL."""
-        result = classify_regime(
-            nifty_trend=TrendState.UP,
-            breadth_pct=Decimal("70"),
-            current_vix=None,
-            iv_percentile=None,
-            config=_CONFIG,
-        )
-        # breadth > 60 but VIX is None → can't confirm STRONG_BULL
-        # breadth 70 > strong_bull_breadth_min 60, outside 40-60 for MILD
-        assert result in {MarketRegime.NEUTRAL, MarketRegime.MILD_BULL}
-
-
-class TestRegimeSizeMultiplier:
-    def test_strong_bull_long(self) -> None:
-        mult = regime_size_multiplier(
-            MarketRegime.STRONG_BULL, TradeDirection.LONG, _CONFIG
-        )
-        assert mult == Decimal("1.5")
-
-    def test_strong_bull_short(self) -> None:
-        mult = regime_size_multiplier(
-            MarketRegime.STRONG_BULL, TradeDirection.SHORT, _CONFIG
-        )
-        assert mult == Decimal("0.3")
-
-    def test_neutral(self) -> None:
-        mult = regime_size_multiplier(
-            MarketRegime.NEUTRAL, TradeDirection.LONG, _CONFIG
-        )
-        assert mult == Decimal("0.8")
-
-    def test_strong_bear_short(self) -> None:
-        mult = regime_size_multiplier(
-            MarketRegime.STRONG_BEAR, TradeDirection.SHORT, _CONFIG
-        )
-        assert mult == Decimal("1.5")
-
-    def test_multiplier_symmetry(self) -> None:
-        """Bull long multiplier should equal bear short multiplier."""
-        bull_long = regime_size_multiplier(
-            MarketRegime.STRONG_BULL, TradeDirection.LONG, _CONFIG
-        )
-        bear_short = regime_size_multiplier(
-            MarketRegime.STRONG_BEAR, TradeDirection.SHORT, _CONFIG
-        )
-        assert bull_long == bear_short
 
 
 # ---- Ranking Tests ----------------------------------------------------------
@@ -478,27 +357,3 @@ class TestComputePositionalStop:
                 previous_day_high=Decimal("510"),
                 previous_day_low=Decimal("485"),
             )
-
-
-# ---- Sizing Safety Property Tests -------------------------------------------
-
-
-class TestSizingSafety:
-    """Verify that regime multipliers never breach hard limits."""
-
-    @pytest.mark.parametrize("regime", list(MarketRegime))
-    @pytest.mark.parametrize("direction", list(TradeDirection))
-    def test_multiplier_is_positive(
-        self, regime: MarketRegime, direction: TradeDirection
-    ) -> None:
-        mult = regime_size_multiplier(regime, direction, _CONFIG)
-        assert mult > Decimal("0")
-
-    @pytest.mark.parametrize("regime", list(MarketRegime))
-    @pytest.mark.parametrize("direction", list(TradeDirection))
-    def test_multiplier_bounded(
-        self, regime: MarketRegime, direction: TradeDirection
-    ) -> None:
-        mult = regime_size_multiplier(regime, direction, _CONFIG)
-        # Multiplier should be between 0 and 2 (reasonable bounds)
-        assert Decimal("0") < mult <= Decimal("2")

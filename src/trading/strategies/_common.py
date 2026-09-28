@@ -53,13 +53,21 @@ def resolve_direction(
     *,
     min_confidence: Decimal = DEFAULT_MACRO_MIN_CONFIDENCE,
     technical_confidence: Decimal = DEFAULT_TECHNICAL_CONFIDENCE,
+    mode_direction: int = 0,
 ) -> tuple[MacroBias, Decimal]:
-    """Return ``(bias, confidence)``: a bounded macro read, else the technical read.
+    """Return ``(bias, confidence)``: mode direction, else macro, else technical.
 
-    Confidence is the macro's own confidence when the macro drives the decision,
+    ``mode_direction`` is set only after the mode's forecast gate confirmed the
+    bound family's direction; re-deriving it here could flip the thesis.
+    Confidence is the macro's own confidence when the macro drives or agrees,
     otherwise a fixed technical-confidence value.
     """
     macro_bias = accepted_macro_bias(macro, now=now, min_confidence=min_confidence)
+    if mode_direction:
+        bias = MacroBias.BULLISH if mode_direction > 0 else MacroBias.BEARISH
+        if macro_bias is bias and macro is not None:
+            return bias, macro.confidence
+        return bias, technical_confidence
     if macro_bias is not None and macro is not None:
         return macro_bias, macro.confidence
     return technical_bias(underlying), technical_confidence
