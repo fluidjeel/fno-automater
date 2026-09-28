@@ -20,8 +20,8 @@ from tests.test_disc_a19_exit_quote_protection import (
     _reject_exit_without_quotes,
 )
 from tests.test_paper_lifecycle import _option_snapshot
-from trading.domain.clock import FrozenClock
 from trading.broker.paper import PaperBroker
+from trading.domain.clock import FrozenClock
 from trading.domain.contracts import (
     IntentLeg,
     PositionLegState,
@@ -504,3 +504,395 @@ class TestOpsRetryRealPersistedState:
         )
         assert opened.trade_id not in result.trade_ids
         assert any(symbol in line for line in result.leg_skips)
+
+
+class TestOraclePersistedShape:
+    """Reproduce Oracle trades …017 (partial straddle) and …045 (strangle)."""
+
+    def test_partial_straddle_open_empty_exit_order_ids_sqlite_idem(
+        self,
+        store: TradingStore,
+        clock: FrozenClock,
+        tmp_path: Path,
+    ) -> None:
+        """017: one CE leg left, PE filled, CE rejected, exit_order_ids cleared."""
+        from tests.test_disc_a4_touch_fills import _discovery_broker
+        from trading.domain.ids import derive_idempotency_key
+
+        call_contract = f.option_contract(
+            symbol="NSE:NIFTY26O0622950CE",
+            strike=Decimal("22950"),
+        )
+        put_contract = f.option_contract(
+            symbol="NSE:NIFTY26O0622950PE",
+            strike=Decimal("22950"),
+            option_type=OptionType.PUT,
+        )
+        intent = f.intent(
+            legs=(
+                IntentLeg(
+                    leg_id="leg-put", contract=put_contract, side=Side.BUY, ratio=1
+                ),
+                IntentLeg(
+                    leg_id="leg-call", contract=call_contract, side=Side.BUY, ratio=1
+                ),
+            )
+        )
+        policy = build_exit_policy(
+            f.exit_template(stop_distance_ticks=200),
+            trade_id="TRD-ORACLE-017",
+            policy_id="EXIT-017",
+            entry_price=f.price("176.05"),
+            initialized_at=clock.now_utc(),
+            scope=ExitScope.STRATEGY_PNL,
+            quantity_contracts=65,
+            entry_strategy_pnl=Money.of("0.00", Currency.INR),
+        )
+        position = f.position_state(
+            trade_id="TRD-ORACLE-017",
+            intent_id=intent.intent_id,
+            state=TradeState.OPEN,
+            legs=(
+                PositionLegState(
+                    leg_id="leg-call",
+                    contract=call_contract,
+                    side=Side.BUY,
+                    quantity_contracts=65,
+                    average_entry_price=f.price("176.05"),
+                ),
+            ),
+            entry_legs=(
+                PositionLegState(
+                    leg_id="leg-put",
+                    contract=put_contract,
+                    side=Side.BUY,
+                    quantity_contracts=65,
+                    average_entry_price=f.price("200.65"),
+                ),
+                PositionLegState(
+                    leg_id="leg-call",
+                    contract=call_contract,
+                    side=Side.BUY,
+                    quantity_contracts=65,
+                    average_entry_price=f.price("176.05"),
+                ),
+            ),
+            exit_policy=policy,
+            protective_order_ids=("PROT-019", "PROT-021"),
+            opened_at=clock.now_utc(),
+        )
+        record = PositionLifecycleRecord(
+            trade_id=position.trade_id,
+            position=position,
+            intent=intent,
+            risk_decision=f.risk_decision(
+                intent_id=intent.intent_id, capital_reservation_id="RES-017"
+            ),
+            holding_style=HoldingStyle.INTRADAY,
+            as_of=position.as_of,
+            exit_order_ids=(),
+        )
+        store.upsert_position_lifecycle(record, event_id="PLC-017")
+        store.upsert_reservation(f.capital_reservation(reservation_id="RES-017"))
+        ce_idem = derive_idempotency_key(
+            account_id="ACC-PAPER-1",
+            strategy_id=intent.strategy_id,
+            strategy_version=intent.strategy_version,
+            intent_id=intent.intent_id,
+            leg_id="leg-call-exit",
+            side=Side.SELL.value,
+            quantity_contracts=65,
+        )
+        rejected_ce = f.order_event(
+            event_id="EVT-017-CE-REJECT",
+            identity=f.order_identity(
+                internal_order_id="ORD-017-099",
+                trade_id=position.trade_id,
+                idempotency_key=ce_idem,
+            ),
+            command=f.order_command(
+                contract=call_contract,
+                side=Side.SELL,
+                quantity_contracts=65,
+                limit_price=f.price("168.20"),
+            ),
+            state=OrderState.REJECTED,
+            reason_code=ReasonCode.PRICE_UNAVAILABLE,
+            acknowledged_quantity=0,
+            received_at=clock.now_utc(),
+        )
+        store.append(
+            TradingEventType.ORDER_EVENT, rejected_ce, event_id=rejected_ce.event_id
+        )
+        store.register_idempotency_key(ce_idem, rejected_ce.event_id)
+        filled_pe = f.order_event(
+            event_id="EVT-017-PE-FILL",
+            identity=f.order_identity(
+                internal_order_id="ORD-017-PE",
+                trade_id=position.trade_id,
+            ),
+            command=f.order_command(
+                contract=put_contract,
+                side=Side.SELL,
+                quantity_contracts=65,
+                limit_price=f.price("203.20"),
+            ),
+            state=OrderState.FILLED,
+            average_fill_price=f.price("203.20"),
+            filled_quantity=65,
+            acknowledged_quantity=65,
+            received_at=clock.now_utc(),
+        )
+        broker = _discovery_broker(clock)
+        payload = broker.dump_state()
+        payload["positions"] = [
+            f.position_record(
+                trade_id=position.trade_id,
+                contract=call_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+            ).model_dump(mode="json")
+        ]
+        payload["orders"] = [
+            filled_pe.model_dump(mode="json"),
+            rejected_ce.model_dump(mode="json"),
+        ]
+        broker.load_state(payload)
+        runner = _discovery_touch_runner(store, clock)
+        runner.broker.load_state(payload)
+        runner.recover_lifecycle()
+
+        session_root = _paper_repo_root(tmp_path)
+        store_path = session_root / "data" / "paper" / "trading.sqlite"
+        store.close()
+        import shutil
+
+        shutil.copy(tmp_path / "paper.sqlite", store_path)
+        broker_state = session_root / "data" / "paper" / "broker_state.json"
+        broker_state.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        quotes_path = session_root / "recovery_quotes.json"
+        quotes_path.write_text(
+            json.dumps(
+                {
+                    "NSE:NIFTY26O0622950CE": {
+                        "bid": "170.00",
+                        "ask": "170.05",
+                        "last": "170.00",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = retry_stuck_paper_exits(
+            session_root,
+            quotes_json=quotes_path,
+            trade_id=position.trade_id,
+            clock=clock,
+        )
+        assert position.trade_id in result.trade_ids
+
+        reopened = TradingStore.open(store_path, clock=clock)
+        closed = reopened.get_position_lifecycle(position.trade_id)
+        assert closed is not None
+        assert closed.position.state is TradeState.CLOSED
+        fills = _filled_exit_events(reopened, position.trade_id)
+        ce_fills = [
+            event
+            for event in fills
+            if event.command.contract.symbol == call_contract.symbol
+        ]
+        assert len(ce_fills) == 1
+        assert ce_fills[0].average_fill_price == f.price("170.00")
+        idem_row = reopened._conn.execute(
+            "SELECT 1 FROM idempotency_keys WHERE idempotency_key = ?",
+            (ce_idem,),
+        ).fetchone()
+        assert idem_row is not None
+        broker_payload = json.loads(broker_state.read_text(encoding="utf-8"))
+        broker_orders = broker_payload.get("orders", [])
+        assert any(
+            isinstance(row, dict)
+            and row.get("identity", {}).get("internal_order_id") == "ORD-017-PE"
+            and row.get("state") == OrderState.FILLED.value
+            for row in broker_orders
+        )
+        assert not any(
+            isinstance(row, dict) and row.get("state") == OrderState.REJECTED.value
+            for row in broker_orders
+        )
+        reopened.close()
+
+    def test_strangle_open_empty_exit_order_ids_pe_rejected_only(
+        self,
+        store: TradingStore,
+        clock: FrozenClock,
+        tmp_path: Path,
+    ) -> None:
+        """045: both legs open, PE rejected in broker, CE never submitted."""
+        from tests.test_disc_a4_touch_fills import _discovery_broker
+        from trading.domain.ids import derive_idempotency_key
+
+        put_contract = f.option_contract(
+            symbol="NSE:NIFTY26O0622800PE",
+            strike=Decimal("22800"),
+            option_type=OptionType.PUT,
+        )
+        call_contract = f.option_contract(
+            symbol="NSE:NIFTY26O0622900CE",
+            strike=Decimal("22900"),
+        )
+        intent = f.intent(
+            legs=(
+                IntentLeg(
+                    leg_id="leg-put", contract=put_contract, side=Side.BUY, ratio=1
+                ),
+                IntentLeg(
+                    leg_id="leg-call", contract=call_contract, side=Side.BUY, ratio=1
+                ),
+            )
+        )
+        policy = build_exit_policy(
+            f.exit_template(stop_distance_ticks=200),
+            trade_id="TRD-ORACLE-045",
+            policy_id="EXIT-045",
+            entry_price=f.price("170.00"),
+            initialized_at=clock.now_utc(),
+            scope=ExitScope.STRATEGY_PNL,
+            quantity_contracts=65,
+            entry_strategy_pnl=Money.of("0.00", Currency.INR),
+        )
+        position = f.position_state(
+            trade_id="TRD-ORACLE-045",
+            intent_id=intent.intent_id,
+            state=TradeState.OPEN,
+            legs=(
+                PositionLegState(
+                    leg_id="leg-put",
+                    contract=put_contract,
+                    side=Side.BUY,
+                    quantity_contracts=65,
+                    average_entry_price=f.price("137.25"),
+                ),
+                PositionLegState(
+                    leg_id="leg-call",
+                    contract=call_contract,
+                    side=Side.BUY,
+                    quantity_contracts=65,
+                    average_entry_price=f.price("202.75"),
+                ),
+            ),
+            exit_policy=policy,
+            protective_order_ids=("PROT-045",),
+            opened_at=clock.now_utc(),
+        )
+        record = PositionLifecycleRecord(
+            trade_id=position.trade_id,
+            position=position,
+            intent=intent,
+            risk_decision=f.risk_decision(
+                intent_id=intent.intent_id, capital_reservation_id="RES-045"
+            ),
+            holding_style=HoldingStyle.INTRADAY,
+            as_of=position.as_of,
+            exit_order_ids=(),
+        )
+        store.upsert_position_lifecycle(record, event_id="PLC-045")
+        store.upsert_reservation(f.capital_reservation(reservation_id="RES-045"))
+        pe_idem = derive_idempotency_key(
+            account_id="ACC-PAPER-1",
+            strategy_id=intent.strategy_id,
+            strategy_version=intent.strategy_version,
+            intent_id=intent.intent_id,
+            leg_id="leg-put-exit",
+            side=Side.SELL.value,
+            quantity_contracts=65,
+        )
+        rejected_pe = f.order_event(
+            event_id="EVT-045-PE-REJECT",
+            identity=f.order_identity(
+                internal_order_id="ORD-045-116",
+                trade_id=position.trade_id,
+                idempotency_key=pe_idem,
+            ),
+            command=f.order_command(
+                contract=put_contract,
+                side=Side.SELL,
+                quantity_contracts=65,
+                limit_price=f.price("139.20"),
+            ),
+            state=OrderState.REJECTED,
+            reason_code=ReasonCode.PRICE_UNAVAILABLE,
+            acknowledged_quantity=0,
+            received_at=clock.now_utc(),
+        )
+        store.append(
+            TradingEventType.ORDER_EVENT, rejected_pe, event_id=rejected_pe.event_id
+        )
+        store.register_idempotency_key(pe_idem, rejected_pe.event_id)
+        broker = _discovery_broker(clock)
+        payload = broker.dump_state()
+        payload["positions"] = [
+            f.position_record(
+                trade_id=position.trade_id,
+                contract=put_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+            ).model_dump(mode="json"),
+            f.position_record(
+                trade_id=position.trade_id,
+                contract=call_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+            ).model_dump(mode="json"),
+        ]
+        payload["orders"] = [rejected_pe.model_dump(mode="json")]
+        broker.load_state(payload)
+        runner = _discovery_touch_runner(store, clock)
+        runner.broker.load_state(payload)
+        runner.recover_lifecycle()
+
+        session_root = _paper_repo_root(tmp_path)
+        store_path = session_root / "data" / "paper" / "trading.sqlite"
+        store.close()
+        import shutil
+
+        shutil.copy(tmp_path / "paper.sqlite", store_path)
+        broker_state = session_root / "data" / "paper" / "broker_state.json"
+        broker_state.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        quotes_path = session_root / "recovery_quotes.json"
+        quotes_path.write_text(
+            json.dumps(
+                {
+                    "NSE:NIFTY26O0622800PE": {
+                        "bid": "140.00",
+                        "ask": "140.05",
+                        "last": "140.00",
+                    },
+                    "NSE:NIFTY26O0622900CE": {
+                        "bid": "205.00",
+                        "ask": "205.05",
+                        "last": "205.00",
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = retry_stuck_paper_exits(
+            session_root,
+            quotes_json=quotes_path,
+            trade_id=position.trade_id,
+            clock=clock,
+        )
+        assert position.trade_id in result.trade_ids
+
+        reopened = TradingStore.open(store_path, clock=clock)
+        closed = reopened.get_position_lifecycle(position.trade_id)
+        assert closed is not None
+        assert closed.position.state is TradeState.CLOSED
+        fills = _filled_exit_events(reopened, position.trade_id)
+        assert len(fills) == 2
+        fill_prices = {event.average_fill_price for event in fills}
+        assert fill_prices == {f.price("140.00"), f.price("205.00")}
+        reopened.close()
