@@ -33,6 +33,7 @@ from trading.domain.enums import (
     HoldingStyle,
     ModeId,
     OptionType,
+    OrderState,
     QuoteMonitorSource,
     ReasonCode,
     ReviewSlotId,
@@ -132,6 +133,82 @@ def _open_positional_strangle(
     runner.recover_lifecycle()
 
 
+class TestPartialStraddleScheduledReview:
+    def test_closed_monitor_leg_review_uses_remaining_ce_quote(
+        self, store: TradingStore, clock: FrozenClock
+    ) -> None:
+        """Invariant 6: partial straddle review quotes the remaining open leg."""
+        put_contract = f.option_contract(
+            symbol="NIFTY26OCT22950PE",
+            strike=Decimal("22950"),
+            option_type=OptionType.PUT,
+        )
+        call_contract = f.option_contract(
+            symbol="NIFTY26OCT22950CE", strike=Decimal("22950")
+        )
+        entry_legs = (
+            f.position_leg_state(leg_id="put", contract=put_contract, side=Side.BUY),
+            f.position_leg_state(leg_id="call", contract=call_contract, side=Side.BUY),
+        )
+        intent = _positional_strangle_intent(entry_legs)
+        policy = build_exit_policy(
+            f.exit_template(stop_distance_ticks=40),
+            trade_id="TRD-REV-017",
+            policy_id="EXIT-REV-017",
+            entry_price=f.price("88.00"),
+            initialized_at=NOW,
+            scope=ExitScope.LEG_PRICE,
+            quantity_contracts=65,
+        )
+        open_leg = f.position_leg_state(
+            leg_id="call",
+            contract=call_contract,
+            side=Side.BUY,
+            quantity_contracts=65,
+            average_entry_price=f.price("88.00"),
+        )
+        position = f.position_state(
+            trade_id="TRD-REV-017",
+            state=TradeState.OPEN,
+            legs=(open_leg,),
+            entry_legs=entry_legs,
+            exit_policy=policy,
+            protective_order_ids=("PROT-1",),
+            opened_at=NOW,
+            mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+        )
+        store.upsert_position_lifecycle(
+            PositionLifecycleRecord(
+                trade_id=position.trade_id,
+                position=position,
+                intent=intent,
+                risk_decision=f.risk_decision(intent_id=intent.intent_id),
+                holding_style=HoldingStyle.POSITIONAL,
+                as_of=position.as_of,
+            ),
+            event_id="PLC-REV-017",
+        )
+        runner = _discovery_runner(store, clock)
+        runner.recover_lifecycle()
+        call_symbol = call_contract.symbol
+        runner.on_quote_update(
+            {call_symbol: _rest_quote("90.00")},
+            source=QuoteMonitorSource.REST,
+            received_at=clock.now_utc(),
+            quote_max_age_ms=DISCOVERY.hard_quote_max_age_ms,
+        )
+        result = runner.run_review_slot(
+            MORNING_SLOT,
+            {},
+            session_date=SESSION_DATE,
+        )
+        assert result.decisions
+        assert all(
+            decision.reason_code is not ReasonCode.UNPROTECTED_POSITION
+            for decision in result.decisions
+        )
+
+
 class TestScheduledReviewRestProtection:
     def test_off_chain_leg_uses_rest_in_scheduled_review(
         self, store: TradingStore, clock: FrozenClock
@@ -209,19 +286,28 @@ class TestPartialStructureRecovery:
             config=EXITS,
             scope=ExitScope.STRATEGY_PNL,
         )
+        entry_legs = (
+            f.position_leg_state(
+                leg_id="put",
+                contract=put_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+                average_entry_price=f.price("90.00"),
+            ),
+            f.position_leg_state(
+                leg_id="call",
+                contract=call_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+                average_entry_price=f.price("88.00"),
+            ),
+        )
         position = f.position_state(
             trade_id="TRD-PARTIAL-A26",
             intent_id=intent.intent_id,
             state=TradeState.OPEN,
-            legs=(
-                f.position_leg_state(
-                    leg_id="call",
-                    contract=call_contract,
-                    side=Side.BUY,
-                    quantity_contracts=65,
-                    average_entry_price=f.price("88.00"),
-                ),
-            ),
+            legs=(entry_legs[1],),
+            entry_legs=entry_legs,
             exit_policy=policy,
             protective_order_ids=("PROT-1",),
             opened_at=NOW,
@@ -258,6 +344,100 @@ class TestPartialStructureRecovery:
         )
         freeze = store.get_entry_freeze()
         assert freeze is None or freeze.entries_blocked is False
+
+    def test_entry_legs_and_filled_exit_do_not_freeze_on_restart(
+        self, store: TradingStore, clock: FrozenClock
+    ) -> None:
+        """Invariant 15: closed legs with broker FILLED exits are not partial-fill drift."""
+        put_contract = f.option_contract(
+            symbol="NIFTY26OCT22950PE",
+            strike=Decimal("22950"),
+            option_type=OptionType.PUT,
+        )
+        call_contract = f.option_contract(
+            symbol="NIFTY26OCT22950CE", strike=Decimal("22950")
+        )
+        entry_legs = (
+            f.position_leg_state(
+                leg_id="put",
+                contract=put_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+                average_entry_price=f.price("90.00"),
+            ),
+            f.position_leg_state(
+                leg_id="call",
+                contract=call_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+                average_entry_price=f.price("88.00"),
+            ),
+        )
+        intent = _positional_strangle_intent(entry_legs)
+        policy = build_discovery_exit_policy(
+            intent,
+            (entry_legs[1],),
+            f.exit_template(stop_distance_ticks=40),
+            trade_id="TRD-017",
+            policy_id="EXIT-017",
+            initialized_at=NOW,
+            config=EXITS,
+            scope=ExitScope.STRATEGY_PNL,
+        )
+        position = f.position_state(
+            trade_id="TRD-017",
+            intent_id=intent.intent_id,
+            state=TradeState.OPEN,
+            legs=(entry_legs[1],),
+            entry_legs=entry_legs,
+            exit_policy=policy,
+            protective_order_ids=("PROT-1",),
+            opened_at=NOW,
+            mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+        )
+        record = PositionLifecycleRecord(
+            trade_id=position.trade_id,
+            position=position,
+            intent=intent,
+            risk_decision=f.risk_decision(intent_id=intent.intent_id),
+            holding_style=HoldingStyle.POSITIONAL,
+            as_of=position.as_of,
+        )
+        store.upsert_position_lifecycle(record, event_id="PLC-017")
+        broker = PaperBroker.from_fixtures(
+            BROKER_FIXTURES, clock=clock, id_factory=SequentialIdFactory(clock.instant)
+        )
+        payload = broker.dump_state()
+        payload["positions"] = [
+            f.position_record(
+                trade_id=position.trade_id,
+                contract=call_contract,
+                side=Side.BUY,
+                quantity_contracts=65,
+            ).model_dump(mode="json")
+        ]
+        payload["orders"] = [
+            f.order_event(
+                identity=f.order_identity(
+                    trade_id=position.trade_id, internal_order_id="EXIT-PE"
+                ),
+                command=f.order_command(
+                    contract=put_contract, side=Side.SELL, quantity_contracts=65
+                ),
+                state=OrderState.FILLED,
+                acknowledged_quantity=65,
+                filled_quantity=65,
+                average_fill_price=f.price("85.00"),
+            ).model_dump(mode="json")
+        ]
+        broker.load_state(payload)
+        runner = _discovery_runner_with_broker(store, clock, broker)
+        recovery = runner.recover_lifecycle()
+        assert recovery.entries_blocked is False
+        assert not any(
+            alert.reason_code is ReasonCode.PARTIAL_FILL_UNREPAIRED
+            for alert in recovery.alerts
+        )
 
     def test_strict_still_flags_partial_structure_mismatch(self) -> None:
         """STRICT recovery keeps PARTIAL_FILL_UNREPAIRED for leg-count drift."""

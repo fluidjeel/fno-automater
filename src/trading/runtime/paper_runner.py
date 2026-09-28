@@ -31,6 +31,7 @@ from trading.domain.contracts import (
     EntryFreezeRecord,
     FeatureSnapshot,
     InstrumentSpec,
+    IntentLeg,
     MarketState,
     OrderEvent,
     PositionCarryRecord,
@@ -832,7 +833,10 @@ class PaperRunner:
                 unprotected.append(persisted.trade_id)
             broker_legs = tuple(broker_by_trade.get(persisted.trade_id, ()))
             for alert in _lifecycle_issues(
-                persisted, broker_legs, entry_profile=self._entry_profile
+                persisted,
+                broker_legs,
+                exit_orders=self._services.broker.list_orders(),
+                entry_profile=self._entry_profile,
             ):
                 alerts.append(alert)
                 if alert.reason_code is ReasonCode.PROTECTIVE_COVERAGE_MISSING:
@@ -1284,7 +1288,7 @@ class PaperRunner:
                 intent=intent,
                 decision=decision,
                 position=position,
-                snapshots=snapshots,
+                snapshots=review_snapshots,
                 review_id=review_id,
             )
             try:
@@ -3478,10 +3482,22 @@ def _review_already_recorded(
 
 
 def _monitor_snapshot(
-    intent: TradeIntent, leg_snapshots: Mapping[str, FeatureSnapshot]
+    position: PositionState,
+    intent: TradeIntent,
+    leg_snapshots: Mapping[str, FeatureSnapshot],
 ) -> FeatureSnapshot | None:
+    """Monitor leg snapshot, or the first remaining open leg after partial exit."""
+    open_ids = {leg.leg_id for leg in position.legs}
     watched = monitor_leg(intent)
-    return leg_snapshots.get(watched.leg_id)
+    if watched.leg_id in open_ids:
+        snap = leg_snapshots.get(watched.leg_id)
+        if snap is not None:
+            return snap
+    for leg in position.legs:
+        snap = leg_snapshots.get(leg.leg_id)
+        if snap is not None:
+            return snap
+    return None
 
 
 def _exit_feature_snapshot(
@@ -3490,19 +3506,7 @@ def _exit_feature_snapshot(
     leg_snapshots: Mapping[str, FeatureSnapshot],
 ) -> FeatureSnapshot | None:
     """Pick the monitor snapshot, or any remaining leg for partial structures."""
-    feature = _monitor_snapshot(intent, leg_snapshots)
-    if feature is not None:
-        return feature
-    if position.exit_policy.scope not in {
-        ExitScope.STRATEGY_PNL,
-        ExitScope.SPREAD_VALUE,
-    }:
-        return None
-    for leg in position.legs:
-        snap = leg_snapshots.get(leg.leg_id)
-        if snap is not None:
-            return snap
-    return None
+    return _monitor_snapshot(position, intent, leg_snapshots)
 
 
 def _lifecycle_unchanged(
@@ -3523,20 +3527,33 @@ def _lifecycle_unchanged(
     )
 
 
-def _legitimate_partial_structure(
+def _is_exit_order_for_leg(intent_leg: IntentLeg, event: OrderEvent) -> bool:
+    if event.command.contract.symbol != intent_leg.contract.symbol:
+        return False
+    if intent_leg.side is Side.BUY:
+        return event.command.side is Side.SELL
+    return event.command.side is Side.BUY
+
+
+def _leg_has_filled_exit(
+    trade_id: str,
+    intent_leg: IntentLeg,
+    exit_orders: tuple[OrderEvent, ...],
+) -> bool:
+    for event in exit_orders:
+        if event.identity.trade_id != trade_id:
+            continue
+        if event.state is not OrderState.FILLED or event.filled_quantity <= 0:
+            continue
+        if _is_exit_order_for_leg(intent_leg, event):
+            return True
+    return False
+
+
+def _open_legs_match_broker(
     position: PositionState,
-    intent: TradeIntent,
     broker_legs: tuple[PositionRecord, ...],
 ) -> bool:
-    """Remaining open legs after recorded exit fills, reconciled to broker."""
-    if position.state is TradeState.REPAIR_REQUIRED:
-        return False
-    open_leg_ids = {leg.leg_id for leg in position.legs}
-    intent_leg_ids = {leg.leg_id for leg in intent.legs}
-    if not open_leg_ids or not open_leg_ids.issubset(intent_leg_ids):
-        return False
-    if len(open_leg_ids) >= len(intent_leg_ids):
-        return False
     local_keys = {
         (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in position.legs
     }
@@ -3546,10 +3563,44 @@ def _legitimate_partial_structure(
     return local_keys == broker_keys
 
 
+def _legitimate_partial_structure(
+    position: PositionState,
+    intent: TradeIntent,
+    broker_legs: tuple[PositionRecord, ...],
+    exit_orders: tuple[OrderEvent, ...],
+) -> bool:
+    """Remaining open legs after broker-confirmed exit fills on closed legs."""
+    if position.state is TradeState.REPAIR_REQUIRED:
+        return False
+    open_leg_ids = {leg.leg_id for leg in position.legs}
+    intent_leg_ids = {leg.leg_id for leg in intent.legs}
+    if not open_leg_ids or not open_leg_ids.issubset(intent_leg_ids):
+        return False
+    missing_leg_ids = intent_leg_ids - open_leg_ids
+    if not missing_leg_ids:
+        return False
+    entry_leg_ids = {leg.leg_id for leg in position.entry_legs or ()}
+    entry_was_complete = bool(entry_leg_ids) and intent_leg_ids <= entry_leg_ids
+    closed_by_fill = all(
+        _leg_has_filled_exit(
+            position.trade_id,
+            next(leg for leg in intent.legs if leg.leg_id == leg_id),
+            exit_orders,
+        )
+        for leg_id in missing_leg_ids
+    )
+    if closed_by_fill:
+        return not broker_legs or _open_legs_match_broker(position, broker_legs)
+    return entry_was_complete and (
+        not broker_legs or _open_legs_match_broker(position, broker_legs)
+    )
+
+
 def _lifecycle_issues(
     record: PositionLifecycleRecord,
     broker_legs: tuple[PositionRecord, ...],
     *,
+    exit_orders: tuple[OrderEvent, ...] = (),
     entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> tuple[LifecycleAlert, ...]:
     alerts: list[LifecycleAlert] = []
@@ -3578,7 +3629,9 @@ def _lifecycle_issues(
         )
     elif len(position.legs) != len(record.intent.legs) and not (
         entry_profile is EntryProfile.DISCOVERY
-        and _legitimate_partial_structure(position, record.intent, broker_legs)
+        and _legitimate_partial_structure(
+            position, record.intent, broker_legs, exit_orders
+        )
     ):
         alerts.append(
             LifecycleAlert(
