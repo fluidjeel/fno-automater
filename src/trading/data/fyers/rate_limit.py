@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -12,6 +14,8 @@ __all__ = ["FyersRestRateLimiter"]
 
 _FYERS_MAX_PER_SECOND = 10
 _FYERS_MAX_PER_MINUTE = 200
+_DEFAULT_MAX_WAIT = timedelta(seconds=15)
+_POLL_INTERVAL = 0.05
 
 
 @dataclass
@@ -36,6 +40,24 @@ class FyersRestRateLimiter:
         self._second_window.append(now)
         self._minute_window.append(now)
         return True
+
+    def acquire_or_wait(
+        self,
+        *,
+        max_wait: timedelta = _DEFAULT_MAX_WAIT,
+        sleep: Callable[[float], None] | None = None,
+    ) -> bool:
+        """Block until a token is available or ``max_wait`` elapses."""
+        sleeper = sleep if sleep is not None else time.sleep
+        deadline = self.clock.now_utc() + max_wait
+        while True:
+            if self.acquire():
+                return True
+            now = self.clock.now_utc()
+            if now >= deadline:
+                return False
+            remaining = (deadline - now).total_seconds()
+            sleeper(min(_POLL_INTERVAL, remaining))
 
     @staticmethod
     def _prune(

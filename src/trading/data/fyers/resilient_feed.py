@@ -22,9 +22,12 @@ _LOG = logging.getLogger(__name__)
 _MARKET_STATUS_TTL_SECONDS = 60
 _NEAR_CHAIN_TTL_SECONDS = 90
 _SUPPLEMENTAL_CHAIN_TTL_SECONDS = 240
+_HISTORY_TTL_SECONDS = 900
 _BACKOFF_BASE_SECONDS = 30.0
 _BACKOFF_MAX_SECONDS = 300.0
 _BACKOFF_JITTER = 0.10
+_RATE_LIMIT_WAIT = timedelta(seconds=15)
+_RATE_LIMIT_ERROR = "Fyers error 429: request limit reached"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,15 @@ class _CachedCapture:
 
 def _chain_key(symbol: str, expiry_epoch: int | None) -> tuple[str, int | None]:
     return symbol, expiry_epoch
+
+
+def _history_key(
+    symbol: str,
+    resolution: str,
+    range_from: str,
+    range_to: str,
+) -> tuple[str, str, str, str]:
+    return symbol, resolution, range_from, range_to
 
 
 def _is_transient_fyers_error(exc: FyersApiError) -> bool:
@@ -61,6 +73,7 @@ class ResilientFyersMarketFeed:
         self._rng = rng or random.Random()  # noqa: S311
         self._market_status: _CachedCapture | None = None
         self._chains: dict[tuple[str, int | None], _CachedCapture] = {}
+        self._history: dict[tuple[str, str, str, str], _CachedCapture] = {}
         self._backoff_until: datetime | None = None
         self._backoff_seconds = _BACKOFF_BASE_SECONDS
 
@@ -88,7 +101,7 @@ class ResilientFyersMarketFeed:
                 expiry_epoch,
             )
             return cached.capture
-        if not self._limiter.acquire() and cached is not None:
+        if not self._reserve_rest_call() and cached is not None:
             _LOG.warning(
                 "Fyers REST rate cap; serving cached option chain %s epoch=%s",
                 symbol,
@@ -116,8 +129,8 @@ class ResilientFyersMarketFeed:
         return capture
 
     def fetch_quotes(self, symbols: Sequence[str]) -> RawMarketCapture:
-        if not self._limiter.acquire():
-            raise FyersApiError("Fyers error 429: request limit reached")
+        if not self._reserve_rest_call():
+            raise FyersApiError(_RATE_LIMIT_ERROR)
         return self._inner.fetch_quotes(symbols)
 
     def fetch_history(
@@ -131,21 +144,49 @@ class ResilientFyersMarketFeed:
         cont_flag: int = 0,
         oi_flag: int | None = None,
     ) -> RawMarketCapture:
-        if not self._limiter.acquire():
-            raise FyersApiError("Fyers error 429: request limit reached")
-        return self._inner.fetch_history(
-            symbol,
-            resolution=resolution,
-            range_from=range_from,
-            range_to=range_to,
-            date_format=date_format,
-            cont_flag=cont_flag,
-            oi_flag=oi_flag,
+        key = _history_key(symbol, resolution, range_from, range_to)
+        cached = self._history.get(key)
+        if cached is not None and self._fresh(cached, _HISTORY_TTL_SECONDS):
+            return cached.capture
+        if not self._reserve_rest_call():
+            if cached is not None:
+                _LOG.warning(
+                    "Fyers REST rate cap; serving cached history %s res=%s",
+                    symbol,
+                    resolution,
+                )
+                return cached.capture
+            raise FyersApiError(_RATE_LIMIT_ERROR)
+        try:
+            capture = self._inner.fetch_history(
+                symbol,
+                resolution=resolution,
+                range_from=range_from,
+                range_to=range_to,
+                date_format=date_format,
+                cont_flag=cont_flag,
+                oi_flag=oi_flag,
+            )
+        except FyersApiError as exc:
+            if cached is not None and _is_transient_fyers_error(exc):
+                self._enter_backoff(exc)
+                _LOG.warning(
+                    "history fetch failed for %s res=%s: %s; cached history retained",
+                    symbol,
+                    resolution,
+                    exc,
+                )
+                return cached.capture
+            raise
+        self._history[key] = _CachedCapture(
+            capture=capture, stored_at_mono=time.monotonic()
         )
+        self._clear_backoff()
+        return capture
 
     def fetch_depth(self, symbol: str, *, ohlcv_flag: int = 1) -> RawMarketCapture:
-        if not self._limiter.acquire():
-            raise FyersApiError("Fyers error 429: request limit reached")
+        if not self._reserve_rest_call():
+            raise FyersApiError(_RATE_LIMIT_ERROR)
         return self._inner.fetch_depth(symbol, ohlcv_flag=ohlcv_flag)
 
     def fetch_market_status(self) -> RawMarketCapture:
@@ -155,7 +196,7 @@ class ResilientFyersMarketFeed:
         if self._in_backoff() and cached is not None:
             _LOG.warning("Fyers backoff active; serving cached market status")
             return cached.capture
-        if not self._limiter.acquire() and cached is not None:
+        if not self._reserve_rest_call() and cached is not None:
             _LOG.warning("Fyers REST rate cap; serving cached market status")
             return cached.capture
         try:
@@ -176,9 +217,13 @@ class ResilientFyersMarketFeed:
         return capture
 
     def fetch_expiry_dates(self, symbol: str) -> RawMarketCapture:
-        if not self._limiter.acquire():
-            raise FyersApiError("Fyers error 429: request limit reached")
+        if not self._reserve_rest_call():
+            raise FyersApiError(_RATE_LIMIT_ERROR)
         return self._inner.fetch_expiry_dates(symbol)
+
+    def _reserve_rest_call(self) -> bool:
+        """Wait up to 15s for a REST token before giving up."""
+        return self._limiter.acquire_or_wait(max_wait=_RATE_LIMIT_WAIT)
 
     def _fresh(self, entry: _CachedCapture, ttl_seconds: float) -> bool:
         return time.monotonic() - entry.stored_at_mono < ttl_seconds
