@@ -250,6 +250,15 @@ class TradingStore:
         with self._transaction():
             self._register_idempotency_key(idempotency_key, owner_ref, stamp)
 
+    def has_idempotency_key(self, idempotency_key: str) -> bool:
+        """Return True when ``idempotency_key`` is already registered."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM idempotency_keys WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        return row is not None
+
     def read_events(self, *, after_sequence: int = 0) -> tuple[StoredTradingEvent, ...]:
         """Return events in ascending sequence order for crash recovery."""
         with self._lock:
