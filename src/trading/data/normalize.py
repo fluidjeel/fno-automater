@@ -16,6 +16,7 @@ __all__ = [
     "normalize_fyers_market_status",
     "normalize_fyers_option_chain",
     "normalize_fyers_quotes",
+    "normalize_fyers_quotes_batch",
     "normalize_fyers_ws_tick",
 ]
 
@@ -85,6 +86,29 @@ def normalize_fyers_option_chain(
     )
 
 
+def _fyers_quote_value_for_symbol(
+    rows: list[Any],
+    symbol: str,
+    *,
+    require_ok_status: bool,
+    require_bid_ask: bool = False,
+) -> dict[str, Any] | None:
+    for row in rows:
+        if not isinstance(row, dict) or row.get("n") != symbol:
+            continue
+        if require_ok_status and row.get("s") != "ok":
+            return None
+        value = row.get("v")
+        if not isinstance(value, dict):
+            return None
+        if require_bid_ask and (
+            value.get("bid") is None or value.get("ask") is None
+        ):
+            return None
+        return {"symbol": symbol, **value}
+    return None
+
+
 def normalize_fyers_quotes(
     capture: RawMarketCapture,
     *,
@@ -93,14 +117,10 @@ def normalize_fyers_quotes(
     raw_ref: str,
 ) -> CanonicalMarketEvent:
     """Map one Fyers quotes response to a canonical quote snapshot."""
-    quotes: list[dict[str, Any]] = []
     rows = capture.payload.get("d", [])
-    if isinstance(rows, list):
-        for row in rows:
-            if isinstance(row, dict) and row.get("n") == symbol:
-                value = row.get("v")
-                if isinstance(value, dict):
-                    quotes.append({"symbol": symbol, **value})
+    row_list = rows if isinstance(rows, list) else []
+    quote = _fyers_quote_value_for_symbol(row_list, symbol, require_ok_status=False)
+    quotes = [quote] if quote is not None else []
     payload = {
         "symbol": symbol,
         "quote_count": len(quotes),
@@ -119,6 +139,47 @@ def normalize_fyers_quotes(
         raw_ref=raw_ref,
         normalization_version=normalization_version,
     )
+
+
+def normalize_fyers_quotes_batch(
+    capture: RawMarketCapture,
+    *,
+    symbols: tuple[str, ...],
+    normalization_version: str,
+    raw_ref: str,
+) -> dict[str, CanonicalMarketEvent]:
+    """Map one batched Fyers /quotes response to per-symbol quote snapshots."""
+    rows = capture.payload.get("d", [])
+    row_list = rows if isinstance(rows, list) else []
+    events: dict[str, CanonicalMarketEvent] = {}
+    for index, symbol in enumerate(symbols):
+        quote = _fyers_quote_value_for_symbol(
+            row_list,
+            symbol,
+            require_ok_status=True,
+            require_bid_ask=True,
+        )
+        if quote is None:
+            continue
+        payload = {
+            "symbol": symbol,
+            "quote_count": 1,
+            "quotes": [quote],
+        }
+        events[symbol] = CanonicalMarketEvent(
+            event_id=_event_id("quote", capture.capture_id, str(index)),
+            provider="fyers",
+            symbol=symbol,
+            event_type="QUOTE_SNAPSHOT",
+            event_time=capture.received_at,
+            source_time=capture.received_at,
+            receive_time=capture.received_at,
+            provider_sequence=None,
+            payload=payload,
+            raw_ref=raw_ref,
+            normalization_version=normalization_version,
+        )
+    return events
 
 
 def normalize_fyers_history(
