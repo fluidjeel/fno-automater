@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -41,9 +41,10 @@ from trading.domain.enums import (
     ReasonCode,
     ReconciliationTrigger,
     Severity,
+    Side,
     TradeState,
 )
-from trading.domain.ids import SequentialIdFactory
+from trading.domain.ids import SequentialIdFactory, derive_idempotency_key
 from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.paper_runner import PaperRunner
@@ -68,6 +69,8 @@ class PaperExitRecoveryResult:
     resolved_event_ids: tuple[str, ...]
     entries_released: bool
     detail: str
+    leg_skips: tuple[str, ...] = ()
+    verbose_log: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,31 +120,54 @@ def retry_stuck_paper_exits(
     trade_id: str | None = None,
     clock: Clock | None = None,
     dry_run: bool = False,
+    verbose: bool = False,
 ) -> PaperExitRecoveryResult:
     """Retry/force-exit stuck PAPER legs at current quotes. Never usable in LIVE."""
     quote_book = _load_quote_book(quotes, quotes_json)
     wall = clock or WallClock()
     ctx = _open_recovery_context(repo_root, clock=wall)
-    stuck = _stuck_lifecycle_records(ctx.store, trade_id=trade_id)
+    stuck = _stuck_lifecycle_records(ctx.store, ctx.broker, trade_id=trade_id)
+    if not quote_book and not stuck:
+        ctx.store.close()
+        raise ValueError("provide quotes or --quotes-json with current leg prices")
+    log: list[str] = []
+    leg_skips: list[str] = []
     if dry_run:
+        if verbose:
+            for record in stuck:
+                log.append(f"dry-run: would retry {record.trade_id}")
         ctx.store.close()
         return PaperExitRecoveryResult(
-            trade_ids=tuple(item.trade_id for item in stuck),
+            trade_ids=(),
             resolved_event_ids=(),
             entries_released=False,
             detail=f"dry-run: {len(stuck)} trade(s) would be retried",
+            verbose_log=tuple(log),
         )
-    recovered = _retry_records(ctx, stuck, quote_book, now=wall.now_utc())
+    recovered, retry_log, retry_skips = _retry_records(
+        ctx,
+        stuck,
+        quote_book,
+        now=wall.now_utc(),
+        verbose=verbose,
+        log=log,
+    )
+    log.extend(retry_log)
+    leg_skips.extend(retry_skips)
     resolved_ids = _resolve_lifecycle_reconciliation(
         ctx.store,
         trade_ids=tuple(recovered),
         now=wall.now_utc(),
         id_factory=ctx.id_factory,
     )
+    if verbose and resolved_ids:
+        log.append(f"resolved reconciliation events: {','.join(resolved_ids)}")
     boot = ctx.runner._services.reconciler.boot_reconcile(ctx.account.config.account_id)
     ctx.runner._maybe_release_entry_freeze(
         reconcile_blocked=boot.result.entries_blocked
     )
+    if verbose:
+        log.append(f"entries_released={not boot.result.entries_blocked}")
     if ctx.state_path.parent.exists():
         ctx.state_path.write_text(
             json.dumps(ctx.broker.dump_state(), indent=2) + "\n",
@@ -156,6 +182,8 @@ def retry_stuck_paper_exits(
             f"retried {len(stuck)} trade(s); closed {len(recovered)}; "
             f"resolved {len(resolved_ids)} reconciliation event(s)"
         ),
+        leg_skips=tuple(leg_skips),
+        verbose_log=tuple(log),
     )
 
 
@@ -166,8 +194,6 @@ def _load_quote_book(
     quote_book = dict(quotes or {})
     if quotes_json is not None:
         quote_book.update(load_quotes_from_json(quotes_json))
-    if not quote_book:
-        raise ValueError("provide quotes or --quotes-json with current leg prices")
     return quote_book
 
 
@@ -252,41 +278,78 @@ def _retry_records(
     quote_book: Mapping[str, MarketQuote],
     *,
     now: datetime,
-) -> list[str]:
+    verbose: bool,
+    log: list[str],
+) -> tuple[list[str], list[str], list[str]]:
     recovered: list[str] = []
+    retry_log: list[str] = []
+    leg_skips: list[str] = []
+    emit: Callable[[str], None] = retry_log.append if verbose else (lambda _msg: None)
     for record in stuck:
-        snapshots = _snapshots_for_record(record, quote_book, now=now)
+        emit(f"{record.trade_id}: begin recovery (state={record.position.state.value})")
+        snapshots, skipped = _snapshots_for_record(record, quote_book, now=now)
+        for leg_id, symbol, reason in skipped:
+            message = f"{record.trade_id}/{leg_id} ({symbol}): skipped — {reason}"
+            leg_skips.append(message)
+            emit(message)
+        if not snapshots:
+            emit(f"{record.trade_id}: no leg quotes available; skipping trade")
+            continue
         _publish_recovery_quotes(ctx, snapshots, quote_book)
-        pending = _prepare_exit_retry(ctx, record)
+        pending = _prepare_exit_retry(ctx, record, emit=emit)
         if pending is None:
+            emit(f"{record.trade_id}: position missing after purge; skipping")
             continue
         book = ctx.runner.open_book.get(record.trade_id)
         if book is None:
+            emit(f"{record.trade_id}: open book missing intent/decision; skipping")
             continue
         intent, decision = book
-        ctx.runner._submit_exit(intent, decision, pending, snapshots)
+        emit(
+            f"{record.trade_id}: submitting exit for "
+            f"{len(pending.legs)} leg(s) at operator quotes"
+        )
+        events = ctx.runner._submit_exit(
+            intent,
+            decision,
+            pending,
+            snapshots,
+            allow_partial_structure=True,
+        )
+        if not events:
+            emit(f"{record.trade_id}: exit submit returned no order events")
+        else:
+            states = ",".join(sorted({event.state.value for event in events}))
+            emit(f"{record.trade_id}: exit submit states={states}")
         after = ctx.runner.trade_manager.get_position(record.trade_id)
         if after is not None and after.state is TradeState.CLOSED:
             recovered.append(record.trade_id)
-    return recovered
+            emit(f"{record.trade_id}: closed")
+        elif after is not None:
+            emit(f"{record.trade_id}: still {after.state.value} after exit submit")
+    return recovered, retry_log, leg_skips
 
 
 def _prepare_exit_retry(
     ctx: _RecoveryContext,
     record: PositionLifecycleRecord,
+    *,
+    emit: Callable[[str], None],
 ) -> PositionState | None:
     """Drop stale failed exit orders so resubmit reaches the paper broker."""
     position = ctx.runner.trade_manager.get_position(record.trade_id)
     if position is None:
         return None
-    if record.exit_order_ids and _exit_orders_terminal_rejected(ctx.store, record):
-        stale_keys = _idempotency_keys_for_orders(ctx.store, record.exit_order_ids)
-        _purge_stale_exit_orders(ctx, stale_keys)
-        ctx.runner._write_lifecycle(record.trade_id, exit_order_ids=())
+    emit(
+        f"{record.trade_id}: purging stale exit orders "
+        f"(lifecycle_ids={','.join(record.exit_order_ids) or 'none'})"
+    )
+    _purge_trade_exit_state(ctx, record, emit=emit)
     position = ctx.runner.trade_manager.get_position(record.trade_id)
     if position is None:
         return None
     if position.state is TradeState.OPEN:
+        emit(f"{record.trade_id}: transitioning OPEN -> EXIT_PENDING")
         position = ctx.runner.trade_manager.apply_exit_evaluation(
             record.trade_id,
             ExitEvaluation(
@@ -304,9 +367,120 @@ def _publish_recovery_quotes(
     snapshots: Mapping[str, FeatureSnapshot],
     quote_book: Mapping[str, MarketQuote],
 ) -> None:
-    for symbol, quote in quote_book.items():
-        if symbol in snapshots:
+    symbols = set(snapshots) | set(quote_book)
+    for symbol in symbols:
+        quote = quote_book.get(symbol)
+        if quote is None and symbol in snapshots:
+            quote = snapshots[symbol].market
+        if quote is not None:
             ctx.broker.publish_quote(symbol, quote)
+
+
+def _broker_has_failed_exit_orders(broker: PaperBroker, trade_id: str) -> bool:
+    return any(
+        event.identity.trade_id == trade_id and event.state in _TERMINAL_EXIT_FAILURE
+        for event in broker.list_orders()
+    )
+
+
+def _exit_idempotency_keys_for_trade(
+    ctx: _RecoveryContext, record: PositionLifecycleRecord
+) -> frozenset[str]:
+    keys: set[str] = set(_idempotency_keys_for_orders(ctx.store, record.exit_order_ids))
+    keys |= _exit_idempotency_keys_from_store(ctx.store, record.trade_id)
+    intent = record.intent
+    account_id = ctx.account.config.account_id
+    for leg in record.position.legs:
+        exit_side = Side.SELL if leg.side is Side.BUY else Side.BUY
+        exit_leg_id = f"{leg.leg_id}-exit"
+        keys.add(
+            derive_idempotency_key(
+                account_id=account_id,
+                strategy_id=intent.strategy_id,
+                strategy_version=intent.strategy_version,
+                intent_id=intent.intent_id,
+                leg_id=exit_leg_id,
+                side=exit_side.value,
+                quantity_contracts=leg.quantity_contracts,
+            )
+        )
+    for event in ctx.broker.list_orders():
+        if event.identity.trade_id != record.trade_id:
+            continue
+        if event.state in _TERMINAL_EXIT_FAILURE:
+            keys.add(event.identity.idempotency_key)
+    return frozenset(keys)
+
+
+def _exit_idempotency_keys_from_store(store: TradingStore, trade_id: str) -> set[str]:
+    keys: set[str] = set()
+    for stored in store.read_events():
+        if stored.event_type is not TradingEventType.ORDER_EVENT:
+            continue
+        event = stored.deserialize()
+        if not isinstance(event, OrderEvent):
+            continue
+        if event.identity.trade_id != trade_id:
+            continue
+        if event.state not in _TERMINAL_EXIT_FAILURE:
+            continue
+        keys.add(event.identity.idempotency_key)
+    return keys
+
+
+def _purge_trade_exit_state(
+    ctx: _RecoveryContext,
+    record: PositionLifecycleRecord,
+    *,
+    emit: Callable[[str], None],
+) -> None:
+    """Remove stale exit orders from OMS, broker and lifecycle before resubmit."""
+    keys = _exit_idempotency_keys_for_trade(ctx, record)
+    if keys:
+        emit(
+            f"{record.trade_id}: clearing idempotency keys "
+            f"({len(keys)} from broker/store/derived)"
+        )
+    oms = ctx.runner._services.oms
+    for key in keys:
+        oms._latest_by_key.pop(key, None)
+    _purge_sqlite_idempotency_keys(ctx.store, keys)
+    payload = ctx.broker.dump_state()
+    orders = payload.get("orders")
+    if isinstance(orders, list):
+        removed = 0
+        filtered: list[object] = []
+        for row in orders:
+            if isinstance(row, dict) and _is_terminal_failed_broker_order(
+                row, record.trade_id
+            ):
+                removed += 1
+                continue
+            filtered.append(row)
+        if removed:
+            emit(f"{record.trade_id}: removed {removed} terminal broker exit order(s)")
+            payload["orders"] = filtered
+            ctx.broker.load_state(payload)
+    ctx.runner._write_lifecycle(record.trade_id, exit_order_ids=())
+
+
+def _is_terminal_failed_broker_order(row: dict[str, object], trade_id: str) -> bool:
+    identity = row.get("identity")
+    if not isinstance(identity, dict):
+        return False
+    if identity.get("trade_id") != trade_id:
+        return False
+    state = row.get("state")
+    return state in {item.value for item in _TERMINAL_EXIT_FAILURE}
+
+
+def _purge_sqlite_idempotency_keys(store: TradingStore, keys: frozenset[str]) -> None:
+    for key in keys:
+        store._conn.execute(
+            "DELETE FROM idempotency_keys WHERE idempotency_key = ?",
+            (key,),
+        )
+    store._conn.commit()
 
 
 def _idempotency_keys_for_orders(
@@ -325,34 +499,11 @@ def _idempotency_keys_for_orders(
     return frozenset(keys)
 
 
-def _purge_stale_exit_orders(
-    ctx: _RecoveryContext, idempotency_keys: frozenset[str]
-) -> None:
-    if not idempotency_keys:
-        return
-    oms = ctx.runner._services.oms
-    for key in idempotency_keys:
-        oms._latest_by_key.pop(key, None)
-    payload = ctx.broker.dump_state()
-    orders = payload.get("orders")
-    if not isinstance(orders, list):
-        return
-    filtered = [
-        row
-        for row in orders
-        if not (
-            isinstance(row, dict)
-            and row.get("identity", {}).get("idempotency_key") in idempotency_keys
-        )
-    ]
-    if len(filtered) == len(orders):
-        return
-    payload["orders"] = filtered
-    ctx.broker.load_state(payload)
-
-
 def _stuck_lifecycle_records(
-    store: TradingStore, *, trade_id: str | None
+    store: TradingStore,
+    broker: PaperBroker,
+    *,
+    trade_id: str | None,
 ) -> tuple[PositionLifecycleRecord, ...]:
     stuck: list[PositionLifecycleRecord] = []
     for record in store.list_position_lifecycle():
@@ -360,45 +511,26 @@ def _stuck_lifecycle_records(
             continue
         if record.position.state is TradeState.CLOSED:
             continue
-        if record.position.state is TradeState.EXIT_PENDING:
-            stuck.append(record)
-            continue
-        if record.exit_order_ids and _exit_orders_terminal_rejected(store, record):
-            stuck.append(record)
-            continue
-        scope = f"trade/{record.trade_id}/lifecycle"
-        if _has_unresolved_lifecycle_event(store, scope):
+        if _is_stuck_exit_record(store, broker, record) or trade_id is not None:
             stuck.append(record)
     return tuple({item.trade_id: item for item in stuck}.values())
 
 
-def _exit_orders_terminal_rejected(
-    store: TradingStore, record: PositionLifecycleRecord
+def _is_stuck_exit_record(
+    store: TradingStore,
+    broker: PaperBroker,
+    record: PositionLifecycleRecord,
 ) -> bool:
-    saw_terminal = False
-    for order_id in record.exit_order_ids:
-        event = _latest_order_event(store, order_id)
-        if event is None:
-            return False
-        if event.state not in _TERMINAL_EXIT_FAILURE:
-            return False
-        saw_terminal = True
-    return saw_terminal
-
-
-def _latest_order_event(store: TradingStore, order_id: str) -> OrderEvent | None:
-    latest: OrderEvent | None = None
-    for stored in store.read_events():
-        if stored.event_type is not TradingEventType.ORDER_EVENT:
-            continue
-        event = stored.deserialize()
-        if not isinstance(event, OrderEvent):
-            continue
-        if event.identity.internal_order_id != order_id:
-            continue
-        if latest is None or event.received_at >= latest.received_at:
-            latest = event
-    return latest
+    if record.position.state is TradeState.EXIT_PENDING:
+        return True
+    if record.exit_order_ids:
+        return True
+    scope = f"trade/{record.trade_id}/lifecycle"
+    if _has_unresolved_lifecycle_event(store, scope):
+        return True
+    return _broker_has_failed_exit_orders(broker, record.trade_id) or bool(
+        _exit_idempotency_keys_from_store(store, record.trade_id)
+    )
 
 
 def _has_unresolved_lifecycle_event(store: TradingStore, scope: str) -> bool:
@@ -464,16 +596,34 @@ def _snapshots_for_record(
     quotes: Mapping[str, MarketQuote],
     *,
     now: datetime,
-) -> dict[str, FeatureSnapshot]:
+) -> tuple[dict[str, FeatureSnapshot], tuple[tuple[str, str, str], ...]]:
     snapshots: dict[str, FeatureSnapshot] = {}
+    skipped: list[tuple[str, str, str]] = []
     for leg in record.position.legs:
-        quote = quotes.get(leg.contract.symbol)
+        quote = _quote_for_symbol(quotes, leg.contract.symbol)
         if quote is None:
+            skipped.append(
+                (leg.leg_id, leg.contract.symbol, "no quote in operator quote book")
+            )
             continue
         snapshots[leg.contract.symbol] = _recovery_snapshot(
             leg.contract, quote, now=now
         )
-    return snapshots
+    return snapshots, tuple(skipped)
+
+
+def _quote_for_symbol(
+    quotes: Mapping[str, MarketQuote], symbol: str
+) -> MarketQuote | None:
+    direct = quotes.get(symbol)
+    if direct is not None:
+        return direct
+    if ":" in symbol:
+        bare = symbol.split(":", 1)[1]
+        alias = quotes.get(bare)
+        if alias is not None:
+            return alias
+    return quotes.get(f"NSE:{symbol}")
 
 
 def _recovery_snapshot(
