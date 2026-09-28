@@ -25,6 +25,7 @@ from trading.data.cas_depth.storage import CasDepthStorage, SnapshotRing
 from trading.data.fyers.capability_probe import (
     check_tbt_entitlement,
     pick_liquid_option,
+    pick_stock_option,
 )
 from trading.data.fyers.client import FyersMarketFeed
 from trading.data.settings import FyersSettings
@@ -398,8 +399,9 @@ def _resolve_options(feed: FyersMarketFeed, config: CasDataConfig) -> list[str]:
         pass
     if config.symbols.max_options > 1:
         try:
-            stock = pick_liquid_option(
+            stock = pick_stock_option(
                 feed.fetch_option_chain(config.symbols.stock_option_underlying),
+                selection=config.symbols.stock_option_selection,
             )
             if stock:
                 resolved.append(stock)

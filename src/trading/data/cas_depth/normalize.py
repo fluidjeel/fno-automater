@@ -45,27 +45,35 @@ def normalize_tbt_depth(
     """Map SDK ``Depth`` object to a normalized update."""
     # FyersTbtSocket merges incremental diffs into fixed 50-slot arrays
     # (tbt_ws.py DataStore.updateDepth + Depth._addDepth): only indices present
-    # in the wire packet are overwritten; stale slots are never cleared, so the
-    # same price can appear at multiple indices after partial book shifts.
-    bids = [
-        DepthLevel(
-            price=Decimal(str(depth.bidprice[i])).quantize(_SCALE),
-            quantity=int(depth.bidqty[i]),
-            orders=int(depth.bidordn[i]) if depth.bidordn[i] else None,
-        )
-        for i in range(50)
-        if depth.bidprice[i] or depth.bidqty[i]
-    ]
-    asks = [
-        DepthLevel(
-            price=Decimal(str(depth.askprice[i])).quantize(_SCALE),
-            quantity=int(depth.askqty[i]),
-            orders=int(depth.askordn[i]) if depth.askordn[i] else None,
-        )
-        for i in range(50)
-        if depth.askprice[i] or depth.askqty[i]
-    ]
-    bid_levels, ask_levels, had_duplicate_prices = sort_levels(bids, asks)
+    # in the wire packet are overwritten; stale slots are never cleared. When
+    # qty goes to zero the SDK updates askqty/bidqty but does not clear price,
+    # so price-only slots must be dropped. Partial diffs also leave higher-index
+    # better prices while lower indices keep stale worse BBO levels, violating
+    # exchange rank order (index 0 = best).
+    is_snapshot = bool(depth.snapshot)
+    indexed_bids = _extract_tbt_side(
+        depth.bidprice,
+        depth.bidqty,
+        depth.bidordn,
+        is_bid=True,
+        is_snapshot=is_snapshot,
+    )
+    indexed_asks = _extract_tbt_side(
+        depth.askprice,
+        depth.askqty,
+        depth.askordn,
+        is_bid=False,
+        is_snapshot=is_snapshot,
+    )
+    had_duplicate_prices = _has_duplicate_prices(indexed_bids) or _has_duplicate_prices(
+        indexed_asks
+    )
+    pruned_bids = _drop_stale_rank_violations(indexed_bids, is_bid=True)
+    pruned_asks = _drop_stale_rank_violations(indexed_asks, is_bid=False)
+    bids, bid_dupes = _levels_from_indexed(pruned_bids)
+    asks, ask_dupes = _levels_from_indexed(pruned_asks)
+    bid_levels = tuple(sorted(bids, key=lambda level: level.price, reverse=True))
+    ask_levels = tuple(sorted(asks, key=lambda level: level.price))
     if not bid_levels and not ask_levels:
         return None, False
     exchange_ts = _epoch_to_utc(depth.timestamp)
@@ -82,10 +90,10 @@ def normalize_tbt_depth(
             total_volume=None,
             open_interest=None,
             trade_aggressor=TradeAggressor.UNKNOWN,
-            is_snapshot=bool(depth.snapshot),
+            is_snapshot=is_snapshot,
             feed=feed,
         ),
-        had_duplicate_prices,
+        had_duplicate_prices or bid_dupes or ask_dupes,
     )
 
 
@@ -148,6 +156,91 @@ def normalize_data_ws_depth(
         ),
         had_duplicate_prices,
     )
+
+
+def _extract_tbt_side(
+    prices: list[float],
+    qtys: list[int | float],
+    orders: list[int | float],
+    *,
+    is_bid: bool,
+    is_snapshot: bool,
+) -> list[tuple[int, DepthLevel]]:
+    """Collect qty>0 TBT slots; on snapshots truncate trailing empty tail."""
+    _ = is_bid
+    indexed: list[tuple[int, DepthLevel]] = []
+    for index in range(50):
+        qty = int(qtys[index])
+        price_raw = prices[index]
+        if price_raw <= 0 and qty <= 0:
+            if is_snapshot:
+                break
+            continue
+        if qty <= 0 or price_raw <= 0:
+            continue
+        price = Decimal(str(price_raw)).quantize(_SCALE)
+        if price <= 0:
+            continue
+        indexed.append(
+            (
+                index,
+                DepthLevel(
+                    price=price,
+                    quantity=qty,
+                    orders=int(orders[index]) if orders[index] else None,
+                ),
+            )
+        )
+    return indexed
+
+
+def _drop_stale_rank_violations(
+    indexed: list[tuple[int, DepthLevel]],
+    *,
+    is_bid: bool,
+) -> list[tuple[int, DepthLevel]]:
+    """Drop lower-index slots invalidated by a better price at a higher index."""
+    stale_indices: set[int] = set()
+    for slot_index, level in indexed:
+        for other_index, other in indexed:
+            if other_index <= slot_index:
+                continue
+            if is_bid:
+                if other.price > level.price:
+                    stale_indices.add(slot_index)
+                    break
+            elif other.price < level.price:
+                stale_indices.add(slot_index)
+                break
+    return [
+        (slot_index, level)
+        for slot_index, level in indexed
+        if slot_index not in stale_indices
+    ]
+
+
+def _levels_from_indexed(
+    indexed: list[tuple[int, DepthLevel]],
+) -> tuple[list[DepthLevel], bool]:
+    seen: set[Decimal] = set()
+    levels: list[DepthLevel] = []
+    had_duplicates = False
+    for _, level in sorted(indexed, key=lambda item: item[0]):
+        if level.price in seen:
+            had_duplicates = True
+            continue
+        seen.add(level.price)
+        levels.append(level)
+    return levels, had_duplicates
+
+
+def _has_duplicate_prices(indexed: list[tuple[int, DepthLevel]]) -> bool:
+    seen: set[Decimal] = set()
+    for _, level in indexed:
+        if level.price in seen:
+            return True
+        seen.add(level.price)
+    return False
 
 
 def _dedupe_levels_by_price(

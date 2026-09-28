@@ -103,6 +103,92 @@ def test_normalize_tbt_depth_dedups_reliance_like_book() -> None:
     )
 
 
+def test_normalize_tbt_depth_prunes_stale_high_best_ask() -> None:
+    """A better ask at a higher index means lower-index slots are stale SDK remnants."""
+    depth = _FakeDepth()
+    depth.bidprice[0] = 0.15
+    depth.bidqty[0] = 1000
+    depth.bidprice[1] = 0.10
+    depth.bidqty[1] = 500
+    depth.bidprice[2] = 0.05
+    depth.bidqty[2] = 200
+    depth.askprice[0] = 1.95
+    depth.askqty[0] = 100
+    depth.askprice[3] = 0.20
+    depth.askqty[3] = 50
+    update, _ = normalize_tbt_depth(
+        "NSE:RELIANCE26SEP1300CE",
+        depth,
+        receive_time=_now(),
+    )
+    assert update is not None
+    assert update.ask_levels[0].price == Decimal("0.20")
+    assert update.bid_levels[0].price == Decimal("0.15")
+
+
+def test_normalize_tbt_depth_drops_price_only_removed_levels() -> None:
+    """SDK leaves askprice set when askqty is zeroed on level removal (_addDepth L74-75)."""
+    depth = _FakeDepth()
+    depth.bidprice[0] = 0.15
+    depth.bidqty[0] = 1000
+    depth.askprice[0] = 2.00
+    depth.askqty[0] = 0
+    depth.askprice[1] = 0.20
+    depth.askqty[1] = 50
+    update, _ = normalize_tbt_depth(
+        "NSE:RELIANCE26SEP1300CE",
+        depth,
+        receive_time=_now(),
+    )
+    assert update is not None
+    assert len(update.ask_levels) == 1
+    assert update.ask_levels[0].price == Decimal("0.20")
+
+
+def test_pick_stock_option_atm_nearest() -> None:
+    """Config-driven stock option pick can prefer nearest ATM over highest OI."""
+    from trading.data.fyers.capability_probe import (
+        pick_liquid_option,
+        pick_stock_option,
+    )
+
+    chain = type(
+        "_Chain",
+        (),
+        {
+            "payload": {
+                "data": {
+                    "optionsChain": [
+                        {
+                            "option_type": "XX",
+                            "strike_price": -1,
+                            "ltp": 1300.0,
+                        },
+                        {
+                            "option_type": "CE",
+                            "strike_price": 1280,
+                            "symbol": "NSE:RELIANCE26SEP1280CE",
+                            "volume": 50000,
+                            "oi": 100000,
+                        },
+                        {
+                            "option_type": "CE",
+                            "strike_price": 1300,
+                            "symbol": "NSE:RELIANCE26SEP1300CE",
+                            "volume": 1000,
+                            "oi": 2000,
+                        },
+                    ]
+                }
+            }
+        },
+    )()
+    assert pick_liquid_option(chain) == "NSE:RELIANCE26SEP1280CE"
+    assert (
+        pick_stock_option(chain, selection="atm_nearest") == "NSE:RELIANCE26SEP1300CE"
+    )
+
+
 def test_duplicate_price_levels_flagged_in_quality_tracker_path() -> None:
     """Repeated price levels before dedup surface DUPLICATE without blocking."""
     depth = _FakeDepth()
