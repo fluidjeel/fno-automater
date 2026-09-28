@@ -83,6 +83,8 @@ class ProtectionCoordinator:
         ) = None
         scripted.set_handler(self._on_quote)
         rest.set_handler(self._on_quote)
+        if ws is not None:
+            ws.set_handler(self._on_quote)
 
     def set_m1_quote_handler(
         self,
@@ -187,6 +189,7 @@ class ProtectionCoordinator:
         self._pending_alerts.extend(result.alerts)
         self._last_quote_at = received_at
         self.refresh_subscriptions()
+        self._write_heartbeat(force=True)
         if self._m1_quote_handler is not None:
             self._m1_quote_handler(symbol, quote, received_at)
 
@@ -242,7 +245,11 @@ def build_protection_coordinator(
 ) -> ProtectionCoordinator:
     scripted = ScriptedQuoteMonitor()
     if rest_fetch is None:
-        rest = RestQuoteMonitor(clock, lambda _symbols: {})
+        rest = RestQuoteMonitor(
+            clock,
+            lambda _symbols: {},
+            poll_seconds=config.rest_poll_seconds,
+        )
     else:
         rest = rest_fetch
     heartbeat_path = repo_root / config.heartbeat_path

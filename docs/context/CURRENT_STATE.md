@@ -6,12 +6,13 @@ STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A14_DONE (margin soft-resize,
 safe projection, evaluation-error defense); DISC-A15_DONE (quote freshness from
 fetch/calculation time, not bar event_time); DISC-A16_DONE (CAS depth dedup,
 DUPLICATE quality flag, top5 imbalance fix, multi-symbol health.json);
-DISC-A17 monthly chain fetch (M3/M4 20-35 DTE); Oracle rsync + restart still
-pending (DISC-A12)
+DISC-A17 monthly chain fetch (M3/M4 20-35 DTE); DISC-A20_DONE (protection
+monitor WS handler + REST fallback for held-leg quotes; heartbeat
+`last_quote_at`); Oracle rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
 
-- TEST-PROVEN: 1940+ pytest including discovery suite (`tests/test_disc_*.py`,
+- TEST-PROVEN: 1950+ pytest including discovery suite (`tests/test_disc_*.py`,
   `tests/test_cohort_eod_duplicate_signals.py`).
 - DEPLOYED-PAPER: Oracle still on pre-review tree until rsync; local config has
   `entry_profile: DISCOVERY`, `experiment_prefix: EXP-DISC`.
@@ -30,6 +31,7 @@ pending (DISC-A12)
 | Monthly chain | Supplemental fetch for 20-35 DTE expiries (`monthly_chain=1`); TTL-cached REST; M3/M4 binders only |
 | Capital caps in DISCOVERY | Soft only — downsize and/or `strict_would_block`; never reject |
 | Margin in DISCOVERY | Soft only — min 1 lot; `MARGIN_INSUFFICIENT` / `MARGIN_OVERSUBSCRIBED` shadowed; projection clamped |
+| Protection quotes | WS push for held-leg symbols; REST fallback batched every 2s (`rest_poll_seconds`); heartbeat `last_quote_at` |
 
 ## Mode stances (file and loaded)
 

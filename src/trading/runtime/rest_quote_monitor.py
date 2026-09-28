@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timedelta
 
 from trading.domain.clock import Clock
 from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import QuoteMonitorSource
 from trading.runtime.quote_monitor import QuoteHandler
 
-__all__ = ["RestQuoteMonitor"]
+__all__ = ["RestQuoteMonitor", "RestQuoteRateLimitError"]
+
+
+class RestQuoteRateLimitError(Exception):
+    """REST quote fetch hit provider rate limits."""
 
 
 class RestQuoteMonitor:
@@ -19,12 +24,18 @@ class RestQuoteMonitor:
         self,
         clock: Clock,
         fetch_quotes: Callable[[tuple[str, ...]], dict[str, MarketQuote]],
+        *,
+        poll_seconds: int = 2,
     ) -> None:
         self._clock = clock
         self._fetch = fetch_quotes
+        self._poll_seconds = poll_seconds
         self._symbols: frozenset[str] = frozenset()
         self._handler: QuoteHandler | None = None
         self._running = False
+        self._last_poll_at: datetime | None = None
+        self._rate_limit_until: datetime | None = None
+        self._rate_limit_backoff = poll_seconds
 
     def set_handler(self, handler: QuoteHandler) -> None:
         self._handler = handler
@@ -46,8 +57,23 @@ class RestQuoteMonitor:
         """Fetch one REST snapshot for all subscribed symbols."""
         if not self._running or not self._symbols or self._handler is None:
             return
+        now = self._clock.now_utc()
+        if self._rate_limit_until is not None and now < self._rate_limit_until:
+            return
+        if self._last_poll_at is not None:
+            elapsed = now - self._last_poll_at
+            if elapsed < timedelta(seconds=self._poll_seconds):
+                return
+        self._last_poll_at = now
+        try:
+            quotes = self._fetch(tuple(sorted(self._symbols)))
+        except RestQuoteRateLimitError:
+            self._rate_limit_backoff = min(max(self._rate_limit_backoff * 2, 1), 60)
+            self._rate_limit_until = now + timedelta(seconds=self._rate_limit_backoff)
+            return
+        self._rate_limit_backoff = self._poll_seconds
+        self._rate_limit_until = None
         received_at = self._clock.now_utc()
-        quotes = self._fetch(tuple(sorted(self._symbols)))
         for symbol, quote in quotes.items():
             if symbol in self._symbols:
                 self._handler(symbol, quote, QuoteMonitorSource.REST, received_at)
