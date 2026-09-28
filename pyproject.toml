@@ -80,6 +80,7 @@ ignore = [
 "tests/paper_positional_sim/**" = ["E501"]
 "src/trading/storage/trading_store.py" = ["E501", "S608"]
 "src/trading/runtime/paper_session.py" = ["E501", "PLR0912", "PLR0915", "PLC0415"]
+"src/trading/runtime/protection.py" = ["PLC0415"]
 "src/trading/analytics/monthly_meta_report.py" = ["PLR2004"]
 "src/trading/analytics/bias.py" = ["PLR2004"]
 # isort order for trading.config vs trading.data.* differs macOS vs Linux.
@@ -92,6 +93,7 @@ ignore = [
 "src/trading/data/pipeline.py" = ["I001", "PLR0912", "PLR0915"]
 "src/trading/data/fyers/auth.py" = ["PLC0415", "PLR0911"]
 "src/trading/data/fyers/ws.py" = ["PLC0415", "PLR0912", "PLR0915"]
+"src/trading/data/fyers/shared_hub/server.py" = ["PLC0415"]
 "src/trading/data/cas_depth/collector.py" = ["PLC0415", "S110", "S112", "E501"]
 "src/trading/data/cas_depth/*.py" = ["PLR2004", "E501", "SIM103"]
 "scripts/cas_depth_*.py" = ["E501"]

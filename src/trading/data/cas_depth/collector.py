@@ -27,6 +27,9 @@ from trading.data.fyers.capability_probe import (
     pick_liquid_option,
 )
 from trading.data.fyers.client import FyersMarketFeed
+from trading.data.fyers.data_socket_guard import is_data_socket_locked
+from trading.data.fyers.shared_hub.client import SharedHubClient
+from trading.data.fyers.shared_hub.status import load_shared_hub_status
 from trading.data.settings import FyersSettings
 
 __all__ = ["CasDepthCollector", "CollectorRunResult", "resolve_subscription_symbols"]
@@ -129,13 +132,29 @@ class CasDepthCollector:
                 symbol for symbol in tbt_symbols if not symbol.endswith("-INDEX")
             )
         if data_ws_symbols:
-            feeds.append(
-                threading.Thread(
-                    target=self._run_data_ws_feed,
-                    args=(tuple(dict.fromkeys(data_ws_symbols)),),
-                    daemon=True,
+            unique_symbols = tuple(dict.fromkeys(data_ws_symbols))
+            if is_data_socket_locked(self._repo_root):
+                status = load_shared_hub_status(self._repo_root)
+                if status is not None and status.hub_active:
+                    feeds.append(
+                        threading.Thread(
+                            target=self._run_hub_depth_feed,
+                            args=(unique_symbols,),
+                            daemon=True,
+                        )
+                    )
+                else:
+                    self._metrics.data_ws_skipped_reason = (
+                        "data_ws deferred: tick daemon lock without active hub"
+                    )
+            else:
+                feeds.append(
+                    threading.Thread(
+                        target=self._run_data_ws_feed,
+                        args=(unique_symbols,),
+                        daemon=True,
+                    )
                 )
-            )
         for thread in feeds:
             thread.start()
         deadline = time.monotonic() + duration_seconds
@@ -295,6 +314,38 @@ class CasDepthCollector:
         finally:
             socket.stop_running()
             socket.close_connection()
+
+    def _run_hub_depth_feed(self, symbols: Sequence[str]) -> None:
+        client = SharedHubClient(
+            self._repo_root,
+            owner="cas-depth",
+            data_type="DepthUpdate",
+            sleep=self._sleep,
+        )
+        client.set_depth_handler(self._on_hub_depth_message)
+        client.subscribe(frozenset(symbols))
+        client.start()
+        while not self._halt.is_set():
+            self._sleep(0.2)
+        client.stop()
+
+    def _on_hub_depth_message(
+        self,
+        _symbol: str,
+        message: dict[str, object],
+        receive_time: datetime,
+    ) -> None:
+        if self._halt.is_set():
+            return
+        if message.get("type") != "dp" and not message.get("bid_price1"):
+            return
+        normalized = normalize_data_ws_depth(
+            message,
+            receive_time=receive_time,
+        )
+        if normalized is not None:
+            self._metrics.mcx_supported = True
+            self._enqueue(normalized)
 
     def _run_data_ws_feed(self, symbols: Sequence[str]) -> None:
         from fyers_apiv3.FyersWebsocket import data_ws

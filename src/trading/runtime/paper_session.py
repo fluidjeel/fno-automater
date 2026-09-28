@@ -106,7 +106,6 @@ from trading.runtime.four_mode_producers import (
     iter_recordable_family_slots,
     produce_family_requests,
 )
-from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
 from trading.runtime.m2_chain import following_week_epoch
 from trading.runtime.notify import (
@@ -124,6 +123,7 @@ from trading.runtime.protection import (
     ProtectionConfig,
     ProtectionCoordinator,
     build_protection_coordinator,
+    build_quote_monitor,
 )
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.runtime.session_heartbeat import write_session_heartbeat
@@ -903,9 +903,12 @@ def run_paper_session(
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
-        ws_monitor = None
-        if session_cfg.protection.ws_enabled:
-            ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
+        ws_monitor = build_quote_monitor(
+            config=session_cfg.protection,
+            repo_root=repo_root,
+            settings=settings,
+            clock=clock,
+        )
         protection = build_protection_coordinator(
             runner=runner,
             clock=clock,

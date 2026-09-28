@@ -293,9 +293,21 @@ def collect_data_ws(
     duration_seconds: float = 20.0,
     max_messages: int = 100,
     sleep: Callable[[float], None] = time.sleep,
+    repo_root: Path | None = None,
 ) -> tuple[tuple[CapturedMessage, ...], tuple[str, ...]]:
     """Subscribe on the standard data socket and capture raw decoded messages."""
+    if repo_root is not None:
+        from trading.data.fyers.data_socket_guard import is_data_socket_locked
+
+        if is_data_socket_locked(repo_root):
+            return (), ("data_ws deferred: fno-data-tick owns the account data socket",)
     from fyers_apiv3.FyersWebsocket import data_ws
+
+    from trading.data.fyers.data_socket_guard import DataSocketGuard
+
+    lock = None
+    if repo_root is not None:
+        lock = DataSocketGuard.acquire(repo_root, "capability-probe")
 
     captured: list[CapturedMessage] = []
     errors: list[str] = []
@@ -351,6 +363,8 @@ def collect_data_ws(
     finally:
         halt.set()
         socket.close_connection()
+        if lock is not None:
+            DataSocketGuard.release(lock)
     return tuple(captured), tuple(errors)
 
 

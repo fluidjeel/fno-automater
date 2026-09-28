@@ -6,9 +6,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trading.data.fyers.data_socket_guard import is_data_socket_locked
 from trading.domain.clock import Clock
 from trading.domain.contracts.protection import (
     ProtectionHeartbeat,
@@ -18,13 +20,17 @@ from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import QuoteMonitorSource
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.paper_runner import LifecycleAlert, PaperRunner, QuoteUpdateResult
-from trading.runtime.quote_monitor import ScriptedQuoteMonitor
+from trading.runtime.quote_monitor import QuoteMonitorPort, ScriptedQuoteMonitor
 from trading.runtime.rest_quote_monitor import RestQuoteMonitor
+
+QuoteSourceMode = Literal["shared_hub", "rest", "direct_ws"]
 
 __all__ = [
     "ProtectionConfig",
     "ProtectionCoordinator",
+    "QuoteSourceMode",
     "build_protection_coordinator",
+    "build_quote_monitor",
 ]
 
 
@@ -33,6 +39,7 @@ class ProtectionConfig(BaseModel):
 
     enabled: bool = True
     ws_enabled: bool = True
+    quote_source: QuoteSourceMode = "shared_hub"
     rest_poll_seconds: int = Field(default=2, ge=1)
     quote_max_age_ms: int = Field(default=5000, ge=1)
     heartbeat_interval_seconds: int = Field(default=5, ge=1)
@@ -49,7 +56,7 @@ class ProtectionCoordinator:
     config: ProtectionConfig
     scripted: ScriptedQuoteMonitor
     rest: RestQuoteMonitor
-    ws: FyersWsQuoteMonitor | None
+    ws: QuoteMonitorPort | None
     heartbeat_path: Path
     _pending_alerts: list[LifecycleAlert]
     _last_heartbeat_write: datetime | None
@@ -64,7 +71,7 @@ class ProtectionCoordinator:
         config: ProtectionConfig,
         scripted: ScriptedQuoteMonitor,
         rest: RestQuoteMonitor,
-        ws: FyersWsQuoteMonitor | None,
+        ws: QuoteMonitorPort | None,
         heartbeat_path: Path,
     ) -> None:
         self.runner = runner
@@ -231,6 +238,30 @@ class ProtectionCoordinator:
         self._last_heartbeat_write = now
 
 
+def build_quote_monitor(
+    *,
+    config: ProtectionConfig,
+    repo_root: Path,
+    settings: object,
+    clock: object,
+) -> QuoteMonitorPort | None:
+    """Resolve the websocket quote monitor for protection."""
+    if not config.enabled or not config.ws_enabled:
+        return None
+    if config.quote_source == "rest":
+        return None
+    if config.quote_source == "direct_ws":
+        if is_data_socket_locked(repo_root):
+            raise ValueError(
+                "protection.quote_source=direct_ws disallowed while tick daemon "
+                "owns the account data socket"
+            )
+        return FyersWsQuoteMonitor(settings, clock, repo_root)  # type: ignore[arg-type]
+    from trading.data.fyers.shared_hub.client import SharedDataSocketClient
+
+    return SharedDataSocketClient(repo_root, clock=clock)  # type: ignore[arg-type]
+
+
 def build_protection_coordinator(
     *,
     runner: PaperRunner,
@@ -238,7 +269,7 @@ def build_protection_coordinator(
     config: ProtectionConfig,
     repo_root: Path,
     rest_fetch: RestQuoteMonitor | None = None,
-    ws: FyersWsQuoteMonitor | None = None,
+    ws: QuoteMonitorPort | None = None,
 ) -> ProtectionCoordinator:
     scripted = ScriptedQuoteMonitor()
     if rest_fetch is None:

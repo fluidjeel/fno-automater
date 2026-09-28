@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import sys
+import threading
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -45,11 +47,13 @@ from trading.data.backfill import backfill_history, backfill_instruments
 from trading.data.config import load_data_pipeline_config
 from trading.data.fyers.auth import run_interactive_auth, run_refresh, run_telegram_auth
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed
+from trading.data.fyers.shared_hub.server import SharedDataHubServer
 from trading.data.fyers.telegram import send_telegram_message, telegram_configured
 from trading.data.fyers.ws import FyersTickStream
 from trading.data.macro_news import format_macro_summary, load_macro_news_jsonl
-from trading.data.normalize import normalize_fyers_history
+from trading.data.normalize import normalize_fyers_history, normalize_fyers_ws_tick
 from trading.data.pipeline import build_pipeline
+from trading.data.quality import assess_tick
 from trading.data.replay import build_replay_engine
 from trading.data.settings import FyersSettings
 from trading.data.storage.catalog import CatalogWriter
@@ -57,6 +61,7 @@ from trading.data.storage.parquet_store import JsonlEventStore
 from trading.data.vix_backfill import backfill_vix_snapshots
 from trading.domain.clock import WallClock, ensure_utc
 from trading.domain.contracts import CohortPackage
+from trading.domain.enums import DataQuality
 from trading.domain.ids import SequentialIdFactory
 from trading.news.cluster import cluster_news
 from trading.news.config import NewsSubsystemConfig, load_news_config
@@ -164,6 +169,55 @@ def _cmd_data_stream(args: argparse.Namespace) -> int:
         return 1
     store = JsonlEventStore(root / config.storage.root)
     clock = WallClock()
+    tick_max_age = config.freshness.get("tick_max_age_ms", {}).get("5m", 5_000)
+    if args.daemon:
+        stop = threading.Event()
+
+        def _handle_signal(_signum: int, _frame: object) -> None:
+            stop.set()
+
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+
+        hub = SharedDataHubServer(
+            settings,
+            root,
+            owner="fno-data-tick",
+            channel=config.fyers.ws_channel,
+            clock=clock,
+        )
+
+        def on_tick(
+            symbol: str, message: dict[str, object], receive_time: object
+        ) -> None:
+            event = normalize_fyers_ws_tick(
+                message,
+                symbol=symbol,
+                normalization_version=config.normalization_version,
+                receive_time=receive_time,  # type: ignore[arg-type]
+            )
+            quality = assess_tick(event, now=receive_time, max_age_ms=tick_max_age)  # type: ignore[arg-type]
+            if quality.state is DataQuality.INVALID:
+                return
+            store.append_canonical(event)
+
+        hub.set_tick_handler(on_tick)
+        hub.start(
+            initial_symbols=[
+                (underlying.symbol, "SymbolUpdate") for underlying in targets
+            ]
+        )
+        try:
+            while not stop.is_set():
+                stop.wait(timeout=0.5)
+        finally:
+            hub.stop()
+        print(
+            "shared data hub stopped "
+            f"symbols={','.join(underlying.symbol for underlying in targets)}"
+        )
+        return 0
+
     stream = FyersTickStream(
         settings,
         clock,
@@ -175,22 +229,15 @@ def _cmd_data_stream(args: argparse.Namespace) -> int:
         reconnect_attempts=config.fyers.ws_reconnect_attempts,
         reconnect_backoff_seconds=config.fyers.ws_reconnect_backoff_seconds,
     )
-    tick_max_age = config.freshness.get("tick_max_age_ms", {}).get("5m", 5_000)
     for underlying in targets:
-        if args.daemon:
-            result = stream.run_daemon(
-                underlying.symbol,
-                tick_max_age_ms=tick_max_age,
-            )
-        else:
-            max_ticks = args.max_ticks or config.fyers.ws_max_ticks
-            duration = args.duration or config.fyers.ws_duration_seconds
-            result = stream.collect(
-                underlying.symbol,
-                max_ticks=max_ticks,
-                duration_seconds=duration,
-                tick_max_age_ms=tick_max_age,
-            )
+        max_ticks = args.max_ticks or config.fyers.ws_max_ticks
+        duration = args.duration or config.fyers.ws_duration_seconds
+        result = stream.collect(
+            underlying.symbol,
+            max_ticks=max_ticks,
+            duration_seconds=duration,
+            tick_max_age_ms=tick_max_age,
+        )
         print(
             f"{result.symbol}: {len(result.ticks)} tick(s) "
             f"stopped={result.stopped_reason} reconnects={result.reconnects}"

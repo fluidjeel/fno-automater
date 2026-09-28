@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast, runtime_checkable
 
 from trading.data.events import CanonicalMarketEvent
+from trading.data.fyers.data_socket_guard import DataSocketGuard, DataSocketLock
 from trading.data.normalize import normalize_fyers_ws_tick
 from trading.data.ports import EventStore
 from trading.data.quality import assess_tick
@@ -119,7 +120,14 @@ class FyersTickStream:
         stopped_reason = "duration"
         log_dir = self._repo_root / "data" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
+        lock: DataSocketLock | None = None
         while not halt.is_set():
+            if lock is None:
+                lock = DataSocketGuard.acquire(
+                    self._repo_root,
+                    "ephemeral-collect",
+                    clock=self._clock,
+                )
             socket = self._socket_factory(
                 access_token=self._settings.auth_header,
                 write_to_file=False,
@@ -168,6 +176,8 @@ class FyersTickStream:
             stopped_reason = "max_ticks"
         if stop is not None and stop.is_set() and stopped_reason == "duration":
             stopped_reason = "signal"
+        if lock is not None:
+            DataSocketGuard.release(lock)
         return TickStreamResult(
             symbol=symbol,
             ticks=tuple(ticks),

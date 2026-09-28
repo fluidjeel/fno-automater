@@ -38,6 +38,7 @@ class CollectorMetrics:
     resource_samples: list[ResourceSnapshot] = field(default_factory=list)
     subscribed_symbols: tuple[str, ...] = ()
     mcx_supported: bool = False
+    data_ws_skipped_reason: str | None = None
     fields_observed: set[str] = field(default_factory=set)
 
     def record_queue_depth(self, depth: int) -> None:

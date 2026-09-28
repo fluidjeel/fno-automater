@@ -4,7 +4,8 @@ LAST_UPDATED: 2026-09-28
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
 STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A15_DONE (quote freshness from
 fetch/calculation time, not bar event_time); DISC-A14_DONE (margin soft-resize,
-safe projection, evaluation-error defense); Oracle rsync + restart still pending
+safe projection, evaluation-error defense); DISC-A22_DONE (single Fyers data_ws
+per account via `fno-data-tick` shared hub); Oracle rsync + restart still pending
 (DISC-A12)
 
 ## Evidence labels
@@ -44,6 +45,35 @@ Routing profile is `four_mode`. **M1 remains event-only until DISC-B1** — the
 
 Four-mode redesign P1–P16 complete (P14 calendars
 `EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN`). LIVE not approved.
+
+## Fyers data_ws audit (DISC-A22)
+
+Policy: exactly one `fyers_apiv3.FyersWebsocket.data_ws.FyersDataSocket` per Fyers
+account. TBT (`FyersTbtSocket`) is a separate socket type and out of scope except
+where CAS opens `data_ws`.
+
+| Location | Opens data_ws? | Process / systemd unit | Notes |
+| --- | --- | --- | --- |
+| `src/trading/data/fyers/ws.py` (`FyersTickStream`) | yes (guarded) | `trading data stream --daemon` → `fno-data-tick.service` | Tick daemon; now owns the shared hub |
+| `src/trading/runtime/fyers_ws_monitor.py` | yes (via `FyersTickStream`) | `fno-paper-session.service` when `protection.quote_source=direct_ws` | Legacy path; disallowed while tick daemon lock held |
+| `src/trading/data/cas_depth/collector.py` | yes when hub inactive | ad-hoc / measurement jobs | Uses hub `DepthUpdate` when `fno-data-tick` lock active |
+| `src/trading/data/fyers/capability_probe.py` | yes when hub inactive | manual probe scripts | Defers with health error when tick daemon lock held |
+| DISC-A18 `promoted_depth_ws.py` (PR #30, not merged) | yes (planned) | would run in paper session | Rebase onto A22; use `SharedHubClient` with `data_type=DepthUpdate` |
+
+Oracle running services (paper session): `fno-automated`, `fno-data-tick`,
+`fno-paper-session`.
+
+| Scenario | data_ws sockets |
+| --- | ---: |
+| Today on main (tick + paper `ws_enabled` + CAS probe/collector as run) | up to 3–4 |
+| After DISC-A22 (shared hub; `quote_source=shared_hub` default) | **1** |
+| After DISC-A18 merged onto A22 (promoted depth via hub) | **1** |
+
+Hub transport: Unix domain sockets under `data/fyers/shared_hub/` (control +
+stream). Chosen over SQLite WAL for push fan-out and sub-250 ms local delivery on
+a single VM. Health: `data/fyers/shared_hub/status.json` reports
+`data_socket_owner`, `data_socket_count` (must be 1), and per-owner subscriber
+counts.
 
 ## Follow-up (not DISC-A15)
 
