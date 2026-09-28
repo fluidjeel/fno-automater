@@ -347,7 +347,10 @@ def test_merge_monthly_chain_cache_avoids_refetch_within_ttl(
     )
     merged1, _, _, cache = _merge_monthly_chain((near,), {}, **common)  # type: ignore[arg-type]
     merged2, _, _, cache2 = _merge_monthly_chain(
-        (near,), {}, cache=cache, **common  # type: ignore[arg-type]
+        (near,),
+        {},
+        cache=cache,
+        **common,  # type: ignore[arg-type]
     )
     assert fetch_calls == 1
     assert cache2 is cache
