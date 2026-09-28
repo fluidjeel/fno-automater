@@ -150,18 +150,12 @@ class DiscoveryDirectionConfig(StrictModel):
 
 
 class DiscoveryExitsConfig(StrictModel):
-    """Premium-scaled structure exits for DISCOVERY PAPER (DISC-A21)."""
+    """Per-leg and structure exit fractions for DISCOVERY PAPER (DISC-A21)."""
 
-    debit_stop_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
-    debit_target_fraction: ExactDecimal = Field(gt=Decimal("0"))
-    credit_take_profit_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
-    credit_stop_multiplier: ExactDecimal = Field(gt=Decimal("0"))
-    long_leg_disaster_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
-    short_leg_disaster_multiplier: ExactDecimal = Field(gt=Decimal("1"))
-    trail_activation_fraction: ExactDecimal = Field(gt=Decimal("0"))
-    trail_giveback_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
-    confirm_quotes: StrictInt = Field(ge=1)
-    rest_batch_size: StrictInt = Field(default=50, ge=1, le=50)
+    leg_stop_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
+    leg_target_fraction: ExactDecimal = Field(gt=Decimal("0"))
+    short_leg_stop_multiple: ExactDecimal = Field(gt=Decimal("1"))
+    short_leg_target_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
 
 
 class DiscoveryConfig(VersionedModel):

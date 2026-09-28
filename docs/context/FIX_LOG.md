@@ -208,17 +208,16 @@ Scope assignment: multi-leg intents get `ExitScope.STRATEGY_PNL` automatically
 
 #### Fix / status
 
-**Done:** DISCOVERY-only slice **DISC-A21** — premium-scaled structure exits on
-`STRATEGY_PNL` for PAPER positions; STRICT/LIVE unchanged.
+**Done:** DISCOVERY-only slice **DISC-A21** — per-leg stop/target and structure
+`pnl_stop`/`pnl_target` replace fixed 40-tick exits for PAPER; STRICT/LIVE
+unchanged. Follow-up **DISC-A21b**: HWM trail, all-legs-fresh REST refresh,
+2-quote mid confirm, shorts-first sequencing.
 
 | Change | Detail |
 | --- | --- |
-| Premium-scaled stops | Debit: stop ~35% of debit, target 80% (`config/discovery.yaml` `exits.*`). Credit: TP 50% of credit, stop 2× credit capped at max loss |
-| Structure trail | Trail on structure P&L HWM (+30% of debit activate, 50% give-back); persisted on `ExitPolicy` / lifecycle |
-| Auxiliary stop | Removed for DISCOVERY premium-scaled policies; per-leg disaster backstop only (−70% long premium) |
-| Freshness | All structure legs must be fresh; one batched REST refresh (≤50 symbols) before eval |
-| Trigger | Mid price with 2 consecutive confirming quotes |
-| Exit order | Short legs first (`_liability_first`, unchanged) |
+| Per-leg stops/targets | Long: stop `entry×(1−0.35)`, target `entry×(1+0.80)`; short: stop `entry×2.0`, target `entry×0.50`; tick-rounded conservatively |
+| Structure pnl | `pnl_stop = −Σ(0.35×entry×qty)` longs; `pnl_target = +Σ(0.80×entry×qty)`; credit equivalents on short legs |
+| Monitor-leg copy bug | `stop_price` None on policy; each leg's `current_stop_price`/`current_target_price` from its own entry |
 | STRICT/LIVE | Unchanged tick-based `build_exit_policy` |
 
 #### Must not be reverted / constraints
@@ -378,6 +377,6 @@ probe consume via hub or batched REST.
 
 ### DISC-A21 (2026-09-28)
 
-Premium-scaled DISCOVERY structure exits replace fixed 40-tick / ₹130 stops for
-PAPER multi-leg and single-leg options. Policy frozen at entry; HWM trail and
-confirm state persist on lifecycle restore. Oracle deploy still pending.
+Per-leg stop/target and structure `pnl_stop`/`pnl_target` replace fixed 40-tick
+DISCOVERY exits for PAPER. Policy frozen at entry. **DISC-A21b** (trail, REST
+refresh, 2-quote confirm, shorts-first) deferred.

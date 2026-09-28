@@ -34,8 +34,10 @@ from trading.risk.sizing.credit_spread import is_credit_spread
 from trading.risk.sizing.debit_spread import is_debit_spread
 from trading.risk.sizing.iron_condor import is_iron_condor
 from trading.trade.discovery_exits import (
+    apply_discovery_leg_exit_prices,
     build_discovery_exit_policy,
-    compute_leg_disaster_stop,
+    compute_leg_stop_price,
+    compute_leg_target_price,
 )
 from trading.trade.exits import (
     ExitEngine,
@@ -87,10 +89,7 @@ class TradeManager:
         self._reservations = reservation_service
         self._discovery_config = discovery_config
         self._entry_profile = entry_profile
-        discovery_exits = (
-            discovery_config.exits if discovery_config is not None else None
-        )
-        self._exit_engine = exit_engine or ExitEngine(discovery_exits=discovery_exits)
+        self._exit_engine = exit_engine or ExitEngine()
         self._pending: dict[str, _PendingEntry] = {}
         self._positions: dict[str, PositionState] = {}
 
@@ -496,7 +495,7 @@ class TradeManager:
         )
         entry_price = _planned_entry_price(self._pending.get(trade_id), intent)
         existing_legs = position.legs if position is not None else ()
-        leg_disaster = _leg_disaster_stop(
+        leg_stop, leg_target = _leg_exit_prices(
             leg,
             fill_price,
             discovery_config=self._discovery_config,
@@ -509,12 +508,19 @@ class TradeManager:
             side=leg.side,
             quantity_contracts=event.filled_quantity,
             average_entry_price=fill_price,
-            current_stop_price=leg_disaster,
+            current_stop_price=leg_stop,
+            current_target_price=leg_target,
         )
         pending = self._pending.get(trade_id)
         entry_complete = pending is not None and _plan_filled_by_legs(
             legs, pending.plan
         )
+        if (
+            entry_complete
+            and self._entry_profile is EntryProfile.DISCOVERY
+            and self._discovery_config is not None
+        ):
+            legs = apply_discovery_leg_exit_prices(legs, self._discovery_config.exits)
         policy = _build_trade_exit_policy(
             intent,
             trade_id=trade_id,
@@ -638,7 +644,6 @@ def _build_trade_exit_policy(
             initialized_at=initialized_at,
             config=discovery_config.exits,
             scope=ExitScope.STRATEGY_PNL,
-            quantity_contracts=quantity_contracts,
             max_loss=max_loss,
         )
     return build_exit_policy(
@@ -653,20 +658,21 @@ def _build_trade_exit_policy(
     )
 
 
-def _leg_disaster_stop(
+def _leg_exit_prices(
     leg: IntentLeg,
     fill_price: Price,
     *,
     discovery_config: DiscoveryConfig | None,
     entry_profile: EntryProfile,
-) -> Price | None:
+) -> tuple[Price | None, Price | None]:
     if entry_profile is not EntryProfile.DISCOVERY or discovery_config is None:
-        return None
-    return compute_leg_disaster_stop(
-        entry_price=fill_price,
-        side=leg.side,
-        config=discovery_config.exits,
+        return None, None
+    config = discovery_config.exits
+    stop = compute_leg_stop_price(entry_price=fill_price, side=leg.side, config=config)
+    target = compute_leg_target_price(
+        entry_price=fill_price, side=leg.side, config=config
     )
+    return stop, target
 
 
 def _plan_filled_by_legs(legs: tuple[PositionLegState, ...], plan: OrderPlan) -> bool:
@@ -697,6 +703,7 @@ def _upsert_leg(
     quantity_contracts: int,
     average_entry_price: Price,
     current_stop_price: Price | None = None,
+    current_target_price: Price | None = None,
 ) -> tuple[PositionLegState, ...]:
     updated = PositionLegState(
         leg_id=leg_id,
@@ -705,6 +712,7 @@ def _upsert_leg(
         quantity_contracts=quantity_contracts,
         average_entry_price=average_entry_price,
         current_stop_price=current_stop_price,
+        current_target_price=current_target_price,
     )
     kept = tuple(leg for leg in legs if leg.leg_id != leg_id)
     return (*kept, updated)

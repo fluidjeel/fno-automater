@@ -7,7 +7,7 @@ Invariant 22: it does not write live configuration.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -410,8 +410,6 @@ class PaperRunner:
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         paper_data_requirements: PaperDataRequirements | None = None,
         discovery_config: DiscoveryConfig | None = None,
-        rest_quote_fetch: Callable[[tuple[str, ...]], dict[str, MarketQuote]]
-        | None = None,
     ) -> None:
         assert_paper_isolation(
             account_config.config.environment,
@@ -432,7 +430,6 @@ class PaperRunner:
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
         self._discovery_config = discovery_config
-        self._rest_quote_fetch = rest_quote_fetch
         self._entry_profile = (
             EntryProfile.DISCOVERY
             if discovery_config is not None
@@ -517,13 +514,6 @@ class PaperRunner:
         self._campaign_ledger = CampaignLedger()
         self._trade_campaign: dict[str, str] = {}
         self._campaign_close_recorded: set[str] = set()
-
-    def set_rest_quote_fetch(
-        self,
-        fetch: Callable[[tuple[str, ...]], dict[str, MarketQuote]] | None,
-    ) -> None:
-        """Inject batched REST quote fetch for DISCOVERY stale-leg refresh."""
-        self._rest_quote_fetch = fetch
 
     def run_cycle(self, requests: Sequence[PaperStrategyRequest]) -> PaperCycleResult:
         """Reconcile, evaluate each strategy, arbitrate, and submit approved orders."""
@@ -906,7 +896,6 @@ class PaperRunner:
         gaps: list[str] = []
         self._seed_open_position_quote_cache(snapshots)
         events.extend(self._resume_inflight_exits(snapshots))
-        working_snapshots = dict(snapshots)
         for position in self._services.trade_manager.list_positions():
             if position.state is not TradeState.OPEN:
                 continue
@@ -914,10 +903,7 @@ class PaperRunner:
             if book is None:
                 continue
             intent, decision = book
-            working_snapshots = self._ensure_structure_quotes_fresh(
-                position, working_snapshots
-            )
-            diagnosis = self._diagnose_protection(position, intent, working_snapshots)
+            diagnosis = self._diagnose_protection(position, intent, snapshots)
             if diagnosis.kind is _ProtectionKind.MISSING_MONITOR:
                 events.extend(
                     self._handle_missing_monitor(
@@ -929,9 +915,7 @@ class PaperRunner:
                 self._handle_stale_protection(position, diagnosis)
                 continue
             self._clear_protection_degraded(position)
-            leg_snapshots = self._exit_leg_snapshots(
-                position, intent, working_snapshots
-            )
+            leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
             if leg_snapshots is None:
                 continue
             feature = _exit_feature_snapshot(position, intent, leg_snapshots)
@@ -969,9 +953,7 @@ class PaperRunner:
             self._write_lifecycle(position.trade_id)
             if updated.state is not TradeState.EXIT_PENDING:
                 continue
-            events.extend(
-                self._submit_exit(intent, decision, updated, working_snapshots)
-            )
+            events.extend(self._submit_exit(intent, decision, updated, snapshots))
         self._exit_depth_gaps = tuple(dict.fromkeys(gaps))
         return tuple(events)
 
@@ -1825,51 +1807,6 @@ class PaperRunner:
             if latest is None or event.received_at >= latest.received_at:
                 latest = event
         return latest
-
-    def _ensure_structure_quotes_fresh(
-        self,
-        position: PositionState,
-        snapshots: Mapping[str, FeatureSnapshot],
-    ) -> dict[str, FeatureSnapshot]:
-        """Refresh stale structure-leg quotes via one batched REST call (DISC-A21)."""
-        if self._entry_profile is not EntryProfile.DISCOVERY:
-            return dict(snapshots)
-        if position.exit_policy.scope not in {
-            ExitScope.STRATEGY_PNL,
-            ExitScope.SPREAD_VALUE,
-        }:
-            return dict(snapshots)
-        if self._rest_quote_fetch is None or self._discovery_config is None:
-            return dict(snapshots)
-        updated = dict(snapshots)
-        stale: list[str] = []
-        for leg in position.legs:
-            snap = updated.get(leg.contract.symbol)
-            if snap is None or self._quote_is_stale(snap):
-                stale.append(leg.contract.symbol)
-        if not stale:
-            return updated
-        batch_size = self._discovery_config.exits.rest_batch_size
-        now = self._clock.now_utc()
-        for start in range(0, len(stale), batch_size):
-            batch = tuple(sorted(set(stale[start : start + batch_size])))
-            quotes = self._rest_quote_fetch(batch)
-            for symbol, quote in quotes.items():
-                existing = updated.get(symbol)
-                if existing is None:
-                    continue
-                updated[symbol] = existing.model_copy(
-                    update={
-                        "market": quote,
-                        "times": SnapshotTimes(
-                            event_time=now,
-                            source_time=now,
-                            receive_time=now,
-                            calculation_time=now,
-                        ),
-                    }
-                )
-        return updated
 
     def _exit_leg_snapshots(
         self,
