@@ -40,6 +40,23 @@ class InstrumentSpecStore:
                 specs.append(InstrumentSpec.model_validate_json(text))
         return tuple(specs)
 
+    def invalidate_cache(self) -> None:
+        """Drop the in-memory index so the next lookup reloads from disk."""
+        self._index = None
+
+    def merge(self, segment: str, specs: Sequence[InstrumentSpec]) -> int:
+        """Upsert specs into one segment catalog without dropping existing rows."""
+        if not specs:
+            return 0
+        existing = {spec.trading_symbol: spec for spec in self.load(segment)}
+        added = 0
+        for spec in specs:
+            if spec.trading_symbol not in existing:
+                added += 1
+            existing[spec.trading_symbol] = spec
+        self.write(segment, tuple(existing.values()))
+        return added
+
     def find(self, trading_symbol: str) -> InstrumentSpec | None:
         """Return the spec for one trading symbol across every stored segment.
 

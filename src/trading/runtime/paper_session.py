@@ -85,6 +85,10 @@ from trading.portfolio.risk_journal import (
     PortfolioRiskJournal,
     build_portfolio_risk_record,
 )
+from trading.risk.instrument_registry import (
+    InstrumentRegistry,
+    make_symbol_master_fetcher,
+)
 from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.candidates import (
     build_future_snapshot,
@@ -852,6 +856,11 @@ def run_paper_session(
         auth_status = run_telegram_auth(repo_root)
         if auth_status != 0:
             return auth_status
+    instrument_registry = (
+        _instrument_registry_for_session(repo_root, pipeline_cfg, clock)
+        if discovery_cfg is not None
+        else None
+    )
     runner = PaperRunner(
         account_config=account,
         risk_policy=risk,
@@ -864,6 +873,7 @@ def run_paper_session(
         execution_mode=ExecutionMode.PAPER,
         paper_data_requirements=paper_data,
         discovery_config=discovery_cfg,
+        instrument_registry=instrument_registry,
     )
     settings = FyersSettings.from_repo_root_with_cache(repo_root)
     if notifier is None:
@@ -896,6 +906,7 @@ def run_paper_session(
                 discovery_config=discovery_cfg,
                 discovery_fingerprint=discovery_fingerprint,
                 feed=shared_feed,
+                instrument_registry=instrument_registry,
             )
         else:
             request_builder = _live_request_builder(
@@ -1387,6 +1398,37 @@ def _live_request_builder(
     return build
 
 
+def _option_master_segment(segments: Sequence[str]) -> str:
+    for segment in segments:
+        if segment == "NSE_FO":
+            return segment
+    return segments[0]
+
+
+def _instrument_registry_for_session(
+    repo_root: Path,
+    pipeline_cfg: DataPipelineConfig,
+    clock: Clock,
+) -> InstrumentRegistry:
+    """Build and warm the session instrument registry from on-disk catalogs."""
+    catalog = InstrumentSpecStore(
+        repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
+    )
+    segment = _option_master_segment(pipeline_cfg.reference.segments)
+    registry = InstrumentRegistry(
+        catalog,
+        segment=segment,
+        fetch_master=make_symbol_master_fetcher(
+            clock=clock,
+            reference=pipeline_cfg.reference,
+            timezone=pipeline_cfg.session.timezone,
+            segment=segment,
+        ),
+    )
+    registry.rebuild()
+    return registry
+
+
 def _four_mode_request_builder(
     repo_root: Path,
     *,
@@ -1400,6 +1442,7 @@ def _four_mode_request_builder(
     discovery_config: DiscoveryConfig | None = None,
     discovery_fingerprint: str | None = None,
     feed: ResilientFyersMarketFeed | None = None,
+    instrument_registry: InstrumentRegistry | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
@@ -1408,6 +1451,9 @@ def _four_mode_request_builder(
     pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
     catalog = InstrumentSpecStore(
         repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
+    )
+    registry = instrument_registry or _instrument_registry_for_session(
+        repo_root, pipeline_cfg, clock
     )
     news_config = load_news_config(repo_root / "config" / "news.yaml")
     identification = load_identification_policy(
@@ -1497,6 +1543,7 @@ def _four_mode_request_builder(
                 as_of=now,
                 zone=zone,
                 strikes_each_side=near_strikes,
+                registry=registry,
             )
             if option_specs:
                 quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
@@ -1509,6 +1556,7 @@ def _four_mode_request_builder(
                     zone=zone,
                     strikes_each_side=near_strikes,
                     quotes=observed_quotes,
+                    registry=registry,
                 )
             if paper_data is not None:
                 option_candidates = _with_option_depth(
@@ -1528,6 +1576,7 @@ def _four_mode_request_builder(
                     following_week_strikes=following_strikes,
                     cache_ttl_seconds=following_week_cache_ttl,
                     cache=following_week_cache,
+                    registry=registry,
                 )
             )
             if fw_error is not None:
@@ -1548,6 +1597,7 @@ def _four_mode_request_builder(
                     monthly_dte_max=identification.contracts.monthly_dte_max,
                     cache_ttl_seconds=monthly_cache_ttl,
                     cache=monthly_chain_cache,
+                    registry=registry,
                 )
             )
             if mc_error is not None:
@@ -1810,6 +1860,7 @@ def _merge_following_week_chain(
     following_week_strikes: int = _FOLLOWING_WEEK_STRIKES,
     cache_ttl_seconds: int = _DEFAULT_FOLLOWING_WEEK_CACHE_TTL,
     cache: _FollowingWeekChainCache | None = None,
+    registry: InstrumentRegistry | None = None,
 ) -> tuple[
     tuple[FeatureSnapshot, ...],
     dict[str, InstrumentSpec],
@@ -1873,6 +1924,7 @@ def _merge_following_week_chain(
         as_of=as_of,
         zone=zone,
         strikes_each_side=following_week_strikes,
+        registry=registry,
     )
     marked: list[FeatureSnapshot] = []
     for snap in extra:
@@ -1906,6 +1958,7 @@ def _merge_monthly_chain(
     monthly_dte_max: int,
     cache_ttl_seconds: int = _DEFAULT_MONTHLY_CACHE_TTL,
     cache: _MonthlyChainCache | None = None,
+    registry: InstrumentRegistry | None = None,
 ) -> tuple[
     tuple[FeatureSnapshot, ...],
     dict[str, InstrumentSpec],
@@ -1963,6 +2016,7 @@ def _merge_monthly_chain(
         as_of=as_of,
         zone=zone,
         strikes_each_side=monthly_strikes,
+        registry=registry,
     )
     marked: list[FeatureSnapshot] = []
     for snap in extra:

@@ -127,6 +127,11 @@ from trading.portfolio.fill_charge_recorder import (
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
 from trading.risk.gate_profile import is_soft, partition_reasons
+from trading.risk.instrument_registry import InstrumentRegistry
+from trading.risk.instrument_resolve import (
+    resolve_discovery_risk_context,
+    should_resolve_instruments,
+)
 from trading.risk.mode_ledger import FourModeBook
 from trading.runtime.cycle_evidence import build_cycle_evidence
 from trading.runtime.discovery_decision_recorder import (
@@ -422,6 +427,7 @@ class PaperRunner:
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         paper_data_requirements: PaperDataRequirements | None = None,
         discovery_config: DiscoveryConfig | None = None,
+        instrument_registry: InstrumentRegistry | None = None,
         rest_quote_fetch: Callable[[tuple[str, ...]], dict[str, MarketQuote]]
         | None = None,
     ) -> None:
@@ -444,6 +450,7 @@ class PaperRunner:
         self._execution_mode = execution_mode
         self._paper_data = paper_data_requirements
         self._discovery_config = discovery_config
+        self._instrument_registry = instrument_registry
         self._rest_quote_fetch = rest_quote_fetch
         self._entry_profile = (
             EntryProfile.DISCOVERY
@@ -799,6 +806,8 @@ class PaperRunner:
         """
         if self._lifecycle_recovered:
             return self._last_recovery
+        if self._instrument_registry is not None:
+            self._instrument_registry.rebuild()
         self._restore_persisted_freeze()
         broker_by_trade: dict[str, list[PositionRecord]] = {}
         for broker_position in self._services.broker.get_positions():
@@ -2995,15 +3004,36 @@ class PaperRunner:
                     continue
 
             instrument = _instrument_for(intent, request.instruments)
-            if instrument is None:
+            feature_snapshot = _feature_for(intent, request)
+            leg_snapshots = _leg_snapshots(intent, request)
+            instruments = dict(request.instruments)
+            if (
+                should_resolve_instruments(self._entry_profile)
+                and self._instrument_registry is not None
+            ):
+                resolved = resolve_discovery_risk_context(
+                    intent,
+                    candidates=request.candidates,
+                    instruments=instruments,
+                    underlying=request.underlying,
+                    registry=self._instrument_registry,
+                )
+                if isinstance(resolved, ReasonCode):
+                    rejection_reasons.append(resolved)
+                    continue
+                instrument = resolved.instrument
+                instruments = resolved.instruments
+                feature_snapshot = resolved.feature_snapshot
+                leg_snapshots = resolved.leg_snapshots
+            elif instrument is None:
                 continue
             self._publish_quotes(intent, request)
             risk_request = RiskGatewayRequest(
                 intent=intent,
-                feature_snapshot=_feature_for(intent, request),
+                feature_snapshot=feature_snapshot,
                 portfolio_snapshot=portfolio,  # type: ignore[arg-type]
                 instrument=instrument,
-                leg_snapshots=_leg_snapshots(intent, request),
+                leg_snapshots=leg_snapshots,
                 event_risk_state=request.event_risk_state,
                 paper_requirements=self._paper_data,
                 broker_state_ok=not entries_blocked,

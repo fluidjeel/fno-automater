@@ -33,6 +33,7 @@ from trading.domain.enums import (
     InstrumentKind,
 )
 from trading.domain.primitives import Price, TickSize
+from trading.risk.instrument_registry import InstrumentRegistry
 
 __all__ = [
     "build_future_snapshot",
@@ -76,6 +77,7 @@ def build_option_candidates(
     zone: ZoneInfo,
     strikes_each_side: int,
     quotes: Mapping[str, MarketQuote] | None = None,
+    registry: InstrumentRegistry | None = None,
 ) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec]]:
     """ATM ± N strikes with master-backed InstrumentSpec rows."""
     payload = chain.payload
@@ -94,6 +96,8 @@ def build_option_candidates(
         if not isinstance(symbol, str) or not symbol:
             continue
         spec = catalog.find(symbol)
+        if spec is None and registry is not None:
+            spec = registry.ensure(frozenset({symbol})).get(symbol)
         if spec is None or spec.instrument_kind is not InstrumentKind.OPTION:
             continue
         observed_quote = quotes.get(symbol)
