@@ -44,17 +44,27 @@ from trading.domain.contracts import (
     TradeIntent,
 )
 from trading.domain.contracts.carry import CarryGateDecision
-from trading.domain.contracts.common import Versions
+from trading.domain.contracts.common import (
+    ContractRef,
+    DataQualityReport,
+    Lineage,
+    Versions,
+)
 from trading.domain.contracts.entry import StrikeShortlist
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
 from trading.domain.contracts.portfolio import PositionRecord
-from trading.domain.contracts.position import PositionState
+from trading.domain.contracts.position import PositionLegState, PositionState
 from trading.domain.contracts.protection import ProtectionStateRecord
-from trading.domain.contracts.snapshot import MarketQuote, SnapshotTimes
+from trading.domain.contracts.snapshot import (
+    DerivativesContext,
+    MarketQuote,
+    SnapshotTimes,
+)
 from trading.domain.enums import (
     CarryGateAction,
+    DataQuality,
     DeskRole,
     DifferenceClass,
     DiscoveryStage,
@@ -64,6 +74,7 @@ from trading.domain.enums import (
     ExitScope,
     FamilyId,
     HoldingStyle,
+    InstrumentKind,
     ModeId,
     OrderPlanState,
     OrderState,
@@ -661,12 +672,12 @@ class PaperRunner:
 
     def monitor_symbols(self) -> tuple[str, ...]:
         symbols: set[str] = set()
-        for trade_id, (intent, _) in self._open_book.items():
-            if any(
-                p.trade_id == trade_id and p.state is not TradeState.CLOSED
-                for p in self._services.trade_manager.list_positions()
-            ):
-                symbols.update(leg.contract.symbol for leg in intent.legs)
+        for position in self._services.trade_manager.list_positions():
+            if position.state is TradeState.CLOSED:
+                continue
+            if position.trade_id not in self._open_book:
+                continue
+            symbols.update(leg.contract.symbol for leg in position.legs)
         return tuple(sorted(symbols))
 
     def seed_protection_snapshots(
@@ -717,18 +728,29 @@ class PaperRunner:
         for symbol, quote in quotes.items():
             snapshot = self._protection_snapshots.get(symbol)
             if snapshot is None:
-                continue
-            updated[symbol] = snapshot.model_copy(
-                update={
-                    "market": quote,
-                    "times": SnapshotTimes(
-                        event_time=received_at,
-                        source_time=received_at,
-                        receive_time=received_at,
-                        calculation_time=received_at,
-                    ),
-                }
-            )
+                if self._entry_profile is not EntryProfile.DISCOVERY:
+                    continue
+                leg = self._held_leg_for_symbol(symbol)
+                if leg is None:
+                    continue
+                snapshot = self._protection_snapshot_from_quote(
+                    leg.contract,
+                    quote,
+                    received_at=received_at,
+                )
+            else:
+                snapshot = snapshot.model_copy(
+                    update={
+                        "market": quote,
+                        "times": SnapshotTimes(
+                            event_time=received_at,
+                            source_time=received_at,
+                            receive_time=received_at,
+                            calculation_time=received_at,
+                        ),
+                    }
+                )
+            updated[symbol] = snapshot
         self._protection_snapshots.update(updated)
         events = self.manage_exits(self._protection_snapshots)
         if updated and all(
@@ -914,6 +936,9 @@ class PaperRunner:
             if book is None:
                 continue
             intent, decision = book
+            working_snapshots = self._merge_protection_snapshots(
+                position, working_snapshots
+            )
             working_snapshots = self._ensure_structure_quotes_fresh(
                 position, working_snapshots
             )
@@ -1165,7 +1190,8 @@ class PaperRunner:
                 missed_slot_ids=missed_slot_ids,
             ):
                 continue
-            diagnosis = self._diagnose_protection(position, intent, snapshots)
+            review_snapshots = self._merge_protection_snapshots(position, snapshots)
+            diagnosis = self._diagnose_protection(position, intent, review_snapshots)
             if diagnosis.kind != _ProtectionKind.OK:
                 if diagnosis.kind == _ProtectionKind.MISSING_MONITOR:
                     self._handle_missing_monitor(
@@ -1826,6 +1852,87 @@ class PaperRunner:
                 latest = event
         return latest
 
+    def _held_leg_for_symbol(self, symbol: str) -> PositionLegState | None:
+        for position in self._services.trade_manager.list_positions():
+            if position.state is TradeState.CLOSED:
+                continue
+            for leg in position.legs:
+                if leg.contract.symbol == symbol:
+                    return leg
+        return None
+
+    def _merge_protection_snapshots(
+        self,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> dict[str, FeatureSnapshot]:
+        """Fill missing held-leg quotes from the protection monitor cache."""
+        if self._entry_profile is not EntryProfile.DISCOVERY:
+            return dict(snapshots)
+        merged = dict(snapshots)
+        for leg in position.legs:
+            symbol = leg.contract.symbol
+            if symbol in merged:
+                continue
+            protected = self._protection_snapshots.get(symbol)
+            if protected is None or self._quote_is_stale(protected):
+                continue
+            merged[symbol] = protected
+        return merged
+
+    def _protection_snapshot_from_quote(
+        self,
+        contract: ContractRef,
+        quote: MarketQuote,
+        *,
+        received_at: datetime,
+    ) -> FeatureSnapshot:
+        """Minimal held-leg snapshot for REST protection outside the chain fetch."""
+        derivatives = None
+        if contract.instrument_kind in {InstrumentKind.OPTION, InstrumentKind.FUTURE}:
+            derivatives = DerivativesContext(
+                days_to_expiry=self._days_to_expiry(contract, received_at),
+                open_interest=0,
+                option_type=contract.option_type,
+                underlying_price=quote.last,
+            )
+        return FeatureSnapshot(
+            snapshot_id=f"protection-{contract.symbol}",
+            contract=contract,
+            times=SnapshotTimes(
+                event_time=received_at,
+                source_time=received_at,
+                receive_time=received_at,
+                calculation_time=received_at,
+            ),
+            market=quote,
+            derivatives=derivatives,
+            feature_set_version="paper-protection-v1",
+            features={},
+            quality=DataQualityReport(
+                state=DataQuality.VALID,
+                age_ms=0,
+                warmup_complete=True,
+                source_status="rest-protection",
+                reason_codes=(ReasonCode.OK,),
+            ),
+            lineage=Lineage(
+                provider="fyers",
+                normalization_version="1",
+                versions=Versions(
+                    code_version=self._code_version,
+                    config_version=self._profile_version,
+                    config_checksum=self._profile_version,
+                ),
+            ),
+        )
+
+    def _days_to_expiry(self, contract: ContractRef, as_of: datetime) -> int:
+        if contract.expiry is None:
+            return 1
+        trade_date = as_of.astimezone(ZoneInfo("Asia/Kolkata")).date()
+        return max(0, (contract.expiry - trade_date).days)
+
     def _ensure_structure_quotes_fresh(
         self,
         position: PositionState,
@@ -1857,18 +1964,28 @@ class PaperRunner:
             for symbol, quote in quotes.items():
                 existing = updated.get(symbol)
                 if existing is None:
-                    continue
-                updated[symbol] = existing.model_copy(
-                    update={
-                        "market": quote,
-                        "times": SnapshotTimes(
-                            event_time=now,
-                            source_time=now,
-                            receive_time=now,
-                            calculation_time=now,
-                        ),
-                    }
-                )
+                    held_leg = self._held_leg_for_symbol(symbol)
+                    if held_leg is None:
+                        continue
+                    existing = self._protection_snapshot_from_quote(
+                        held_leg.contract,
+                        quote,
+                        received_at=now,
+                    )
+                else:
+                    existing = existing.model_copy(
+                        update={
+                            "market": quote,
+                            "times": SnapshotTimes(
+                                event_time=now,
+                                source_time=now,
+                                receive_time=now,
+                                calculation_time=now,
+                            ),
+                        }
+                    )
+                updated[symbol] = existing
+                self._protection_snapshots[symbol] = existing
         return updated
 
     def _exit_leg_snapshots(
