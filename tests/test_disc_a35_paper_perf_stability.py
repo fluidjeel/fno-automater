@@ -160,7 +160,7 @@ class TestProtectionDeferredWork:
 
         def counting_read_events(*args: object, **kwargs: object) -> tuple[object, ...]:
             read_calls["count"] += 1
-            return original(*args, **kwargs)
+            return original(*args, **kwargs)  # type: ignore[arg-type]
 
         alerts = tuple(
             LifecycleAlert(
