@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from trading.data.cas_depth.contracts import (
     CAS_DEPTH_FEATURE_SET_VERSION,
@@ -20,6 +21,14 @@ from trading.data.cas_depth.features import (
 
 __all__ = ["CasDepthPaperAdapter"]
 
+_ABSTAIN_QUALITY_ISSUES = frozenset(
+    {
+        DepthQualityIssue.MALFORMED,
+        DepthQualityIssue.MISSING_FIELD,
+        DepthQualityIssue.STALE,
+    }
+)
+
 
 class CasDepthPaperAdapter:
     """Publish bounded depth-only snapshots for paper CAS consumption."""
@@ -29,6 +38,9 @@ class CasDepthPaperAdapter:
         self._latest_dir = root / "snapshots" / "latest"
         self._health_path = root / "health.json"
         self._latest_dir.mkdir(parents=True, exist_ok=True)
+        self._symbol_health: dict[str, dict[str, Any]] = {}
+        if self._health_path.is_file():
+            self._load_existing_health()
 
     def publish(
         self,
@@ -43,7 +55,10 @@ class CasDepthPaperAdapter:
         """Build and write a bounded feature snapshot; abstain when stale."""
         features = compute_depth_only_features(update, prior)
         age_seconds = (now - update.exchange_timestamp).total_seconds()
-        abstain = age_seconds > max_stale_seconds or bool(quality_issues)
+        blocking_issues = [
+            issue for issue in quality_issues if issue in _ABSTAIN_QUALITY_ISSUES
+        ]
+        abstain = age_seconds > max_stale_seconds or bool(blocking_issues)
         abstain_reason: str | None = None
         if age_seconds > max_stale_seconds:
             abstain_reason = f"stale depth ({age_seconds:.1f}s > {max_stale_seconds}s)"
@@ -89,20 +104,47 @@ class CasDepthPaperAdapter:
         payload = json.loads(self._health_path.read_text(encoding="utf-8"))
         return bool(payload.get("abstain", True))
 
+    def _load_existing_health(self) -> None:
+        payload = json.loads(self._health_path.read_text(encoding="utf-8"))
+        symbols = payload.get("symbols")
+        if isinstance(symbols, dict):
+            self._symbol_health = {
+                str(key): dict(value)
+                for key, value in symbols.items()
+                if isinstance(value, dict)
+            }
+
     def _write_health(
         self, snapshot: CasDepthFeatureSnapshot, *, now: datetime
     ) -> None:
+        symbol_key = snapshot.symbol.replace(":", "_")
+        self._symbol_health[symbol_key] = {
+            "symbol": snapshot.symbol,
+            "updated_at": now.isoformat(),
+            "exchange_timestamp": snapshot.exchange_timestamp.isoformat(),
+            "abstain": snapshot.abstain,
+            "abstain_reason": snapshot.abstain_reason,
+            "features_complete": snapshot.is_valid,
+        }
+        any_abstain = any(
+            entry.get("abstain", True) for entry in self._symbol_health.values()
+        )
+        all_complete = all(
+            entry.get("features_complete", False)
+            for entry in self._symbol_health.values()
+        )
         self._health_path.write_text(
             json.dumps(
                 {
                     "updated_at": now.isoformat(),
                     "cas_data_mode": "DEPTH_ONLY",
                     "cas_live_orders": False,
-                    "abstain": snapshot.abstain,
-                    "abstain_reason": snapshot.abstain_reason,
+                    "abstain": any_abstain,
+                    "abstain_reason": snapshot.abstain_reason if any_abstain else None,
                     "symbol": snapshot.symbol,
                     "feature_set_version": snapshot.feature_set_version,
-                    "features_complete": snapshot.is_valid,
+                    "features_complete": all_complete and not any_abstain,
+                    "symbols": self._symbol_health,
                 },
                 indent=2,
             ),

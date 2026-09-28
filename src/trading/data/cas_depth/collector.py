@@ -14,7 +14,7 @@ from typing import Any
 
 from trading.data.cas_depth.adapter import CasDepthPaperAdapter
 from trading.data.cas_depth.config import CasDataConfig
-from trading.data.cas_depth.contracts import NormalizedDepthUpdate
+from trading.data.cas_depth.contracts import DepthQualityIssue, NormalizedDepthUpdate
 from trading.data.cas_depth.metrics import CollectorMetrics
 from trading.data.cas_depth.normalize import (
     normalize_data_ws_depth,
@@ -49,6 +49,7 @@ class CollectorRunResult:
 @dataclass
 class _QueuedDepth:
     update: NormalizedDepthUpdate
+    duplicate_prices: bool = False
     raw: dict[str, Any] | None = None
 
 
@@ -193,9 +194,11 @@ class CasDepthCollector:
                 break
             started = time.monotonic()
             now = datetime.now(tz=UTC)
-            issues = self._quality.inspect(item.update, now=now)
+            issues = list(self._quality.inspect(item.update, now=now))
+            if item.duplicate_prices and DepthQualityIssue.DUPLICATE not in issues:
+                issues.append(DepthQualityIssue.DUPLICATE)
             update = item.update.model_copy(
-                update={"quality_issues": issues},
+                update={"quality_issues": tuple(issues)},
             )
             self._metrics.messages_processed += 1
             self._metrics.record_latency(
@@ -235,10 +238,17 @@ class CasDepthCollector:
         self._storage.append_snapshot(snapshot)
         self._last_publish[update.symbol] = time.monotonic()
 
-    def _enqueue(self, update: NormalizedDepthUpdate) -> None:
+    def _enqueue(
+        self,
+        update: NormalizedDepthUpdate,
+        *,
+        duplicate_prices: bool = False,
+    ) -> None:
         self._metrics.messages_received += 1
         try:
-            self._queue.put_nowait(_QueuedDepth(update=update))
+            self._queue.put_nowait(
+                _QueuedDepth(update=update, duplicate_prices=duplicate_prices)
+            )
         except queue.Full:
             self._quality.record_queue_overflow()
             self._metrics.messages_dropped += 1
@@ -260,13 +270,13 @@ class CasDepthCollector:
             if self._halt.is_set():
                 return
             receive_time = datetime.now(tz=UTC)
-            normalized = normalize_tbt_depth(
+            normalized, duplicate_prices = normalize_tbt_depth(
                 ticker,
                 depth,
                 receive_time=receive_time,
             )
             if normalized is not None:
-                self._enqueue(normalized)
+                self._enqueue(normalized, duplicate_prices=duplicate_prices)
 
         def on_open() -> None:
             connected.set()
@@ -309,13 +319,13 @@ class CasDepthCollector:
             if message.get("type") != "dp" and not message.get("bid_price1"):
                 return
             receive_time = datetime.now(tz=UTC)
-            normalized = normalize_data_ws_depth(
+            normalized, duplicate_prices = normalize_data_ws_depth(
                 message,
                 receive_time=receive_time,
             )
             if normalized is not None:
                 self._metrics.mcx_supported = True
-                self._enqueue(normalized)
+                self._enqueue(normalized, duplicate_prices=duplicate_prices)
 
         log_dir = self._repo_root / "data" / "logs" / "cas_depth"
         log_dir.mkdir(parents=True, exist_ok=True)

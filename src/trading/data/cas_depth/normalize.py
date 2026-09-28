@@ -24,11 +24,15 @@ _SCALE = Decimal("0.01")
 def sort_levels(
     bids: list[DepthLevel],
     asks: list[DepthLevel],
-) -> tuple[tuple[DepthLevel, ...], tuple[DepthLevel, ...]]:
-    """Sort bids descending and asks ascending by price."""
-    bid_sorted = tuple(sorted(bids, key=lambda level: level.price, reverse=True))
-    ask_sorted = tuple(sorted(asks, key=lambda level: level.price))
-    return bid_sorted, ask_sorted
+) -> tuple[tuple[DepthLevel, ...], tuple[DepthLevel, ...], bool]:
+    """Dedupe by price, then sort bids descending and asks ascending."""
+    deduped_bids, bid_dupes = _dedupe_levels_by_price(bids)
+    deduped_asks, ask_dupes = _dedupe_levels_by_price(asks)
+    bid_sorted = tuple(
+        sorted(deduped_bids, key=lambda level: level.price, reverse=True)
+    )
+    ask_sorted = tuple(sorted(deduped_asks, key=lambda level: level.price))
+    return bid_sorted, ask_sorted, bid_dupes or ask_dupes
 
 
 def normalize_tbt_depth(
@@ -37,8 +41,12 @@ def normalize_tbt_depth(
     *,
     receive_time: datetime,
     feed: str = "tbt_ws",
-) -> NormalizedDepthUpdate | None:
+) -> tuple[NormalizedDepthUpdate | None, bool]:
     """Map SDK ``Depth`` object to a normalized update."""
+    # FyersTbtSocket merges incremental diffs into fixed 50-slot arrays
+    # (tbt_ws.py DataStore.updateDepth + Depth._addDepth): only indices present
+    # in the wire packet are overwritten; stale slots are never cleared, so the
+    # same price can appear at multiple indices after partial book shifts.
     bids = [
         DepthLevel(
             price=Decimal(str(depth.bidprice[i])).quantize(_SCALE),
@@ -57,24 +65,27 @@ def normalize_tbt_depth(
         for i in range(50)
         if depth.askprice[i] or depth.askqty[i]
     ]
-    bid_levels, ask_levels = sort_levels(bids, asks)
+    bid_levels, ask_levels, had_duplicate_prices = sort_levels(bids, asks)
     if not bid_levels and not ask_levels:
-        return None
+        return None, False
     exchange_ts = _epoch_to_utc(depth.timestamp)
-    return NormalizedDepthUpdate(
-        symbol=symbol,
-        exchange_timestamp=exchange_ts,
-        receive_timestamp=receive_time,
-        sequence=int(depth.seqNo) if depth.seqNo else None,
-        bid_levels=bid_levels,
-        ask_levels=ask_levels,
-        ltp=None,
-        last_quantity=None,
-        total_volume=None,
-        open_interest=None,
-        trade_aggressor=TradeAggressor.UNKNOWN,
-        is_snapshot=bool(depth.snapshot),
-        feed=feed,
+    return (
+        NormalizedDepthUpdate(
+            symbol=symbol,
+            exchange_timestamp=exchange_ts,
+            receive_timestamp=receive_time,
+            sequence=int(depth.seqNo) if depth.seqNo else None,
+            bid_levels=bid_levels,
+            ask_levels=ask_levels,
+            ltp=None,
+            last_quantity=None,
+            total_volume=None,
+            open_interest=None,
+            trade_aggressor=TradeAggressor.UNKNOWN,
+            is_snapshot=bool(depth.snapshot),
+            feed=feed,
+        ),
+        had_duplicate_prices,
     )
 
 
@@ -83,11 +94,11 @@ def normalize_data_ws_depth(
     *,
     receive_time: datetime,
     feed: str = "data_ws",
-) -> NormalizedDepthUpdate | None:
+) -> tuple[NormalizedDepthUpdate | None, bool]:
     """Map data-socket ``DepthUpdate`` dict to a normalized update."""
     symbol = message.get("symbol")
     if not isinstance(symbol, str):
-        return None
+        return None, False
     bids: list[DepthLevel] = []
     asks: list[DepthLevel] = []
     for index in range(1, 6):
@@ -111,29 +122,48 @@ def normalize_data_ws_depth(
                     orders=_optional_int(message.get(f"ask_order{index}")),
                 )
             )
-    bid_levels, ask_levels = sort_levels(bids, asks)
+    bid_levels, ask_levels, had_duplicate_prices = sort_levels(bids, asks)
     if not bid_levels and not ask_levels:
-        return None
+        return None, False
     exchange_ts = receive_time
     exch_feed = message.get("exch_feed_time")
     if isinstance(exch_feed, (int, float)):
         exchange_ts = _epoch_to_utc(int(exch_feed))
     ltp = _optional_decimal(message.get("ltp"))
-    return NormalizedDepthUpdate(
-        symbol=symbol,
-        exchange_timestamp=exchange_ts,
-        receive_timestamp=receive_time,
-        sequence=None,
-        bid_levels=bid_levels,
-        ask_levels=ask_levels,
-        ltp=ltp,
-        last_quantity=_optional_int(message.get("last_traded_qty")),
-        total_volume=_optional_int(message.get("vol_traded_today")),
-        open_interest=_optional_int(message.get("oi")),
-        trade_aggressor=TradeAggressor.UNKNOWN,
-        is_snapshot=message.get("type") == "dp",
-        feed=feed,
+    return (
+        NormalizedDepthUpdate(
+            symbol=symbol,
+            exchange_timestamp=exchange_ts,
+            receive_timestamp=receive_time,
+            sequence=None,
+            bid_levels=bid_levels,
+            ask_levels=ask_levels,
+            ltp=ltp,
+            last_quantity=_optional_int(message.get("last_traded_qty")),
+            total_volume=_optional_int(message.get("vol_traded_today")),
+            open_interest=_optional_int(message.get("oi")),
+            trade_aggressor=TradeAggressor.UNKNOWN,
+            is_snapshot=message.get("type") == "dp",
+            feed=feed,
+        ),
+        had_duplicate_prices,
     )
+
+
+def _dedupe_levels_by_price(
+    levels: list[DepthLevel],
+) -> tuple[list[DepthLevel], bool]:
+    """Keep the lowest slot index when the same price appears more than once."""
+    seen: set[Decimal] = set()
+    deduped: list[DepthLevel] = []
+    had_duplicates = False
+    for level in levels:
+        if level.price in seen:
+            had_duplicates = True
+            continue
+        seen.add(level.price)
+        deduped.append(level)
+    return deduped, had_duplicates
 
 
 def _epoch_to_utc(value: int) -> datetime:
