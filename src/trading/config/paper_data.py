@@ -29,6 +29,7 @@ def load_paper_data_requirements(path: Path) -> PaperDataRequirements:
     if not isinstance(payload, dict):
         raise PaperDataConfigError(f"{path}: expected a mapping at the top level")
     payload.pop("schema_version", None)
+    payload.pop("depth_promotion", None)
     try:
         return PaperDataRequirements.model_validate(payload)
     except (ValueError, TypeError) as exc:

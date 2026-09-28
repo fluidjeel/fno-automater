@@ -4,8 +4,9 @@ LAST_UPDATED: 2026-09-28
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
 STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A15_DONE (quote freshness from
 fetch/calculation time, not bar event_time); DISC-A14_DONE (margin soft-resize,
-safe projection, evaluation-error defense); Oracle rsync + restart still pending
-(DISC-A12)
+safe projection, evaluation-error defense); DISC-A18_DONE (rate-limit-aware
+promoted-strike WS depth, chain TTL cache, duplicate quote fetch removed);
+Oracle rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
 
@@ -44,12 +45,6 @@ Routing profile is `four_mode`. **M1 remains event-only until DISC-B1** — the
 
 Four-mode redesign P1–P16 complete (P14 calendars
 `EXPERIMENTAL_ONLY_RISK_BOUND_UNPROVEN`). LIVE not approved.
-
-## Follow-up (not DISC-A15)
-
-`paper_session.py` calls `pipeline.run_once` and `feed.fetch_quotes` every cycle
-on top of the timer fetch, which can 429 the following-week chain. Dedupe in a
-later slice.
 
 ## Blocking gaps before Monday
 

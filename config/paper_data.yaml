@@ -84,5 +84,23 @@ windows:
     min_top_size: 1
     min_book_levels: 1
     observe_on_exit: true
-    # REST depth is one symbol per call; cap extra fetches per poll.
+    # Promoted-strike WS depth replaces per-poll REST depth (DISC-A18).
     max_symbols: 8
+
+# DISC-A18: rate-limit-aware promoted-strike WebSocket depth for PAPER.
+depth_promotion:
+  schema_version: "1"
+  depth_set_size: 8
+  score_weights:
+    open_interest: "0.50"
+    volume: "0.30"
+    proximity: "0.20"
+  promote_after_polls: 2
+  demote_after_polls: 3
+  chain_cache_ttl_seconds: 90
+  rate_limit_backoff:
+    base_seconds: "30"
+    cap_seconds: "300"
+    jitter_fraction: "0.10"
+  ws_channel: 11
+  rest_depth_fallback_enabled: true

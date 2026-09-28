@@ -472,19 +472,24 @@ class DataPipeline:
         return [prior, *events]
 
 
-def build_pipeline(repo_root: Path) -> DataPipeline:
+def build_pipeline(
+    repo_root: Path,
+    *,
+    feed: MarketFeedPort | None = None,
+) -> DataPipeline:
     """Wire the default production pipeline from config on disk."""
     config_path = repo_root / "config" / "data_pipeline.yaml"
     pipeline_config = load_data_pipeline_config(config_path)
     settings = FyersSettings.from_repo_root_with_cache(repo_root)
     clock = WallClock()
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_config.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_config.fyers.chain_greeks,
-        history_oi_flag=pipeline_config.fyers.history_oi_flag,
-    )
+    if feed is None:
+        feed = FyersMarketFeed(
+            settings,
+            clock,
+            strike_count=pipeline_config.fyers.option_chain_strike_count,
+            chain_greeks=pipeline_config.fyers.chain_greeks,
+            history_oi_flag=pipeline_config.fyers.history_oi_flag,
+        )
     store_root = repo_root / pipeline_config.storage.root
     store: EventStore = JsonlEventStore(store_root)
     catalog = CatalogWriter(

@@ -21,10 +21,12 @@ __all__ = [
     "AttributionCode",
     "AuthorityMode",
     "CarryGateAction",
+    "ChainFetchMode",
     "Comparator",
     "ConfidenceBucket",
     "DataQuality",
     "DemotionReason",
+    "DepthFeedSource",
     "DeskRole",
     "DifferenceClass",
     "DirectionalClaim",
@@ -1179,6 +1181,24 @@ class PlaybookEditKind(StrEnum):
     TIGHTEN_THRESHOLD = "TIGHTEN_THRESHOLD"
     DISABLE_RESPONSE = "DISABLE_RESPONSE"
     REVIEW_ONLY = "REVIEW_ONLY"
+
+
+@unique
+class ChainFetchMode(StrEnum):
+    """How the latest option-chain snapshot was obtained."""
+
+    LIVE = "LIVE"
+    CACHED = "CACHED"
+    BACKOFF = "BACKOFF"
+
+
+@unique
+class DepthFeedSource(StrEnum):
+    """Source of top-of-book depth sizes attached to a promoted strike."""
+
+    WEBSOCKET = "WEBSOCKET"
+    REST_FALLBACK = "REST_FALLBACK"
+    UNAVAILABLE = "UNAVAILABLE"
 
 
 @unique

@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast, runtime_checkable
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -34,15 +34,15 @@ from trading.config.schema import Environment
 from trading.data.config import DataPipelineConfig, load_data_pipeline_config
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.auth import run_telegram_auth
-from trading.data.fyers.client import FyersApiError, FyersMarketFeed
+from trading.data.fyers.client import FyersApiError
 from trading.data.fyers.telegram import send_telegram_message, telegram_configured
 from trading.data.normalize import (
-    normalize_fyers_depth,
     normalize_fyers_option_chain,
     normalize_fyers_quotes,
 )
-from trading.data.pipeline import build_pipeline
-from trading.data.prices import depth_top_sizes, observed_book_sizes, optional_int_qty
+from trading.data.paper_market_stack import PaperMarketStack, build_paper_market_stack
+from trading.data.paper_option_depth import attach_promoted_depth
+from trading.data.prices import observed_book_sizes, optional_int_qty
 from trading.data.settings import FyersSettings
 from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.data.storage.snapshot_store import SnapshotStore
@@ -73,7 +73,6 @@ from trading.identification import (
     observe_p1_features,
     publish_macro_assessment,
     route_nifty_options,
-    top_book_size,
 )
 from trading.identification.calendar import get_calendar_port
 from trading.news.config import load_news_config
@@ -143,6 +142,15 @@ __all__ = [
 
 _IST = ZoneInfo("Asia/Kolkata")
 _NOTIFY_MAX = 4000
+
+
+@runtime_checkable
+class _OptionChainFeed(Protocol):
+    def fetch_option_chain(
+        self, symbol: str, *, expiry_epoch: int | None = None
+    ) -> RawMarketCapture: ...
+
+
 _BUILDER_FEED_ERRORS = (
     FyersApiError,
     OSError,
@@ -621,6 +629,13 @@ class PaperSession:
                 else [],
                 "open_positions": self._runner.open_position_count(),
                 "outcome_count": len(result.outcomes) if result else 0,
+                "chain_cache": getattr(self._builder, "chain_health", None),
+                "depth_promotion": getattr(
+                    self._builder, "depth_promotion_health", None
+                ),
+                "depth_attachment": getattr(
+                    self._builder, "depth_attachment_health", None
+                ),
             },
         )
 
@@ -997,52 +1012,59 @@ def _quotes_from_capture(
     return quotes
 
 
-def _with_option_depth(
+def _apply_depth_promotion(
+    stack: PaperMarketStack,
     candidates: tuple[FeatureSnapshot, ...],
-    feed: FyersMarketFeed,
-    paper_data: PaperDataRequirements,
+    chain: CanonicalMarketEvent,
 ) -> tuple[FeatureSnapshot, ...]:
-    """Attach REST depth sizes to the highest-OI options. Missing stays missing."""
-    cap = paper_data.windows.depth.max_symbols
-    if cap <= 0 or not candidates:
-        return candidates
-    ranked = sorted(
+    """Score, hysteresis-promote and attach WS depth for the depth set."""
+    from trading.data.paper_chain_cache import ChainCacheHealth
+    from trading.domain.enums import ChainFetchMode
+
+    promoted = stack.depth_promoter.poll(chain)
+    state = stack.depth_promoter.state
+    stack.depth_ws.apply_delta(state.last_added, state.last_removed)
+    chain_health = stack.feed.last_chain_health
+    if chain_health is None:
+        chain_health = ChainCacheHealth(
+            fetch_mode=ChainFetchMode.CACHED,
+            rate_limit_429_count=0,
+            current_backoff_seconds=0.0,
+            last_429_at=None,
+            cache_age_seconds=None,
+        )
+    updated, attachment_health = attach_promoted_depth(
         candidates,
-        key=lambda item: (
-            -(
-                0
-                if item.derivatives is None or item.derivatives.open_interest is None
-                else item.derivatives.open_interest
-            ),
-            item.contract.symbol,
-        ),
+        promoted=promoted,
+        depth_ws=stack.depth_ws,
+        feed=stack.feed,
+        config=stack.depth_config,
+        chain_health=chain_health,
     )
-    remaining = cap
-    by_symbol = {item.contract.symbol: item for item in candidates}
-    for item in ranked:
-        if remaining <= 0:
-            break
-        if top_book_size(item) is not None:
-            continue
-        remaining -= 1
-        try:
-            capture = feed.fetch_depth(item.contract.symbol)
-        except (FyersApiError, ValueError, OSError):
-            continue
-        event = normalize_fyers_depth(
-            capture,
-            symbol=item.contract.symbol,
-            normalization_version="1",
-            raw_ref=capture.capture_id,
-        )
-        bid_size, ask_size = depth_top_sizes(event)
-        if bid_size is None or ask_size is None:
-            continue
-        quote = item.market.model_copy(
-            update={"bid_size": bid_size, "ask_size": ask_size}
-        )
-        by_symbol[item.contract.symbol] = item.model_copy(update={"market": quote})
-    return tuple(by_symbol[item.contract.symbol] for item in candidates)
+    stack.last_chain_health = chain_health
+    stack.last_promotion_health = stack.depth_promoter.health()
+    stack.last_attachment_health = attachment_health
+    return updated
+
+
+def _health_dict(value: object | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    as_dict = getattr(value, "as_dict", None)
+    if callable(as_dict):
+        return cast(dict[str, object], as_dict())
+    return None
+
+
+def _attach_builder_depth_health(build: object, stack: PaperMarketStack) -> None:
+    """Expose latest depth-promotion telemetry on the request builder."""
+    build.chain_health = _health_dict(stack.last_chain_health)  # type: ignore[attr-defined]
+    build.depth_promotion_health = _health_dict(  # type: ignore[attr-defined]
+        stack.last_promotion_health
+    )
+    build.depth_attachment_health = _health_dict(  # type: ignore[attr-defined]
+        stack.last_attachment_health
+    )
 
 
 def _quotes_for_symbols(
@@ -1097,7 +1119,9 @@ def _live_request_builder(
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
-    pipeline = build_pipeline(repo_root)
+    stack = build_paper_market_stack(
+        repo_root, clock=clock, pipeline_cfg=pipeline_cfg, settings=settings
+    )
     catalog = InstrumentSpecStore(
         repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
     )
@@ -1110,13 +1134,6 @@ def _live_request_builder(
     )
     collector = NewsCollector(news_config)
     zone = ZoneInfo(pipeline_cfg.session.timezone)
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_cfg.fyers.chain_greeks,
-        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
-    )
     last_winner_at: datetime | None = None
     last_winner_regime: str | None = None
 
@@ -1137,7 +1154,7 @@ def _live_request_builder(
                 continue
             if underlying_cfg.symbol == identification.vix_symbol:
                 continue
-            result = pipeline.run_once(underlying_cfg, now=now)
+            result = stack.pipeline.run_once(underlying_cfg, now=now)
             if result.snapshot is None:
                 continue
             index_underlying = result.snapshot
@@ -1170,21 +1187,9 @@ def _live_request_builder(
                 zone=zone,
                 strikes_each_side=session_cfg.option_strikes_each_side,
             )
-            if option_specs:
-                quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
-                observed_quotes = _quotes_from_capture(quote_capture, option_specs)
-                option_candidates, option_specs = build_option_candidates(
-                    chain,
-                    catalog,
-                    underlying=index_underlying,
-                    as_of=now,
-                    zone=zone,
-                    strikes_each_side=session_cfg.option_strikes_each_side,
-                    quotes=observed_quotes,
-                )
             if paper_data is not None:
-                option_candidates = _with_option_depth(
-                    option_candidates, feed, paper_data
+                option_candidates = _apply_depth_promotion(
+                    stack, option_candidates, chain
                 )
             instruments.update(option_specs)
             for candidate in option_candidates:
@@ -1198,7 +1203,7 @@ def _live_request_builder(
         )
         future_candidates: tuple[FeatureSnapshot, ...] = ()
         if future_spec is not None and index_underlying is not None:
-            capture = feed.fetch_quotes((future_spec.trading_symbol,))
+            capture = stack.feed.fetch_quotes((future_spec.trading_symbol,))
             future_quote = _quote_from_capture(capture, future_spec)
             if future_quote is not None:
                 future_snap = build_future_snapshot(
@@ -1335,8 +1340,12 @@ def _live_request_builder(
                     route_decision=route,
                 )
             )
+        _attach_builder_depth_health(build, stack)
         return tuple(requests), snapshots
 
+    build.chain_health = None  # type: ignore[attr-defined]
+    build.depth_promotion_health = None  # type: ignore[attr-defined]
+    build.depth_attachment_health = None  # type: ignore[attr-defined]
     return build
 
 
@@ -1356,7 +1365,9 @@ def _four_mode_request_builder(
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
     """Four-mode producers: independent family bindings, no legacy one-winner router."""
-    pipeline = build_pipeline(repo_root)
+    stack = build_paper_market_stack(
+        repo_root, clock=clock, pipeline_cfg=pipeline_cfg, settings=settings
+    )
     catalog = InstrumentSpecStore(
         repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
     )
@@ -1369,13 +1380,6 @@ def _four_mode_request_builder(
     )
     collector = NewsCollector(news_config)
     zone = ZoneInfo(pipeline_cfg.session.timezone)
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_cfg.fyers.chain_greeks,
-        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
-    )
     cas_latency_samples: list[int] = []
     cas_quote_ages: list[int] = []
     cas_execution_latencies: list[int] = []
@@ -1412,7 +1416,7 @@ def _four_mode_request_builder(
                 continue
             if underlying_cfg.symbol == identification.vix_symbol:
                 continue
-            result = pipeline.run_once(underlying_cfg, now=now)
+            result = stack.pipeline.run_once(underlying_cfg, now=now)
             if result.snapshot is None:
                 continue
             index_underlying = result.snapshot
@@ -1445,21 +1449,9 @@ def _four_mode_request_builder(
                 zone=zone,
                 strikes_each_side=near_strikes,
             )
-            if option_specs:
-                quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
-                observed_quotes = _quotes_from_capture(quote_capture, option_specs)
-                option_candidates, option_specs = build_option_candidates(
-                    chain,
-                    catalog,
-                    underlying=index_underlying,
-                    as_of=now,
-                    zone=zone,
-                    strikes_each_side=near_strikes,
-                    quotes=observed_quotes,
-                )
             if paper_data is not None:
-                option_candidates = _with_option_depth(
-                    option_candidates, feed, paper_data
+                option_candidates = _apply_depth_promotion(
+                    stack, option_candidates, chain
                 )
             option_candidates, option_specs, fw_error = _merge_following_week_chain(
                 option_candidates,
@@ -1469,7 +1461,7 @@ def _four_mode_request_builder(
                 underlying=index_underlying,
                 as_of=now,
                 zone=zone,
-                feed=feed,
+                feed=stack.feed,
                 pipeline_symbol=underlying_cfg.symbol,
                 following_week_strikes=following_strikes,
             )
@@ -1660,11 +1652,15 @@ def _four_mode_request_builder(
         )
         build.latest_market_state = market_state  # type: ignore[attr-defined]
         build.latest_produced = tuple(adjusted)  # type: ignore[attr-defined]
+        _attach_builder_depth_health(build, stack)
         return requests, snapshots
 
     build.m1_holder = m1_holder  # type: ignore[attr-defined]
     build.feed_errors = feed_errors  # type: ignore[attr-defined]
     build.latest_market_state = None  # type: ignore[attr-defined]
+    build.chain_health = None  # type: ignore[attr-defined]
+    build.depth_promotion_health = None  # type: ignore[attr-defined]
+    build.depth_attachment_health = None  # type: ignore[attr-defined]
     return build
 
 
@@ -1706,7 +1702,7 @@ def _merge_following_week_chain(
     underlying: FeatureSnapshot,
     as_of: datetime,
     zone: ZoneInfo,
-    feed: FyersMarketFeed,
+    feed: _OptionChainFeed,
     pipeline_symbol: str,
     following_week_strikes: int = _FOLLOWING_WEEK_STRIKES,
 ) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec], str | None]:
