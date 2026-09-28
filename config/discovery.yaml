@@ -88,3 +88,14 @@ selection:            # strict first, fallback only if nothing passes strict
 direction:
   fallback_trend_threshold: "0.30"   # used when strict trend is not UP/DOWN
   fallback_min_bars: 14
+exits:
+  debit_stop_fraction: "0.35"
+  debit_target_fraction: "0.80"
+  credit_take_profit_fraction: "0.50"
+  credit_stop_multiplier: "2.0"
+  long_leg_disaster_fraction: "0.70"
+  short_leg_disaster_multiplier: "2.0"
+  trail_activation_fraction: "0.30"
+  trail_giveback_fraction: "0.50"
+  confirm_quotes: 2
+  rest_batch_size: 50

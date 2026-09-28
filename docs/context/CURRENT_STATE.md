@@ -9,7 +9,10 @@ DUPLICATE quality flag, top5 imbalance fix, multi-symbol health.json);
 DISC-A17 monthly chain fetch (M3/M4 20-35 DTE); DISC-A19_DONE (exit quote
 publish/seed, DISCOVERY protection staleness fix, partial-leg exits,
 `trading ops retry-stuck-paper-exits`); DISC-A20_DONE (protection monitor WS
-handler + REST fallback for held-leg quotes; heartbeat `last_quote_at`); Oracle
+handler + REST fallback for held-leg quotes; heartbeat `last_quote_at`);
+DISC-A21_DONE (DISCOVERY premium-scaled structure exits: debit/credit fractions,
+mid-mark + 2-quote confirm, HWM trail persisted, per-leg disaster backstops,
+all-legs-fresh REST refresh, shorts-first sequencing; STRICT unchanged); Oracle
 rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
@@ -34,6 +37,7 @@ rsync + restart still pending (DISC-A12)
 | Capital caps in DISCOVERY | Soft only — downsize and/or `strict_would_block`; never reject |
 | Margin in DISCOVERY | Soft only — min 1 lot; `MARGIN_INSUFFICIENT` / `MARGIN_OVERSUBSCRIBED` shadowed; projection clamped |
 | Protection quotes | WS push for held-leg symbols; REST fallback batched every 2s (`rest_poll_seconds`); heartbeat `last_quote_at` |
+| Structure exits (DISCOVERY) | Premium-scaled on `STRATEGY_PNL`: debit stop 35% / target 80% of paid premium; credit TP 50% / stop 2× credit (capped); mid mark + 2-quote confirm; HWM trail (+30% activate, 50% give-back); per-leg disaster backstop (−70% long); stale-leg REST refresh before eval |
 
 ## Mode stances (file and loaded)
 

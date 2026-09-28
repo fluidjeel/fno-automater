@@ -208,17 +208,18 @@ Scope assignment: multi-leg intents get `ExitScope.STRATEGY_PNL` automatically
 
 #### Fix / status
 
-**Planned:** DISCOVERY-only slice **DISC-A21** (after A19 merges).
+**Done:** DISCOVERY-only slice **DISC-A21** — premium-scaled structure exits on
+`STRATEGY_PNL` for PAPER positions; STRICT/LIVE unchanged.
 
 | Change | Detail |
 | --- | --- |
-| Premium-scaled stops | Debit structures: stop ~35% of debit, target 60–100%. Credit structures: take profit ~50% of credit, stop at 1.5–2× credit, capped at max loss |
-| Structure trail | Trail on structure P&L high-water mark, persisted across restarts |
-| Auxiliary stop | Drop or keep only as disaster backstop |
-| Freshness | Require all legs fresh; REST refresh for stale leg before deciding |
-| Trigger | Mid with 2-quote confirmation |
-| Exit order | Short legs first |
-| STRICT/LIVE | Unchanged |
+| Premium-scaled stops | Debit: stop ~35% of debit, target 80% (`config/discovery.yaml` `exits.*`). Credit: TP 50% of credit, stop 2× credit capped at max loss |
+| Structure trail | Trail on structure P&L HWM (+30% of debit activate, 50% give-back); persisted on `ExitPolicy` / lifecycle |
+| Auxiliary stop | Removed for DISCOVERY premium-scaled policies; per-leg disaster backstop only (−70% long premium) |
+| Freshness | All structure legs must be fresh; one batched REST refresh (≤50 symbols) before eval |
+| Trigger | Mid price with 2 consecutive confirming quotes |
+| Exit order | Short legs first (`_liability_first`, unchanged) |
+| STRICT/LIVE | Unchanged tick-based `build_exit_policy` |
 
 #### Must not be reverted / constraints
 
@@ -372,3 +373,11 @@ probe consume via hub or batched REST.
 - Do not open additional `data_ws` connections from paper session, CAS collector,
   or capability probe.
 - TBT sockets remain separate (CAS depth); respect 3 × 5 symbol limit.
+
+---
+
+### DISC-A21 (2026-09-28)
+
+Premium-scaled DISCOVERY structure exits replace fixed 40-tick / ₹130 stops for
+PAPER multi-leg and single-leg options. Policy frozen at entry; HWM trail and
+confirm state persist on lifecycle restore. Oracle deploy still pending.

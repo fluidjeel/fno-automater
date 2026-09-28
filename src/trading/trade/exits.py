@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, unique
 
+from trading.config.discovery import DiscoveryExitsConfig
 from trading.domain.contracts.intent import ExitTemplate, IntentLeg, TradeIntent
 from trading.domain.contracts.position import (
     ExitPolicy,
@@ -19,6 +20,14 @@ from trading.domain.contracts.terminal_policy import TerminalPolicy
 from trading.domain.enums import ExitScope, ReasonCode, Side, TradeState
 from trading.domain.primitives import Currency, Money, Price, Rounding
 from trading.risk.sizing.credit_spread import is_credit_spread
+from trading.trade.discovery_exits import (
+    apply_discovery_trailing,
+    evaluate_discovery_confirmation,
+    is_premium_scaled_policy,
+    leg_disaster_stop_breached,
+    structure_net_debit_per_unit,
+    structure_unrealized_pnl_mid,
+)
 
 __all__ = [
     "ExitEngine",
@@ -57,6 +66,9 @@ class ExitEvaluation:
 
 class ExitEngine:
     """Evaluate stop, target, time and monotonic trail rules."""
+
+    def __init__(self, *, discovery_exits: DiscoveryExitsConfig | None = None) -> None:
+        self._discovery_exits = discovery_exits
 
     def evaluate(
         self,
@@ -191,6 +203,10 @@ class ExitEngine:
         policy = position.exit_policy
         if leg_snapshots is None:
             return self._evaluate_missing_snapshots(position, intent, feature)
+        if is_premium_scaled_policy(policy):
+            return self._evaluate_premium_scaled_strategy_pnl(
+                position, intent, leg_snapshots=leg_snapshots, now=now
+            )
         pnl = strategy_unrealized_pnl(position, intent, leg_snapshots)
         if pnl is None:
             return ExitEvaluation(
@@ -209,6 +225,85 @@ class ExitEngine:
                 updated_policy=policy,
             )
         return _no_exit(policy)
+
+    def _evaluate_premium_scaled_strategy_pnl(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        *,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+        now: datetime,
+    ) -> ExitEvaluation:
+        """DISCOVERY premium-scaled structure exits on mid with confirmation."""
+        config = self._discovery_exits
+        if config is None:
+            return ExitEvaluation(
+                kind=ExitKind.NONE,
+                reason_code=ReasonCode.PRICE_UNAVAILABLE,
+                detail="discovery exit config unavailable",
+            )
+        policy = position.exit_policy
+        pnl = structure_unrealized_pnl_mid(position, intent, leg_snapshots)
+        if pnl is None:
+            return ExitEvaluation(
+                kind=ExitKind.NONE,
+                reason_code=ReasonCode.PRICE_UNAVAILABLE,
+                detail="strategy P&L mid mark unavailable",
+            )
+        per_unit = abs(structure_net_debit_per_unit(position.legs))
+        qty = max(leg.quantity_contracts for leg in position.legs)
+        policy = apply_discovery_trailing(
+            policy,
+            pnl=pnl,
+            per_unit_debit=per_unit,
+            quantity_contracts=qty,
+            config=config,
+        )
+        if policy.time_exit is not None and now >= policy.time_exit:
+            state = evaluate_discovery_confirmation(
+                policy,
+                exit_kind=ExitKind.TIME.value,
+                detail="scheduled time exit reached",
+            )
+            return ExitEvaluation(
+                kind=ExitKind(state.exit_kind)
+                if state.exit_kind != "NONE"
+                else ExitKind.NONE,
+                reason_code=ReasonCode.OK,
+                detail=state.detail,
+                updated_policy=state.policy,
+            )
+        kind = ExitKind.NONE
+        detail = "no exit condition met"
+        if policy.pnl_stop is not None and pnl <= policy.pnl_stop:
+            kind = ExitKind.STOP
+            detail = "strategy P&L stop breached"
+        elif policy.pnl_target is not None and pnl >= policy.pnl_target:
+            kind = ExitKind.TARGET
+            detail = "strategy P&L target reached"
+        elif policy.pnl_trail_stop is not None and pnl <= policy.pnl_trail_stop:
+            kind = ExitKind.STOP
+            detail = "strategy P&L trail stop breached"
+        else:
+            breached, leg_detail = leg_disaster_stop_breached(
+                position, intent, leg_snapshots
+            )
+            if breached:
+                kind = ExitKind.STOP
+                detail = leg_detail
+        state = evaluate_discovery_confirmation(
+            policy,
+            exit_kind=kind.value if kind is not ExitKind.NONE else "NONE",
+            detail=detail,
+        )
+        return ExitEvaluation(
+            kind=ExitKind(state.exit_kind)
+            if state.exit_kind != "NONE"
+            else ExitKind.NONE,
+            reason_code=ReasonCode.OK,
+            detail=state.detail,
+            updated_policy=state.policy,
+        )
 
     @staticmethod
     def _auxiliary_stop_breached(
