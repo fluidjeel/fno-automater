@@ -21,6 +21,18 @@ class FyersApiError(RuntimeError):
     """Raised when Fyers returns a non-success response."""
 
 
+def fyers_http_status(exc: FyersApiError) -> int | None:
+    """Parse the HTTP status embedded in a FyersApiError message."""
+    text = str(exc)
+    prefix = "Fyers error "
+    if not text.startswith(prefix):
+        return None
+    try:
+        return int(text[len(prefix) :].split(":", 1)[0].strip())
+    except ValueError:
+        return None
+
+
 class FyersMarketFeed:
     """Pull quotes, bars, chain, depth and reference data via Fyers API v3."""
 

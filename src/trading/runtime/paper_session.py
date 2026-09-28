@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeAlias
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -35,6 +35,8 @@ from trading.data.config import DataPipelineConfig, load_data_pipeline_config
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.auth import run_telegram_auth
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed
+from trading.data.fyers.rate_limit import FyersRestRateLimiter
+from trading.data.fyers.resilient_feed import ResilientFyersMarketFeed
 from trading.data.fyers.telegram import send_telegram_message, telegram_configured
 from trading.data.normalize import (
     normalize_fyers_depth,
@@ -152,6 +154,8 @@ _BUILDER_FEED_ERRORS = (
     ValueError,
     httpx.TimeoutException,
 )
+
+_PaperFyersFeed: TypeAlias = FyersMarketFeed | ResilientFyersMarketFeed
 
 
 class ReviewSlotConfig(BaseModel):
@@ -872,6 +876,7 @@ def run_paper_session(
         )
     for warning in startup_warnings:
         notifier.send(f"STARTUP WARNING: {warning}")
+    shared_feed = _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     if request_builder is None:
         if session_cfg.routing_profile is SessionRoutingProfile.FOUR_MODE:
             if modes_config is None:
@@ -890,6 +895,7 @@ def run_paper_session(
                 mode_book=mode_book,
                 discovery_config=discovery_cfg,
                 discovery_fingerprint=discovery_fingerprint,
+                feed=shared_feed,
             )
         else:
             request_builder = _live_request_builder(
@@ -902,23 +908,17 @@ def run_paper_session(
                 paper_data=paper_data,
                 discovery_config=discovery_cfg,
                 discovery_fingerprint=discovery_fingerprint,
+                feed=shared_feed,
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
-        protection_feed = FyersMarketFeed(
-            settings,
-            clock,
-            strike_count=pipeline_cfg.fyers.option_chain_strike_count,
-            chain_greeks=pipeline_cfg.fyers.chain_greeks,
-            history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
-        )
         rest_monitor = RestQuoteMonitor(
             clock,
-            _protection_rest_fetch(protection_feed),
+            _protection_rest_fetch(shared_feed),
             poll_seconds=session_cfg.protection.rest_poll_seconds,
         )
         if discovery_cfg is not None:
-            runner.set_rest_quote_fetch(_protection_rest_fetch(protection_feed))
+            runner.set_rest_quote_fetch(_protection_rest_fetch(shared_feed))
         ws_monitor = None
         if session_cfg.protection.ws_enabled:
             ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
@@ -1016,7 +1016,7 @@ def _quotes_from_capture(
 
 def _with_option_depth(
     candidates: tuple[FeatureSnapshot, ...],
-    feed: FyersMarketFeed,
+    feed: _PaperFyersFeed,
     paper_data: PaperDataRequirements,
 ) -> tuple[FeatureSnapshot, ...]:
     """Attach REST depth sizes to the highest-OI options. Missing stays missing."""
@@ -1098,8 +1098,25 @@ def _quotes_for_symbols(
     return quotes
 
 
+def _build_paper_fyers_feed(
+    settings: FyersSettings,
+    clock: Clock,
+    pipeline_cfg: DataPipelineConfig,
+) -> ResilientFyersMarketFeed:
+    """One rate-limited Fyers REST client for builder, pipeline and protection."""
+    limiter = FyersRestRateLimiter(clock)
+    inner = FyersMarketFeed(
+        settings,
+        clock,
+        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
+        chain_greeks=pipeline_cfg.fyers.chain_greeks,
+        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
+    )
+    return ResilientFyersMarketFeed(inner, limiter, clock)
+
+
 def _protection_rest_fetch(
-    feed: FyersMarketFeed,
+    feed: ResilientFyersMarketFeed,
 ) -> Callable[[tuple[str, ...]], dict[str, MarketQuote]]:
     """Batch REST quotes for held-leg symbols; raise on provider 429."""
 
@@ -1128,10 +1145,12 @@ def _live_request_builder(
     paper_data: PaperDataRequirements | None = None,
     discovery_config: DiscoveryConfig | None = None,
     discovery_fingerprint: str | None = None,
+    feed: ResilientFyersMarketFeed | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
-    pipeline = build_pipeline(repo_root)
+    resolved_feed = feed or _build_paper_fyers_feed(settings, clock, pipeline_cfg)
+    pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
     catalog = InstrumentSpecStore(
         repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
     )
@@ -1144,13 +1163,7 @@ def _live_request_builder(
     )
     collector = NewsCollector(news_config)
     zone = ZoneInfo(pipeline_cfg.session.timezone)
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_cfg.fyers.chain_greeks,
-        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
-    )
+    feed = resolved_feed
     last_winner_at: datetime | None = None
     last_winner_regime: str | None = None
 
@@ -1386,11 +1399,13 @@ def _four_mode_request_builder(
     mode_book: FourModeBook | None = None,
     discovery_config: DiscoveryConfig | None = None,
     discovery_fingerprint: str | None = None,
+    feed: ResilientFyersMarketFeed | None = None,
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
     """Four-mode producers: independent family bindings, no legacy one-winner router."""
-    pipeline = build_pipeline(repo_root)
+    resolved_feed = feed or _build_paper_fyers_feed(settings, clock, pipeline_cfg)
+    pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
     catalog = InstrumentSpecStore(
         repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
     )
@@ -1403,13 +1418,7 @@ def _four_mode_request_builder(
     )
     collector = NewsCollector(news_config)
     zone = ZoneInfo(pipeline_cfg.session.timezone)
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_cfg.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_cfg.fyers.chain_greeks,
-        history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
-    )
+    feed = resolved_feed
     cas_latency_samples: list[int] = []
     cas_quote_ages: list[int] = []
     cas_execution_latencies: list[int] = []
@@ -1419,11 +1428,13 @@ def _four_mode_request_builder(
     m1_holder: dict[str, object] = {"event": None, "keep": False}
     feed_errors: list[str] = []
     monthly_chain_cache: _MonthlyChainCache | None = None
+    following_week_cache: _FollowingWeekChainCache | None = None
 
     def build(
         now: datetime,
     ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
         nonlocal cas_attempts_today, cas_session_date, monthly_chain_cache
+        nonlocal following_week_cache
         session_day = now.astimezone(_IST).date()
         if cas_session_date != session_day:
             cas_session_date = session_day
@@ -1432,6 +1443,7 @@ def _four_mode_request_builder(
         following_strikes = _FOLLOWING_WEEK_STRIKES
         monthly_strikes = _FOLLOWING_WEEK_STRIKES
         monthly_cache_ttl = _DEFAULT_MONTHLY_CACHE_TTL
+        following_week_cache_ttl = _DEFAULT_FOLLOWING_WEEK_CACHE_TTL
         if discovery_config is not None:
             near_strikes = discovery_config.selection.near_strikes_each_side
             following_strikes = (
@@ -1502,17 +1514,21 @@ def _four_mode_request_builder(
                 option_candidates = _with_option_depth(
                     option_candidates, feed, paper_data
                 )
-            option_candidates, option_specs, fw_error = _merge_following_week_chain(
-                option_candidates,
-                option_specs,
-                chain=chain,
-                catalog=catalog,
-                underlying=index_underlying,
-                as_of=now,
-                zone=zone,
-                feed=feed,
-                pipeline_symbol=underlying_cfg.symbol,
-                following_week_strikes=following_strikes,
+            option_candidates, option_specs, fw_error, following_week_cache = (
+                _merge_following_week_chain(
+                    option_candidates,
+                    option_specs,
+                    chain=chain,
+                    catalog=catalog,
+                    underlying=index_underlying,
+                    as_of=now,
+                    zone=zone,
+                    feed=feed,
+                    pipeline_symbol=underlying_cfg.symbol,
+                    following_week_strikes=following_strikes,
+                    cache_ttl_seconds=following_week_cache_ttl,
+                    cache=following_week_cache,
+                )
             )
             if fw_error is not None:
                 feed_errors.append(fw_error)
@@ -1757,6 +1773,17 @@ def _vix_history(
 
 _FOLLOWING_WEEK_STRIKES = 8
 _DEFAULT_MONTHLY_CACHE_TTL = 90
+_DEFAULT_FOLLOWING_WEEK_CACHE_TTL = 240
+
+
+@dataclass(frozen=True, slots=True)
+class _FollowingWeekChainCache:
+    """Cached following-week chain fetch to avoid duplicate Fyers REST calls."""
+
+    fetched_at: float
+    epoch: int
+    candidates: tuple[FeatureSnapshot, ...]
+    specs: dict[str, InstrumentSpec]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1778,10 +1805,17 @@ def _merge_following_week_chain(
     underlying: FeatureSnapshot,
     as_of: datetime,
     zone: ZoneInfo,
-    feed: FyersMarketFeed,
+    feed: _PaperFyersFeed,
     pipeline_symbol: str,
     following_week_strikes: int = _FOLLOWING_WEEK_STRIKES,
-) -> tuple[tuple[FeatureSnapshot, ...], dict[str, InstrumentSpec], str | None]:
+    cache_ttl_seconds: int = _DEFAULT_FOLLOWING_WEEK_CACHE_TTL,
+    cache: _FollowingWeekChainCache | None = None,
+) -> tuple[
+    tuple[FeatureSnapshot, ...],
+    dict[str, InstrumentSpec],
+    str | None,
+    _FollowingWeekChainCache | None,
+]:
     """Add the following-week chain when the loaded chain is a nearer expiry."""
     already = {
         item.contract.expiry
@@ -1795,7 +1829,16 @@ def _merge_following_week_chain(
         already_listed=already,
     )
     if epoch is None:
-        return option_candidates, option_specs, None
+        return option_candidates, option_specs, None, cache
+    now_mono = time.monotonic()
+    if (
+        cache is not None
+        and cache.epoch == epoch
+        and now_mono - cache.fetched_at < cache_ttl_seconds
+    ):
+        merged_specs = dict(option_specs)
+        merged_specs.update(cache.specs)
+        return option_candidates + cache.candidates, merged_specs, None, cache
     try:
         capture = feed.fetch_option_chain(pipeline_symbol, expiry_epoch=epoch)
     except (FyersApiError, OSError) as exc:
@@ -1807,7 +1850,16 @@ def _merge_following_week_chain(
             "%s; near chain retained",
             detail,
         )
-        return option_candidates, option_specs, detail
+        if cache is not None and cache.epoch == epoch:
+            merged_specs = dict(option_specs)
+            merged_specs.update(cache.specs)
+            return (
+                option_candidates + cache.candidates,
+                merged_specs,
+                detail,
+                cache,
+            )
+        return option_candidates, option_specs, detail, cache
     event = normalize_fyers_option_chain(
         capture,
         symbol=pipeline_symbol,
@@ -1829,7 +1881,13 @@ def _merge_following_week_chain(
         marked.append(snap.model_copy(update={"features": features}))
     merged_specs = dict(option_specs)
     merged_specs.update(extra_specs)
-    return option_candidates + tuple(marked), merged_specs, None
+    updated_cache = _FollowingWeekChainCache(
+        fetched_at=now_mono,
+        epoch=epoch,
+        candidates=tuple(marked),
+        specs=extra_specs,
+    )
+    return option_candidates + tuple(marked), merged_specs, None, updated_cache
 
 
 def _merge_monthly_chain(
@@ -1841,7 +1899,7 @@ def _merge_monthly_chain(
     underlying: FeatureSnapshot,
     as_of: datetime,
     zone: ZoneInfo,
-    feed: FyersMarketFeed,
+    feed: _PaperFyersFeed,
     pipeline_symbol: str,
     monthly_strikes: int = _FOLLOWING_WEEK_STRIKES,
     monthly_dte_min: int,

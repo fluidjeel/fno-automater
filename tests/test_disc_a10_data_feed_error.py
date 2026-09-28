@@ -278,7 +278,7 @@ def test_following_week_fetch_failure_records_reason_and_keeps_near_chain(
         ) -> object:
             raise FyersApiError("Fyers error 401: token expired")
 
-    merged, specs, error = _merge_following_week_chain(
+    merged, specs, error, _cache = _merge_following_week_chain(
         (near,),
         {},
         chain=chain,

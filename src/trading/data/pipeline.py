@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,6 +46,7 @@ from trading.domain.contracts import FeatureSnapshot
 __all__ = ["DataPipeline", "PipelineResult"]
 
 _IST = ZoneInfo("Asia/Kolkata")
+_LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +128,7 @@ class DataPipeline:
         if fyers.fetch_depth:
             depth_capture = self._feed.fetch_depth(symbol)
         if fyers.fetch_market_status:
-            status_capture = self._feed.fetch_market_status()
+            status_capture = self._fetch_market_status()
         if fyers.fetch_expiry_dates:
             try:
                 expiry_capture = self._feed.fetch_expiry_dates(symbol)
@@ -306,7 +308,7 @@ class DataPipeline:
         if fyers.fetch_depth:
             depth_capture = self._feed.fetch_depth(symbol)
         if fyers.fetch_market_status:
-            status_capture = self._feed.fetch_market_status()
+            status_capture = self._fetch_market_status()
         trade_date = quote_capture.received_at.astimezone(_IST).date()
         range_from = (trade_date - timedelta(days=fyers.bar_lookback_days)).isoformat()
         range_to = trade_date.isoformat()
@@ -442,6 +444,16 @@ class DataPipeline:
             macro_news_parse_errors=parse_errors,
         )
 
+    def _fetch_market_status(self) -> RawMarketCapture | None:
+        """Fetch market status; degrade gracefully on transient provider errors."""
+        try:
+            return self._feed.fetch_market_status()
+        except FyersApiError as exc:
+            _LOG.warning(
+                "market status unavailable: %s; continuing without status", exc
+            )
+            return None
+
     def _with_prior_depth(
         self,
         events: list[CanonicalMarketEvent],
@@ -472,19 +484,25 @@ class DataPipeline:
         return [prior, *events]
 
 
-def build_pipeline(repo_root: Path) -> DataPipeline:
+def build_pipeline(
+    repo_root: Path,
+    *,
+    feed: MarketFeedPort | None = None,
+    clock: Clock | None = None,
+) -> DataPipeline:
     """Wire the default production pipeline from config on disk."""
     config_path = repo_root / "config" / "data_pipeline.yaml"
     pipeline_config = load_data_pipeline_config(config_path)
     settings = FyersSettings.from_repo_root_with_cache(repo_root)
-    clock = WallClock()
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=pipeline_config.fyers.option_chain_strike_count,
-        chain_greeks=pipeline_config.fyers.chain_greeks,
-        history_oi_flag=pipeline_config.fyers.history_oi_flag,
-    )
+    resolved_clock = clock or WallClock()
+    if feed is None:
+        feed = FyersMarketFeed(
+            settings,
+            resolved_clock,
+            strike_count=pipeline_config.fyers.option_chain_strike_count,
+            chain_greeks=pipeline_config.fyers.chain_greeks,
+            history_oi_flag=pipeline_config.fyers.history_oi_flag,
+        )
     store_root = repo_root / pipeline_config.storage.root
     store: EventStore = JsonlEventStore(store_root)
     catalog = CatalogWriter(
@@ -498,6 +516,6 @@ def build_pipeline(repo_root: Path) -> DataPipeline:
         store=store,
         app_config_path=repo_root / "config" / "base.yaml",
         repo_root=repo_root,
-        clock=clock,
+        clock=resolved_clock,
         catalog=catalog,
     )

@@ -5,23 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from http import HTTPStatus
 
-from trading.data.fyers.client import FyersApiError
+from trading.data.fyers.client import FyersApiError, fyers_http_status
 
 __all__ = ["DataFeedAlertTracker", "fyers_http_status"]
 
 _FAILURE_ALERT_THRESHOLD = 3
-
-
-def fyers_http_status(exc: FyersApiError) -> int | None:
-    """Parse the HTTP status embedded in a FyersApiError message."""
-    text = str(exc)
-    prefix = "Fyers error "
-    if not text.startswith(prefix):
-        return None
-    try:
-        return int(text[len(prefix) :].split(":", 1)[0].strip())
-    except ValueError:
-        return None
 
 
 class DataFeedAlertTracker:
