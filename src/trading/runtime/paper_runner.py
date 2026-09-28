@@ -753,16 +753,14 @@ class PaperRunner:
             updated[symbol] = snapshot
         self._protection_snapshots.update(updated)
         events = self.manage_exits(self._protection_snapshots)
-        if updated and all(
-            not snapshot.quality.state.blocks_new_exposure
-            for snapshot in updated.values()
-        ):
+        if not self.protection_degraded:
             for position in self._services.trade_manager.list_positions():
                 if position.state is TradeState.OPEN:
                     self._clear_protection_degraded(position)
             self._services.controls.restore_protection(
                 actor="paper-protection", scope="session"
             )
+            self._maybe_release_entry_freeze(reconcile_blocked=False)
         latency = None
         if updated:
             latency = max(
@@ -833,7 +831,9 @@ class PaperRunner:
                 )
                 unprotected.append(persisted.trade_id)
             broker_legs = tuple(broker_by_trade.get(persisted.trade_id, ()))
-            for alert in _lifecycle_issues(persisted, broker_legs):
+            for alert in _lifecycle_issues(
+                persisted, broker_legs, entry_profile=self._entry_profile
+            ):
                 alerts.append(alert)
                 if alert.reason_code is ReasonCode.PROTECTIVE_COVERAGE_MISSING:
                     unprotected.append(persisted.trade_id)
@@ -946,7 +946,7 @@ class PaperRunner:
             if diagnosis.kind is _ProtectionKind.MISSING_MONITOR:
                 events.extend(
                     self._handle_missing_monitor(
-                        position, intent, decision, snapshots, diagnosis
+                        position, intent, decision, working_snapshots, diagnosis
                     )
                 )
                 continue
@@ -1191,11 +1191,14 @@ class PaperRunner:
             ):
                 continue
             review_snapshots = self._merge_protection_snapshots(position, snapshots)
+            review_snapshots = self._ensure_structure_quotes_fresh(
+                position, review_snapshots
+            )
             diagnosis = self._diagnose_protection(position, intent, review_snapshots)
             if diagnosis.kind != _ProtectionKind.OK:
                 if diagnosis.kind == _ProtectionKind.MISSING_MONITOR:
                     self._handle_missing_monitor(
-                        position, intent, decision, snapshots, diagnosis
+                        position, intent, decision, review_snapshots, diagnosis
                     )
                 else:
                     self._handle_stale_protection(position, diagnosis)
@@ -1213,7 +1216,7 @@ class PaperRunner:
                 decisions.append(review)
                 continue
             self._clear_protection_degraded(position)
-            leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
+            leg_snapshots = self._exit_leg_snapshots(position, intent, review_snapshots)
             feature = (
                 _exit_feature_snapshot(position, intent, leg_snapshots)
                 if leg_snapshots is not None
@@ -2668,6 +2671,7 @@ class PaperRunner:
             actor="paper-protection",
             scope=f"trade/{position.trade_id}",
         )
+        self._maybe_release_entry_freeze(reconcile_blocked=False)
 
     def _mark_protection(
         self,
@@ -3519,9 +3523,34 @@ def _lifecycle_unchanged(
     )
 
 
+def _legitimate_partial_structure(
+    position: PositionState,
+    intent: TradeIntent,
+    broker_legs: tuple[PositionRecord, ...],
+) -> bool:
+    """Remaining open legs after recorded exit fills, reconciled to broker."""
+    if position.state is TradeState.REPAIR_REQUIRED:
+        return False
+    open_leg_ids = {leg.leg_id for leg in position.legs}
+    intent_leg_ids = {leg.leg_id for leg in intent.legs}
+    if not open_leg_ids or not open_leg_ids.issubset(intent_leg_ids):
+        return False
+    if len(open_leg_ids) >= len(intent_leg_ids):
+        return False
+    local_keys = {
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in position.legs
+    }
+    broker_keys = {
+        (leg.contract.symbol, leg.side, leg.quantity_contracts) for leg in broker_legs
+    }
+    return local_keys == broker_keys
+
+
 def _lifecycle_issues(
     record: PositionLifecycleRecord,
     broker_legs: tuple[PositionRecord, ...],
+    *,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> tuple[LifecycleAlert, ...]:
     alerts: list[LifecycleAlert] = []
     position = record.position
@@ -3547,7 +3576,10 @@ def _lifecycle_issues(
                 detail="partial or incomplete multi-leg fill requires repair",
             )
         )
-    elif len(position.legs) != len(record.intent.legs):
+    elif len(position.legs) != len(record.intent.legs) and not (
+        entry_profile is EntryProfile.DISCOVERY
+        and _legitimate_partial_structure(position, record.intent, broker_legs)
+    ):
         alerts.append(
             LifecycleAlert(
                 trade_id=record.trade_id,
