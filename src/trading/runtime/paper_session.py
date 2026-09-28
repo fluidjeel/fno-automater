@@ -125,6 +125,7 @@ from trading.runtime.protection import (
     ProtectionCoordinator,
     build_protection_coordinator,
 )
+from trading.runtime.rest_quote_monitor import RestQuoteMonitor, RestQuoteRateLimitError
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.runtime.session_heartbeat import write_session_heartbeat
 from trading.runtime.session_routing import ProducedFamilyRequest, SessionRoutingProfile
@@ -903,6 +904,18 @@ def run_paper_session(
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
+        protection_feed = FyersMarketFeed(
+            settings,
+            clock,
+            strike_count=pipeline_cfg.fyers.option_chain_strike_count,
+            chain_greeks=pipeline_cfg.fyers.chain_greeks,
+            history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
+        )
+        rest_monitor = RestQuoteMonitor(
+            clock,
+            _protection_rest_fetch(protection_feed),
+            poll_seconds=session_cfg.protection.rest_poll_seconds,
+        )
         ws_monitor = None
         if session_cfg.protection.ws_enabled:
             ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
@@ -911,6 +924,7 @@ def run_paper_session(
             clock=clock,
             config=session_cfg.protection,
             repo_root=repo_root,
+            rest_fetch=rest_monitor,
             ws=ws_monitor,
         )
     session = PaperSession(
@@ -1081,6 +1095,25 @@ def _quotes_for_symbols(
         if quote.bid is not None and quote.ask is not None:
             quotes[str(symbol)] = quote
     return quotes
+
+
+def _protection_rest_fetch(
+    feed: FyersMarketFeed,
+) -> Callable[[tuple[str, ...]], dict[str, MarketQuote]]:
+    """Batch REST quotes for held-leg symbols; raise on provider 429."""
+
+    def fetch(symbols: tuple[str, ...]) -> dict[str, MarketQuote]:
+        if not symbols:
+            return {}
+        try:
+            capture = feed.fetch_quotes(symbols)
+        except FyersApiError as exc:
+            if "429" in str(exc):
+                raise RestQuoteRateLimitError(str(exc)) from exc
+            return {}
+        return _quotes_for_symbols(capture, symbols)
+
+    return fetch
 
 
 def _live_request_builder(
