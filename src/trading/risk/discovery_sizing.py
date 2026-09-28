@@ -29,11 +29,14 @@ __all__ = [
     "DiscoveryCapSizingResult",
     "DiscoveryMarginSizingResult",
     "DiscoverySizingResult",
+    "DiscoveryTradeLotCapResult",
     "apply_discovery_cap_sizing",
     "apply_discovery_lots",
     "apply_discovery_margin_sizing",
+    "apply_discovery_trade_lot_cap",
     "collect_strict_would_block",
     "discovery_bug_guard_cap",
+    "discovery_effective_cost_per_lot",
     "discovery_guide_budget",
     "discovery_open_risk_cap",
     "evaluate_discovery_hard_limits",
@@ -57,6 +60,15 @@ class DiscoveryCapSizingResult:
     approved_lots: int
     recalculated_max_loss: Money
     strict_would_block: tuple[ReasonCode, ...]
+    applied_limits: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryTradeLotCapResult:
+    """Lots after the per-trade soft cap."""
+
+    approved_lots: int
+    recalculated_max_loss: Money
     applied_limits: tuple[str, ...]
 
 
@@ -106,26 +118,71 @@ def discovery_bug_guard_cap(
     ).quantized(Rounding.FLOOR)
 
 
+def discovery_effective_cost_per_lot(
+    cost_per_lot: Money,
+    margin_per_lot: Money,
+) -> Money:
+    """Per-lot budget unit: max(estimated max loss, broker margin)."""
+    if margin_per_lot.is_zero:
+        return cost_per_lot
+    if cost_per_lot > margin_per_lot:
+        return cost_per_lot
+    return margin_per_lot
+
+
 def apply_discovery_lots(
     *,
     cost_per_lot: Money,
     guide: Money,
+    margin_per_lot: Money | None = None,
 ) -> DiscoverySizingResult:
     """Strike first, size last: max(1, floor(guide / one_lot_max_loss))."""
-    if cost_per_lot.is_zero or cost_per_lot.is_negative:
+    effective = discovery_effective_cost_per_lot(
+        cost_per_lot,
+        margin_per_lot or Money.zero(cost_per_lot.currency),
+    )
+    if effective.is_zero or effective.is_negative:
         return DiscoverySizingResult(
             approved_lots=0,
             recalculated_max_loss=Money.zero(cost_per_lot.currency),
             one_lot_over_guide=False,
         )
-    guide_lots = floor_divide_money(guide, cost_per_lot)
+    guide_lots = floor_divide_money(guide, effective)
     approved_lots = max(1, guide_lots)
-    one_lot_over = cost_per_lot > guide
+    one_lot_over = effective > guide
     recalculated = (cost_per_lot * approved_lots).quantized(Rounding.CEILING)
     return DiscoverySizingResult(
         approved_lots=approved_lots,
         recalculated_max_loss=recalculated,
         one_lot_over_guide=one_lot_over,
+    )
+
+
+def apply_discovery_trade_lot_cap(
+    *,
+    approved_lots: int,
+    recalculated_max_loss: Money,
+    cost_per_lot: Money,
+    max_lots_per_trade: int,
+) -> DiscoveryTradeLotCapResult:
+    """Downsize to the per-trade soft cap; never reject when one lot fits."""
+    zero = Money.zero(cost_per_lot.currency)
+    if approved_lots <= 0:
+        return DiscoveryTradeLotCapResult(
+            approved_lots=0,
+            recalculated_max_loss=zero,
+            applied_limits=(),
+        )
+    lots = approved_lots
+    applied: list[str] = []
+    if lots > max_lots_per_trade:
+        lots = max_lots_per_trade
+        applied.append("max_lots_per_trade")
+    recalculated = (cost_per_lot * lots).quantized(Rounding.CEILING)
+    return DiscoveryTradeLotCapResult(
+        approved_lots=lots,
+        recalculated_max_loss=recalculated,
+        applied_limits=tuple(applied),
     )
 
 
@@ -213,17 +270,16 @@ def apply_discovery_margin_sizing(
             if approved_lots > 0 and not estimated_margin.is_zero
             else zero
         )
-    margin_binds = margin_lots <= 0 or estimated_margin > broker_margin_available
-    if margin_binds:
-        if margin_lots <= 0:
-            lots = 1
-        elif not effective_margin_per_lot.is_zero:
-            affordable = max(
-                1, floor_divide_money(broker_margin_available, effective_margin_per_lot)
-            )
-            lots = max(1, min(lots, affordable))
-        else:
-            lots = max(1, min(lots, 1))
+    if not effective_margin_per_lot.is_zero:
+        affordable = max(
+            1, floor_divide_money(broker_margin_available, effective_margin_per_lot)
+        )
+        if affordable < lots:
+            lots = affordable
+            shadow.append(ReasonCode.MARGIN_INSUFFICIENT)
+            applied.append("broker_margin_available")
+    elif margin_lots <= 0:
+        lots = max(1, min(lots, 1))
         shadow.append(ReasonCode.MARGIN_INSUFFICIENT)
         applied.append("broker_margin_available")
     recalculated = (cost_per_lot * lots).quantized(Rounding.CEILING)

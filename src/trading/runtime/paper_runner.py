@@ -55,7 +55,7 @@ from trading.domain.contracts.entry import StrikeShortlist
 from trading.domain.contracts.order import OrderCommand, OrderIdentity
 from trading.domain.contracts.order_plan import OrderPlan, PlannedOrder
 from trading.domain.contracts.paper_data import PaperDataField, PaperDataRequirements
-from trading.domain.contracts.portfolio import PositionRecord
+from trading.domain.contracts.portfolio import PortfolioSnapshot, PositionRecord
 from trading.domain.contracts.position import PositionLegState, PositionState
 from trading.domain.contracts.protection import ProtectionStateRecord
 from trading.domain.contracts.snapshot import (
@@ -583,12 +583,23 @@ class PaperRunner:
         )
 
         outcomes: list[PaperStrategyOutcome] = []
+        cycle_margin_acc: list[Money] | None = None
+        if self._entry_profile is EntryProfile.DISCOVERY and eval_records:
+            first_portfolio = next(
+                (record.portfolio for record in eval_records if record.portfolio),
+                None,
+            )
+            if isinstance(first_portfolio, PortfolioSnapshot):
+                cycle_margin_acc = [
+                    Money.zero(first_portfolio.exposure.equity.currency)
+                ]
         for rec in eval_records:
             outcomes.append(
                 self._execute_strategy_eval(
                     rec,
                     arb_result=arb_result,
                     entries_blocked=entries_blocked,
+                    cycle_margin_acc=cycle_margin_acc,
                 )
             )
 
@@ -2963,6 +2974,7 @@ class PaperRunner:
         *,
         arb_result: ArbitrationResult,
         entries_blocked: bool,
+        cycle_margin_acc: list[Money] | None = None,
     ) -> PaperStrategyOutcome:
         if rec.early_outcome is not None:
             return rec.early_outcome
@@ -3038,6 +3050,9 @@ class PaperRunner:
                 paper_requirements=self._paper_data,
                 broker_state_ok=not entries_blocked,
                 campaign_id=request.campaign_id,
+                cycle_margin_reserved=(
+                    cycle_margin_acc[0] if cycle_margin_acc is not None else None
+                ),
             )
             try:
                 risk = self._services.gateway.evaluate(risk_request)
@@ -3071,6 +3086,10 @@ class PaperRunner:
                 continue
             if not risk.permits_submission:
                 continue
+            if cycle_margin_acc is not None and risk.margin_required is not None:
+                cycle_margin_acc[0] = (
+                    cycle_margin_acc[0] + risk.margin_required
+                ).quantized()
             events = self._submit(intent, risk, request)
             order_events.extend(events)
 
