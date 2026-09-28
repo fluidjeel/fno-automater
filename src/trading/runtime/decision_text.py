@@ -143,6 +143,7 @@ _TEMPLATES: dict[
     ReasonCode.PRICE_UNAVAILABLE: _blocked,
     ReasonCode.RISK_LIMIT_TRADE: _blocked,
     ReasonCode.EXACT_DUPLICATE_SUPPRESSED: _generic,
+    ReasonCode.DUPLICATE_STRUCTURE: _generic,
     ReasonCode.ECONOMIC_OVERLAP_SUPPRESSED: _generic,
     ReasonCode.DAILY_ENTRY_CAP: _blocked,
     ReasonCode.M4_POSITION_CAP_REACHED: _blocked,

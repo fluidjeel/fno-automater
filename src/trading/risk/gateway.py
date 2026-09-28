@@ -32,6 +32,7 @@ from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import (
     DataQuality,
     EntryProfile,
+    Environment,
     InstrumentKind,
     ModeId,
     ReasonCode,
@@ -808,6 +809,18 @@ class RiskGateway:
                 reservation_margin,
                 mode_ledger.allocated_capital * 100,
             )
+        if (
+            discovery_active
+            and self._account_config.config.environment is Environment.PAPER
+            and self._reservations.idempotency_key_exists(intent.intent_id)
+        ):
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=(ReasonCode.DUPLICATE_IDEMPOTENCY_KEY,),
+                decided_at=now,
+                audit=audit,
+            )
         reservation = self._reservations.try_reserve(
             intent_id=intent.intent_id,
             strategy_id=intent.strategy_id,
@@ -830,6 +843,11 @@ class RiskGateway:
                 decided_at=now,
                 audit=audit,
             )
+        if (
+            discovery_active
+            and self._account_config.config.environment is Environment.PAPER
+        ):
+            self._reservations.register_idempotency_key(intent.intent_id, decision_id)
         if self._mode_book is not None and intent.mode_id is not None:
             global_cap = (
                 None

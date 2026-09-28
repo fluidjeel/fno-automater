@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -47,8 +48,17 @@ def _normalize_intent_legs(legs: Sequence[IntentLeg]) -> _StructureSignature:
 
 
 def _normalize_position_legs(position: PositionState) -> _StructureSignature:
-    """Derive canonical sorted tuple of (symbol, side, 1) for open position legs."""
-    raw_legs = [(leg.contract.symbol, leg.side.value, 1) for leg in position.legs]
+    """Derive canonical sorted tuple of (symbol, side, ratio) for open position legs."""
+    quantities = [leg.quantity_contracts for leg in position.legs]
+    unit = quantities[0]
+    for qty in quantities[1:]:
+        unit = math.gcd(unit, qty)
+    if unit <= 0:
+        unit = 1
+    raw_legs = [
+        (leg.contract.symbol, leg.side.value, leg.quantity_contracts // unit)
+        for leg in position.legs
+    ]
     return tuple(sorted(raw_legs, key=lambda x: (x[0], x[1], x[2])))
 
 

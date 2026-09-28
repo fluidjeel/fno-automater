@@ -543,6 +543,7 @@ def _infer_stage(  # noqa: PLR0911
             code
             in {
                 ReasonCode.EXACT_DUPLICATE_SUPPRESSED,
+                ReasonCode.DUPLICATE_STRUCTURE,
                 ReasonCode.ECONOMIC_OVERLAP_SUPPRESSED,
                 ReasonCode.OPPOSING_EXPOSURE_REJECTED,
                 ReasonCode.DAILY_ENTRY_CAP,

@@ -75,6 +75,18 @@ class CapitalReservationService:
             recorded_at=now,
         )
 
+    def idempotency_key_exists(self, idempotency_key: str) -> bool:
+        """Return True when the durable idempotency registry already owns the key."""
+        return self._store.has_idempotency_key(idempotency_key)
+
+    def register_idempotency_key(self, idempotency_key: str, owner_ref: str) -> None:
+        """Persist one idempotency key for restart-safe deduplication."""
+        self._store.register_idempotency_key(
+            idempotency_key,
+            owner_ref,
+            recorded_at=self._clock.now_utc(),
+        )
+
     def commit(self, reservation_id: str) -> CapitalReservation:
         """Move a reserved hold to committed after broker confirmation."""
         return self._transition(

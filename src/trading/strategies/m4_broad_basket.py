@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from trading.domain.contracts import (
     EntryPolicy,
@@ -46,6 +47,7 @@ SESSION_LABEL = "NSE_FO"
 PARTIAL_FILL_POLICY = "ALL_OR_CANCEL"
 _CURRENCY = Currency.INR
 _MIDDLE_RATIO = 2
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 def _strike(option: FeatureSnapshot) -> Decimal:
@@ -57,6 +59,34 @@ def _strike(option: FeatureSnapshot) -> Decimal:
 
 def _derive_id(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def _normalized_leg_descriptor(legs: tuple[IntentLeg, ...]) -> str:
+    parts = [f"{leg.contract.symbol}:{leg.side.value}:{leg.ratio}" for leg in legs]
+    return "|".join(sorted(parts))
+
+
+def _session_date(now: datetime) -> date:
+    return now.astimezone(_IST).date()
+
+
+def _deterministic_intent_id(
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    underlying: str,
+    legs: tuple[IntentLeg, ...],
+    session_date: date,
+) -> str:
+    expiry = legs[0].contract.expiry.isoformat() if legs[0].contract.expiry else "NONE"
+    return _derive_id(
+        strategy_id,
+        strategy_version,
+        underlying,
+        expiry,
+        _normalized_leg_descriptor(legs),
+        session_date.isoformat(),
+    )
 
 
 def _base_reject(
@@ -120,13 +150,12 @@ def _build_intent(
 ) -> TradeIntent:
     risk = Money.of(REQUESTED_RISK_INR, _CURRENCY)
     now = ctx.now
-    intent_id = _derive_id(
-        strategy_id,
-        strategy_version,
-        ctx.underlying.snapshot_id,
-        "|".join(leg.contract.symbol for leg in legs),
-        setup_code,
-        now.isoformat(),
+    intent_id = _deterministic_intent_id(
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
+        underlying=ctx.underlying.contract.underlying,
+        legs=legs,
+        session_date=_session_date(now),
     )
     return TradeIntent(
         intent_id=intent_id,

@@ -126,6 +126,7 @@ from trading.portfolio.fill_charge_recorder import (
     record_fill_charge,
 )
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
+from trading.portfolio.structure_dedup import filter_same_day_structure_duplicates
 from trading.risk import CapitalReservationService, RiskGateway, RiskGatewayRequest
 from trading.risk.gate_profile import is_soft, partition_reasons
 from trading.risk.instrument_registry import InstrumentRegistry
@@ -3041,6 +3042,40 @@ class PaperRunner:
                 strict_would_block=strict_would_block,
             )
             return _StrategyEvalRecord(request=request, early_outcome=early)
+
+        if self._entry_profile is EntryProfile.DISCOVERY:
+            session_date = (
+                self._clock.now_utc().astimezone(ZoneInfo("Asia/Kolkata")).date()
+            )
+            structure_filter = filter_same_day_structure_duplicates(
+                intents,
+                self._services.store.list_position_lifecycle(),
+                session_date=session_date,
+            )
+            if structure_filter.rejections:
+                rejection_reasons = rejection_reasons + tuple(
+                    reason for _, _, reason, _ in structure_filter.rejections
+                )
+                rejection_details = rejection_details + tuple(
+                    detail for _, _, _, detail in structure_filter.rejections
+                )
+            intents = structure_filter.kept
+            if not intents:
+                early = _outcome_from_request(
+                    request,
+                    strategy_id=request.strategy_id,
+                    snapshot_id=request.underlying.snapshot_id,
+                    intents=(),
+                    rejection_reasons=rejection_reasons,
+                    decisions=(),
+                    order_events=(),
+                    strategy_version=getattr(strategy, "strategy_version", "unknown"),
+                    executed=request.execute,
+                    rejection_details=rejection_details,
+                    strict_would_block=strict_would_block,
+                    record_stage=DiscoveryStage.STRATEGY,
+                )
+                return _StrategyEvalRecord(request=request, early_outcome=early)
 
         return _StrategyEvalRecord(
             request=request,
