@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,6 +11,7 @@ import tests.factories as f
 from tests.test_risk_gateway import instrument_spec
 from trading.config import load_config, load_paper_data_requirements
 from trading.config.discovery import load_discovery_config
+from trading.config.schema import FreshnessRules
 from trading.data.events import RawMarketCapture
 from trading.data.normalize import (
     normalize_fyers_history,
@@ -204,7 +205,7 @@ class TestDiscA15QualityState:
 
 
 class TestDiscA15SnapshotBundle:
-    def _freshness(self) -> object:
+    def _freshness(self) -> FreshnessRules:
         return ACCOUNT_CONFIG.config.freshness
 
     def test_discovery_bundle_uses_hard_limit_and_calculation_time(self) -> None:
@@ -257,6 +258,7 @@ class TestDiscA15DataInvalidLink:
     def test_binder_permits_exposure_with_fresh_receive_quality(self) -> None:
         """DATA_INVALID at BIND was quality STALE from bar event_time; receive fixes it."""
         from trading.data.config import SessionConfig
+
         chain = normalize_fyers_option_chain(
             _capture(CHAIN_FIXTURE, NOW),
             symbol="NSE:NIFTY50-INDEX",
@@ -276,7 +278,7 @@ class TestDiscA15DataInvalidLink:
                 open_local="09:15",
                 close_local="15:30",
                 verified_source="test",
-                verified_at="2026-09-13",
+                verified_at=date(2026, 9, 13),
                 segment="NSE_FO",
             ),
         )
@@ -300,9 +302,13 @@ class TestDiscA15DataInvalidLink:
             market=f.quote(last=f.price("24500"), close=f.price("24500")),
         )
         leg = f.snapshot(
-            contract=f.option_contract(symbol="NIFTY26SEP24000PE", option_type=OptionType.PUT),
+            contract=f.option_contract(
+                symbol="NIFTY26SEP24000PE", option_type=OptionType.PUT
+            ),
             times=times,
-            market=f.quote(bid=f.price("90"), ask=f.price("90.10"), last=f.price("90.05")),
+            market=f.quote(
+                bid=f.price("90"), ask=f.price("90.10"), last=f.price("90.05")
+            ),
             derivatives=DerivativesContext(
                 days_to_expiry=10,
                 open_interest=5000,
@@ -325,7 +331,9 @@ class TestDiscA15DataInvalidLink:
                 option_type=OptionType.PUT,
             ),
             times=times,
-            market=f.quote(bid=f.price("40"), ask=f.price("40.10"), last=f.price("40.05")),
+            market=f.quote(
+                bid=f.price("40"), ask=f.price("40.10"), last=f.price("40.05")
+            ),
             derivatives=DerivativesContext(
                 days_to_expiry=10,
                 open_interest=5000,
@@ -360,6 +368,6 @@ class TestDiscA15DataInvalidLink:
         )
         decision = BullPutCreditStrategy().evaluate(ctx)
         assert not any(
-            rejection.reason is ReasonCode.DATA_INVALID for rejection in decision.rejections
+            rejection.reason is ReasonCode.DATA_INVALID
+            for rejection in decision.rejections
         )
-
