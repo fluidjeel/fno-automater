@@ -167,6 +167,7 @@ class DiscoveryConfig(VersionedModel):
 
     profile_version: NonEmptyStr
     books: DiscoveryBooksConfig
+    max_lots_per_trade: StrictInt = Field(default=2, ge=1)
     modes: dict[str, DiscoveryModeConfig]
     family_stances: dict[str, ExecutionMode] = Field(default_factory=dict)
     bug_guard_trade_risk_fraction: ExactDecimal = Field(
