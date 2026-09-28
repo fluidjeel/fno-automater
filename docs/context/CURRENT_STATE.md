@@ -5,8 +5,10 @@ CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
 STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A15_DONE (quote freshness from
 fetch/calculation time, not bar event_time); DISC-A14_DONE (margin soft-resize,
 safe projection, evaluation-error defense); DISC-A16_DONE (CAS depth dedup,
-DUPLICATE quality flag, top5 imbalance fix, multi-symbol health.json); Oracle
-rsync + restart still pending (DISC-A12)
+DUPLICATE quality flag, top5 imbalance fix, multi-symbol health.json);
+DISC-A19_DONE (exit quote publish/seed, DISCOVERY protection staleness fix,
+partial-leg exits, `trading ops retry-stuck-paper-exits`); Oracle rsync +
+restart still pending (DISC-A12)
 
 ## Evidence labels
 
