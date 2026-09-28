@@ -25,6 +25,7 @@ from trading.config.discovery import DiscoveryConfig
 from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, MissingMonitorResolution
+from trading.config.schema import Environment
 from trading.data.cas_features import with_cas_feature_set
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
@@ -547,7 +548,26 @@ class PaperRunner:
     def run_cycle(self, requests: Sequence[PaperStrategyRequest]) -> PaperCycleResult:
         """Reconcile, evaluate each strategy, arbitrate, and submit approved orders."""
         self.recover_lifecycle()
-        boot = self._services.reconciler.boot_reconcile(self._account.config.account_id)
+        try:
+            boot = self._services.reconciler.boot_reconcile(
+                self._account.config.account_id,
+                entry_profile=self._entry_profile,
+                environment=self._account.config.environment,
+            )
+        except ValidationError as exc:
+            if self._account.config.environment is not Environment.PAPER:
+                raise
+            logging.getLogger(__name__).error(
+                "reconciliation contract error; cycle continues with entries blocked",
+                exc_info=exc,
+            )
+            system_state, _ = self._services.store.get_system_state()
+            return PaperCycleResult(
+                system_state=system_state,
+                outcomes=(),
+                reconcile_id="",
+                entries_blocked=True,
+            )
         system_state = boot.result.resulting_system_state
         self._maybe_release_entry_freeze(reconcile_blocked=boot.result.entries_blocked)
         entries_blocked = self._entries_are_blocked(boot.result.entries_blocked)
@@ -916,14 +936,29 @@ class PaperRunner:
                     detail="broker position has no persisted exit lifecycle",
                 )
             )
-            unreconciled.append(trade_id)
+            if self._entry_profile is EntryProfile.DISCOVERY:
+                logging.getLogger(__name__).warning(
+                    "DISCOVERY: broker/DB position-count drift trade=%s "
+                    "does not block entries",
+                    trade_id,
+                )
+            else:
+                unreconciled.append(trade_id)
         unique_alerts = tuple(_unique_alerts(alerts))
+        blocking_alerts = tuple(
+            alert
+            for alert in unique_alerts
+            if not (
+                self._entry_profile is EntryProfile.DISCOVERY
+                and alert.reason_code is ReasonCode.UNRECONCILED_POSITION
+            )
+        )
         persisted_freeze = self._services.store.get_entry_freeze()
-        entries_blocked = bool(unique_alerts or unprotected or unreconciled) or (
+        entries_blocked = bool(blocking_alerts or unprotected or unreconciled) or (
             persisted_freeze is not None and persisted_freeze.entries_blocked
         )
-        if unique_alerts:
-            primary = unique_alerts[0]
+        if blocking_alerts:
+            primary = blocking_alerts[0]
             self._ensure_entries_blocked(primary.reason_code, primary.detail)
             self._audit_lifecycle_alerts(unique_alerts)
         result = PositionRecoveryResult(
@@ -2361,6 +2396,13 @@ class PaperRunner:
         broker_ids = {item.trade_id for item in self._services.broker.get_positions()}
         extra = broker_ids - lifecycle_ids
         if extra:
+            if self._entry_profile is EntryProfile.DISCOVERY:
+                logging.getLogger(__name__).warning(
+                    "DISCOVERY: broker/DB position-count drift trades=%s "
+                    "does not block entries",
+                    sorted(extra),
+                )
+                return None
             return (
                 ReasonCode.UNRECONCILED_POSITION,
                 "broker position has no persisted exit lifecycle",
