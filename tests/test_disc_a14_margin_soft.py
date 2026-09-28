@@ -72,7 +72,9 @@ class TestDiscA14MarginProjection:
         portfolio = f.portfolio_snapshot(
             exposure=f.exposure(margin_available=_money("1000"))
         )
-        with pytest.raises(ValidationError, match="margin figures must not be negative"):
+        with pytest.raises(
+            ValidationError, match="margin figures must not be negative"
+        ):
             project_post_trade_exposure(
                 portfolio,
                 margin_required=_money("50000"),
@@ -234,7 +236,9 @@ class TestDiscA14StrictUnchanged:
         portfolio = f.portfolio_snapshot(
             exposure=f.exposure(margin_available=_money("100"))
         )
-        with pytest.raises(ValidationError, match="margin figures must not be negative"):
+        with pytest.raises(
+            ValidationError, match="margin figures must not be negative"
+        ):
             project_post_trade_exposure(
                 portfolio,
                 margin_required=_money("50000"),
