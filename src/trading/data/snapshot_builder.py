@@ -172,7 +172,9 @@ class MarketSnapshotBuilder:
                 open_ = _positive(latest_bar.get("open")) or open_
                 high = _positive(latest_bar.get("high")) or high
                 low = _positive(latest_bar.get("low")) or low
-                close = _positive(latest_bar.get("close")) or close
+                # ``close`` is the previous-session close (quote prev_close_price)
+                # and drives close-relative direction; the intraday bar close only
+                # refreshes ``last``.
                 last = _positive(latest_bar.get("close")) or last
                 volume = _int_qty(latest_bar.get("volume")) or volume
                 bar_is_final = bool(bar.payload.get("is_final", True))
@@ -316,7 +318,9 @@ class MarketSnapshotBuilder:
                 open_ = _positive(latest_bar.get("open")) or open_
                 high = _positive(latest_bar.get("high")) or high
                 low = _positive(latest_bar.get("low")) or low
-                close = _positive(latest_bar.get("close")) or close
+                # ``close`` is the previous-session close (quote prev_close_price)
+                # and drives close-relative direction; the intraday bar close only
+                # refreshes ``last``.
                 last = _positive(latest_bar.get("close")) or last
                 volume = _int_qty(latest_bar.get("volume")) or volume
                 bar_is_final = bool(bar.payload.get("is_final", True))
