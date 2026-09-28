@@ -156,6 +156,10 @@ class DiscoveryExitsConfig(StrictModel):
     leg_target_fraction: ExactDecimal = Field(gt=Decimal("0"))
     short_leg_stop_multiple: ExactDecimal = Field(gt=Decimal("1"))
     short_leg_target_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
+    trail_activate_fraction: ExactDecimal = Field(gt=Decimal("0"))
+    trail_giveback_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
+    confirm_quotes: StrictInt = Field(ge=1)
+    rest_batch_size: StrictInt = Field(default=50, ge=1, le=50)
 
 
 class DiscoveryConfig(VersionedModel):

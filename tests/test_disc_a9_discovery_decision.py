@@ -266,6 +266,7 @@ def test_exit_record_names_rule_prices_and_pnl(tmp_path: Path) -> None:
         }
     )
     runner.manage_exits({option.contract.symbol: crashed})
+    runner.manage_exits({option.contract.symbol: crashed})
     rows = _decision_rows(store)
     assert rows
     exit_row = rows[-1]

@@ -89,7 +89,11 @@ class TradeManager:
         self._reservations = reservation_service
         self._discovery_config = discovery_config
         self._entry_profile = entry_profile
-        self._exit_engine = exit_engine or ExitEngine()
+        self._exit_engine = exit_engine or ExitEngine(
+            discovery_exits=(
+                discovery_config.exits if discovery_config is not None else None
+            )
+        )
         self._pending: dict[str, _PendingEntry] = {}
         self._positions: dict[str, PositionState] = {}
 

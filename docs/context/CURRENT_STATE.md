@@ -11,9 +11,8 @@ publish/seed, DISCOVERY protection staleness fix, partial-leg exits,
 `trading ops retry-stuck-paper-exits`); DISC-A20_DONE (protection monitor WS
 handler + REST fallback for held-leg quotes; heartbeat `last_quote_at`);
 DISC-A21_DONE (DISCOVERY per-leg stop/target from entry fractions, structure
-pnl_stop/pnl_target consistent with legs, no monitor-leg stop copy; STRICT
-unchanged); DISC-A21b_READY (HWM trail, all-legs-fresh REST refresh, 2-quote
-mid confirm, shorts-first); Oracle
+pnl_stop/pnl_target, HWM trail with lifecycle persistence, stale-leg REST refresh,
+2-quote mid confirm, shorts-first exit ordering; STRICT unchanged); Oracle
 rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
