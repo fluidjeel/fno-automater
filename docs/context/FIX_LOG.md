@@ -34,6 +34,11 @@ override prior findings.
 6. **Do not restart** `fno-paper-session.service` mid-session with open positions
    unless the exit-quote fix (DISC-A19) is deployed, because a restart empties
    the paper broker quote cache.
+7. **Exactly one Fyers data WebSocket per Fyers account.** `fno-data-tick` owns
+   it; other processes (paper protection, DISC-A18 promoted depth, CAS collector
+   index feed, capability probe) must consume via the shared hub (**DISC-A22**)
+   or use batched REST — never open their own `data_ws` socket. TBT (CAS) socket
+   is a separate type with its own limit (3 connections × 5 symbols).
 
 ---
 
@@ -300,3 +305,70 @@ for DISCOVERY:
 
 `INSTRUMENT_UNKNOWN`, `PRICE_UNAVAILABLE`, `DATA_FEED_ERROR`,
 `DATA_STALE`/`DATA_INVALID`, `DEPTH_INSUFFICIENT`, `ONE_LOT_OVER_GUIDE`
+
+---
+
+### G. Fyers limits and single data-socket decision
+
+#### What was observed
+
+Fyers API rate limiting is per account, not per app. We already hit one **429 at
+09:38 IST** on 2026-09-28. Multiple processes on the same account were each
+opening or planning their own `data_ws` connection.
+
+#### Fyers limits (documented)
+
+| Category | Limit |
+| --- | --- |
+| REST (general) | 10/s, 200/min, 100k/day |
+| Order place + modify + cancel | 10/s |
+| `/data/quotes` | max 50 symbols per call |
+| `/data/depth` | 1 symbol, 5 levels |
+| Option chain | max 50 strikes |
+| Data socket (`data_ws`) | 5,000 symbols per connection |
+| TBT socket | 3 connections × 5 symbols; NFO + NSE equity only |
+
+Exceeding the per-minute cap **more than 3 times in a day** blocks API access
+for the rest of the day.
+
+Multiple apps per account are allowed, but Fyers support confirmed rate limiting
+is **"not based on APP, its overall"** (per account).
+
+#### WebSocket policy
+
+| Source | Statement |
+| --- | --- |
+| Fyers staff (Aug 2024) | "one connection per API key" |
+| Fyers staff (Apr 2025) | "at once you will be able to connect to a single websocket" |
+| Per-app separation | Not documented |
+
+**Adopted rule:** one `data_ws` socket per account (conservative). REST
+per-account pooling is **confirmed by support**; the single-socket rule is a
+**conservative assumption** pending clearer per-app documentation.
+
+**Sources:** [FyersDev/fyers-skills](https://github.com/FyersDev/fyers-skills)
+(`rate-limits.md`, `websocket.md`, `market-data.md); Fyers community threads
+["Multiple apps using same client id"](https://fyers.in/community)
+and "Websocket Queries".
+
+#### Audit (2026-09-28)
+
+| Process | Data socket | Status |
+| --- | --- | --- |
+| `fno-data-tick` | Holds one `data_ws` all session | Active owner |
+| Paper protection (`FyersWsQuoteMonitor`, DISC-A20) | Would open a **second** `data_ws` in the paper session | **Interim REST-only:** `protection.ws_enabled: false`, `rest_poll_seconds: 3` until DISC-A22 lands |
+| DISC-A18 promoted depth (`promoted_depth_ws.py`, PR #30) | Would add a **third** `data_ws` | Must rebase onto DISC-A22 hub before going live |
+
+#### Fix / status
+
+**Planned:** **DISC-A22** — shared Fyers data WebSocket hub; `fno-data-tick`
+remains owner; paper protection, DISC-A18 depth, CAS index feed, and capability
+probe consume via hub or batched REST.
+
+#### Must not be reverted / constraints
+
+- Do not enable `protection.ws_enabled: true` or merge DISC-A18 depth WS until
+  DISC-A22 hub is deployed.
+- Do not open additional `data_ws` connections from paper session, CAS collector,
+  or capability probe.
+- TBT sockets remain separate (CAS depth); respect 3 × 5 symbol limit.
