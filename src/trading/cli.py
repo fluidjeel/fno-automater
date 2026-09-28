@@ -1448,6 +1448,8 @@ def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
 
 def _cmd_ops_retry_stuck_paper_exits(args: argparse.Namespace) -> int:
     """PAPER-only: retry stuck EXIT_PENDING legs at operator-supplied quotes."""
+    import sys
+
     from trading.ops.paper_exit_recovery import retry_stuck_paper_exits
 
     quotes_path = Path(args.quotes_json) if args.quotes_json else None
@@ -1458,12 +1460,18 @@ def _cmd_ops_retry_stuck_paper_exits(args: argparse.Namespace) -> int:
         quotes_json=quotes_path,
         trade_id=args.trade_id or None,
         dry_run=bool(args.dry_run),
+        verbose=bool(args.verbose),
     )
     print(result.detail)
     if result.trade_ids:
         print("closed:", ",".join(result.trade_ids))
     if result.resolved_event_ids:
         print("resolved:", ",".join(result.resolved_event_ids))
+    for line in result.leg_skips:
+        print(line)
+    if args.verbose:
+        for line in result.verbose_log:
+            print(line, file=sys.stderr)
     print(f"entries_released={result.entries_released}")
     return 0
 
@@ -2141,6 +2149,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help="list stuck trades without submitting exits",
+    )
+    retry_exits.add_argument(
+        "--verbose",
+        action="store_true",
+        help="log each recovery decision to stderr",
     )
     retry_exits.set_defaults(func=_cmd_ops_retry_stuck_paper_exits)
 
