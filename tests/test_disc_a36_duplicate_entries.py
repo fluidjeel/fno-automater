@@ -24,7 +24,6 @@ from trading.domain.clock import FrozenClock
 from trading.domain.contracts import FeatureSnapshot
 from trading.domain.contracts.instrument import InstrumentSpec
 from trading.domain.contracts.intent import TradeIntent
-from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.position import PositionState
 from trading.domain.enums import (
     ExecutionMode,
@@ -294,9 +293,7 @@ def test_structure_filter_rejects_duplicate_lifecycle(
         position=_open_butterfly_position("TRD-LCB-1"),
         intent=intent,
     )
-    store.upsert_position_lifecycle(
-        cast(PositionLifecycleRecord, lifecycle), event_id="EVT-A36-LCB"
-    )
+    store.upsert_position_lifecycle(lifecycle, event_id="EVT-A36-LCB")
     session_date = clock.now_utc().astimezone(KOLKATA).date()
     result = filter_same_day_structure_duplicates(
         (intent,),
