@@ -3,12 +3,13 @@
 LAST_UPDATED: 2026-09-28
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
 STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A15_DONE (quote freshness from
-fetch/calculation time, not bar event_time); Oracle rsync + restart still pending
+fetch/calculation time, not bar event_time); DISC-A14_DONE (margin soft-resize,
+safe projection, evaluation-error defense); Oracle rsync + restart still pending
 (DISC-A12)
 
 ## Evidence labels
 
-- TEST-PROVEN: 1933+ pytest including discovery suite (`tests/test_disc_*.py`,
+- TEST-PROVEN: 1940+ pytest including discovery suite (`tests/test_disc_*.py`,
   `tests/test_cohort_eod_duplicate_signals.py`).
 - DEPLOYED-PAPER: Oracle still on pre-review tree until rsync; local config has
   `entry_profile: DISCOVERY`, `experiment_prefix: EXP-DISC`.
@@ -25,6 +26,7 @@ fetch/calculation time, not bar event_time); Oracle rsync + restart still pendin
 | Straddle/strangle | `PAPER` under DISCOVERY |
 | Calendars | `SUSPENDED` (dual-expiry lifecycle unproven; no change in A13) |
 | Capital caps in DISCOVERY | Soft only — downsize and/or `strict_would_block`; never reject |
+| Margin in DISCOVERY | Soft only — min 1 lot; `MARGIN_INSUFFICIENT` / `MARGIN_OVERSUBSCRIBED` shadowed; projection clamped |
 
 ## Mode stances (file and loaded)
 

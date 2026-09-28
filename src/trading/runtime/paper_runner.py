@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
+
 from trading.ai.decision_log import DecisionLog
 from trading.ai.entry import maybe_log_entry_shadow
 from trading.ai.packets import build_delta_packet
@@ -2730,19 +2732,30 @@ class PaperRunner:
             if instrument is None:
                 continue
             self._publish_quotes(intent, request)
-            risk = self._services.gateway.evaluate(
-                RiskGatewayRequest(
-                    intent=intent,
-                    feature_snapshot=_feature_for(intent, request),
-                    portfolio_snapshot=portfolio,  # type: ignore[arg-type]
-                    instrument=instrument,
-                    leg_snapshots=_leg_snapshots(intent, request),
-                    event_risk_state=request.event_risk_state,
-                    paper_requirements=self._paper_data,
-                    broker_state_ok=not entries_blocked,
-                    campaign_id=request.campaign_id,
-                )
+            risk_request = RiskGatewayRequest(
+                intent=intent,
+                feature_snapshot=_feature_for(intent, request),
+                portfolio_snapshot=portfolio,  # type: ignore[arg-type]
+                instrument=instrument,
+                leg_snapshots=_leg_snapshots(intent, request),
+                event_risk_state=request.event_risk_state,
+                paper_requirements=self._paper_data,
+                broker_state_ok=not entries_blocked,
+                campaign_id=request.campaign_id,
             )
+            try:
+                risk = self._services.gateway.evaluate(risk_request)
+            except (ValidationError, Exception):
+                if self._entry_profile is not EntryProfile.DISCOVERY:
+                    raise
+                logger.exception(
+                    "DISCOVERY risk evaluation failed for %s; rejecting candidate",
+                    intent.intent_id,
+                )
+                risk = self._services.gateway.reject_evaluation_error(
+                    intent,
+                    portfolio,  # type: ignore[arg-type]
+                )
             self._services.store.append(
                 TradingEventType.RISK_DECISION,
                 risk,
