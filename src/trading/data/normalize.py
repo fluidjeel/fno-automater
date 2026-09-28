@@ -101,9 +101,7 @@ def _fyers_quote_value_for_symbol(
         value = row.get("v")
         if not isinstance(value, dict):
             return None
-        if require_bid_ask and (
-            value.get("bid") is None or value.get("ask") is None
-        ):
+        if require_bid_ask and (value.get("bid") is None or value.get("ask") is None):
             return None
         return {"symbol": symbol, **value}
     return None
