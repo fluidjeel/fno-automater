@@ -264,9 +264,9 @@ def test_paper_cycle_survives_429_and_protection_still_ticks(
     )
     original_tick = protection.tick
 
-    def counting_tick() -> None:
+    def counting_tick(**_kwargs: object) -> None:
         protection_ticks["count"] += 1
-        original_tick()
+        original_tick(**_kwargs)  # type: ignore[arg-type]
 
     protection.tick = counting_tick  # type: ignore[method-assign]
     session = PaperSession(

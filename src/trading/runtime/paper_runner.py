@@ -524,6 +524,7 @@ class PaperRunner:
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._protection_snapshots: dict[str, FeatureSnapshot] = {}
+        self._unresolved_lifecycle_alerts: set[tuple[str, ReasonCode]] = set()
         self._lifecycle_recovered = False
         self._decision_log = DecisionLog(store)
         self._review_engine = ReviewEngine()
@@ -754,15 +755,16 @@ class PaperRunner:
     def persist_session_protection(self, state: object) -> None:
         self._services.store.upsert_session_protection(state)  # type: ignore[arg-type]
 
-    def on_quote_update(
+    def cache_quote_updates(
         self,
         quotes: Mapping[str, MarketQuote],
         *,
         source: object,
         received_at: datetime,
         quote_max_age_ms: int,
-    ) -> QuoteUpdateResult:
-        before = self.protection_degraded
+    ) -> dict[str, FeatureSnapshot]:
+        """Update protection snapshots from monitor quotes without exit evaluation."""
+        _ = (source, quote_max_age_ms)
         updated: dict[str, FeatureSnapshot] = {}
         for symbol, quote in quotes.items():
             snapshot = self._protection_snapshots.get(symbol)
@@ -791,7 +793,10 @@ class PaperRunner:
                 )
             updated[symbol] = snapshot
         self._protection_snapshots.update(updated)
-        events = self.manage_exits(self._protection_snapshots)
+        return updated
+
+    def after_protection_quote_update(self, before_degraded: bool) -> None:
+        """Clear degradation when protection quotes recover."""
         if not self.protection_degraded:
             for position in self._services.trade_manager.list_positions():
                 if position.state is TradeState.OPEN:
@@ -800,6 +805,24 @@ class PaperRunner:
                 actor="paper-protection", scope="session"
             )
             self._maybe_release_entry_freeze(reconcile_blocked=False)
+
+    def on_quote_update(
+        self,
+        quotes: Mapping[str, MarketQuote],
+        *,
+        source: object,
+        received_at: datetime,
+        quote_max_age_ms: int,
+    ) -> QuoteUpdateResult:
+        before = self.protection_degraded
+        updated = self.cache_quote_updates(
+            quotes,
+            source=source,
+            received_at=received_at,
+            quote_max_age_ms=quote_max_age_ms,
+        )
+        events = self.manage_exits(self._protection_snapshots)
+        self.after_protection_quote_update(before)
         latency = None
         if updated:
             latency = max(
@@ -957,6 +980,7 @@ class PaperRunner:
         entries_blocked = bool(blocking_alerts or unprotected or unreconciled) or (
             persisted_freeze is not None and persisted_freeze.entries_blocked
         )
+        self._seed_unresolved_lifecycle_index()
         if blocking_alerts:
             primary = blocking_alerts[0]
             self._ensure_entries_blocked(primary.reason_code, primary.detail)
@@ -985,6 +1009,7 @@ class PaperRunner:
         """Evaluate frozen exit policy and submit opposite LIMIT orders."""
         events: list[OrderEvent] = []
         gaps: list[str] = []
+        pending_alerts: list[LifecycleAlert] = []
         self._seed_open_position_quote_cache(snapshots)
         events.extend(self._resume_inflight_exits(snapshots))
         working_snapshots = dict(snapshots)
@@ -1003,14 +1028,16 @@ class PaperRunner:
             )
             diagnosis = self._diagnose_protection(position, intent, working_snapshots)
             if diagnosis.kind is _ProtectionKind.MISSING_MONITOR:
-                events.extend(
-                    self._handle_missing_monitor(
-                        position, intent, decision, working_snapshots, diagnosis
-                    )
+                monitor_events, monitor_alerts = self._handle_missing_monitor(
+                    position, intent, decision, working_snapshots, diagnosis
                 )
+                events.extend(monitor_events)
+                pending_alerts.extend(monitor_alerts)
                 continue
             if diagnosis.kind is _ProtectionKind.STALE:
-                self._handle_stale_protection(position, diagnosis)
+                pending_alerts.extend(
+                    self._handle_stale_protection(position, diagnosis)
+                )
                 continue
             self._clear_protection_degraded(position)
             leg_snapshots = self._exit_leg_snapshots(
@@ -1056,6 +1083,8 @@ class PaperRunner:
             events.extend(
                 self._submit_exit(intent, decision, updated, working_snapshots)
             )
+        if pending_alerts:
+            self._audit_lifecycle_alerts(tuple(_unique_alerts(pending_alerts)))
         self._exit_depth_gaps = tuple(dict.fromkeys(gaps))
         return tuple(events)
 
@@ -1256,11 +1285,17 @@ class PaperRunner:
             diagnosis = self._diagnose_protection(position, intent, review_snapshots)
             if diagnosis.kind != _ProtectionKind.OK:
                 if diagnosis.kind == _ProtectionKind.MISSING_MONITOR:
-                    self._handle_missing_monitor(
+                    _, monitor_alerts = self._handle_missing_monitor(
                         position, intent, decision, review_snapshots, diagnosis
                     )
+                    if monitor_alerts:
+                        self._audit_lifecycle_alerts(monitor_alerts)
                 else:
-                    self._handle_stale_protection(position, diagnosis)
+                    stale_alerts = self._handle_stale_protection(position, diagnosis)
+                    if stale_alerts:
+                        self._audit_lifecycle_alerts(
+                            tuple(_unique_alerts(list(stale_alerts)))
+                        )
                 review = _unavailable_review(
                     trade_id=position.trade_id,
                     policy_id=position.exit_policy.policy_id,
@@ -2270,18 +2305,27 @@ class PaperRunner:
             )
         )
 
-    def _audit_lifecycle_alerts(self, alerts: tuple[LifecycleAlert, ...]) -> None:
-        now = self._clock.now_utc()
-        existing = {
+    def _seed_unresolved_lifecycle_index(self) -> None:
+        """Load unresolved lifecycle reconciliation scopes once at boot."""
+        self._unresolved_lifecycle_alerts = {
             (event.scope, event.reason_code)
             for stored in self._services.store.read_events()
             if stored.event_type is TradingEventType.RECONCILIATION_EVENT
             for event in (_as_reconciliation(stored.deserialize()),)
             if event is not None and not event.is_resolved
         }
+
+    def note_lifecycle_alert_resolved(
+        self, scope: str, reason_code: ReasonCode
+    ) -> None:
+        """Drop one scope from the in-memory unresolved lifecycle index."""
+        self._unresolved_lifecycle_alerts.discard((scope, reason_code))
+
+    def _audit_lifecycle_alerts(self, alerts: tuple[LifecycleAlert, ...]) -> None:
+        now = self._clock.now_utc()
         for alert in alerts:
             scope = f"trade/{alert.trade_id}/lifecycle"
-            if (scope, alert.reason_code) in existing:
+            if (scope, alert.reason_code) in self._unresolved_lifecycle_alerts:
                 continue
             difference = (
                 DifferenceClass.MISSING_LOCAL_EVENT
@@ -2308,6 +2352,7 @@ class PaperRunner:
                 event,
                 event_id=event.event_id,
             )
+            self._unresolved_lifecycle_alerts.add((scope, alert.reason_code))
 
     def _restore_persisted_freeze(self) -> None:
         persisted = self._services.store.get_entry_freeze()
@@ -2624,7 +2669,7 @@ class PaperRunner:
         decision: RiskDecision,
         snapshots: Mapping[str, FeatureSnapshot],
         diagnosis: _ProtectionDiagnosis,
-    ) -> tuple[OrderEvent, ...]:
+    ) -> tuple[tuple[OrderEvent, ...], tuple[LifecycleAlert, ...]]:
         self._mark_protection(
             position,
             degraded=False,
@@ -2632,25 +2677,23 @@ class PaperRunner:
             reason=diagnosis.detail,
         )
         self._ensure_entries_blocked(diagnosis.reason_code, diagnosis.detail)
-        self._audit_lifecycle_alerts(
-            (
-                LifecycleAlert(
-                    trade_id=position.trade_id,
-                    reason_code=diagnosis.reason_code,
-                    detail=diagnosis.detail,
-                ),
-            )
+        alerts = (
+            LifecycleAlert(
+                trade_id=position.trade_id,
+                reason_code=diagnosis.reason_code,
+                detail=diagnosis.detail,
+            ),
         )
         resolution = self._risk_policy.config.missing_monitor_resolution
         if resolution is not MissingMonitorResolution.FLATTEN_REMAINING:
-            return ()
+            return (), alerts
         quoted = {
             symbol: snap
             for symbol, snap in snapshots.items()
             if any(leg.contract.symbol == symbol for leg in position.legs)
         }
         if not quoted:
-            return ()
+            return (), alerts
         pending = self._services.trade_manager.apply_exit_evaluation(
             position.trade_id,
             ExitEvaluation(
@@ -2659,19 +2702,22 @@ class PaperRunner:
                 detail=diagnosis.detail,
             ),
         )
-        return self._submit_exit(
-            intent,
-            decision,
-            pending,
-            quoted,
-            allow_partial_structure=True,
+        return (
+            self._submit_exit(
+                intent,
+                decision,
+                pending,
+                quoted,
+                allow_partial_structure=True,
+            ),
+            alerts,
         )
 
     def _handle_stale_protection(
         self,
         position: PositionState,
         diagnosis: _ProtectionDiagnosis,
-    ) -> None:
+    ) -> tuple[LifecycleAlert, ...]:
         now = self._clock.now_utc()
         since = position.protection_degraded_since or now
         self._mark_protection(
@@ -2682,36 +2728,33 @@ class PaperRunner:
             since=since,
         )
         self._ensure_entries_blocked(diagnosis.reason_code, diagnosis.detail)
-        self._audit_lifecycle_alerts(
-            (
-                LifecycleAlert(
-                    trade_id=position.trade_id,
-                    reason_code=diagnosis.reason_code,
-                    detail=diagnosis.detail,
-                ),
+        alerts: list[LifecycleAlert] = [
+            LifecycleAlert(
+                trade_id=position.trade_id,
+                reason_code=diagnosis.reason_code,
+                detail=diagnosis.detail,
             )
-        )
+        ]
         escalate_after = (
             self._account.config.freshness.protection_stale_escalate_after_ms
         )
         if escalate_after is None:
-            return
+            return tuple(alerts)
         age_ms = int((now - since).total_seconds() * 1000)
         if age_ms < escalate_after:
-            return
-        self._audit_lifecycle_alerts(
-            (
-                LifecycleAlert(
-                    trade_id=position.trade_id,
-                    reason_code=ReasonCode.PROTECTION_DEGRADED,
-                    detail=(
-                        "stale protection did not recover within "
-                        f"{escalate_after}ms; software stop remains unavailable "
-                        "and is not broker-resident"
-                    ),
+            return tuple(alerts)
+        alerts.append(
+            LifecycleAlert(
+                trade_id=position.trade_id,
+                reason_code=ReasonCode.PROTECTION_DEGRADED,
+                detail=(
+                    "stale protection did not recover within "
+                    f"{escalate_after}ms; software stop remains unavailable "
+                    "and is not broker-resident"
                 ),
             )
         )
+        return tuple(alerts)
 
     def _clear_protection_degraded(self, position: PositionState) -> None:
         if (

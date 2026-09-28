@@ -430,11 +430,16 @@ class PaperSession:
             return requests
         return tuple(replace(item, execute=False) for item in requests)
 
+    def _should_stop_session(self) -> bool:
+        now = self._clock.now_utc()
+        local = now.astimezone(self._zone)
+        return self._past_eod(local.time())
+
     def _run_loop(self, *, once: bool) -> int:
         while True:
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
-            if self._past_eod(local.time()):
+            if self._should_stop_session():
                 self._runner.flush_lifecycle()
                 self._runner.broker.persist_state()
                 self._send_eod(now)
@@ -447,8 +452,19 @@ class PaperSession:
                     self._handle_builder_feed_error(exc, now=now)
                 self.sync_sentinel()
             if self._protection is not None:
+                if self._should_stop_session():
+                    self._runner.flush_lifecycle()
+                    self._runner.broker.persist_state()
+                    self._send_eod(now)
+                    return 0
+                self._write_session_heartbeat(now=now, result=None, had_requests=False)
                 self._protection.refresh_subscriptions()
-                self._protection.tick()
+                self._protection.tick(should_stop=self._should_stop_session)
+                if self._should_stop_session():
+                    self._runner.flush_lifecycle()
+                    self._runner.broker.persist_state()
+                    self._send_eod(now)
+                    return 0
             if once:
                 return 0
             self._sleeper(self._feed_cycle_backoff_seconds)
