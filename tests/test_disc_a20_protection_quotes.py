@@ -449,13 +449,22 @@ class TestProtectionHeartbeat:
         )
         coordinator.seed_snapshots({symbol: snap})
         coordinator.start()
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and coordinator._last_quote_at is None:
-            time.sleep(0.01)
         heartbeat_path = tmp_path / config.heartbeat_path
-        heartbeat = ProtectionHeartbeat.model_validate_json(
-            heartbeat_path.read_text(encoding="utf-8")
-        )
+        deadline = time.monotonic() + 2.0
+        heartbeat: ProtectionHeartbeat | None = None
+        while time.monotonic() < deadline:
+            if heartbeat_path.is_file():
+                raw = heartbeat_path.read_text(encoding="utf-8")
+                if raw.strip():
+                    try:
+                        candidate = ProtectionHeartbeat.model_validate_json(raw)
+                    except ValueError:
+                        candidate = None
+                    if candidate is not None and candidate.last_quote_at is not None:
+                        heartbeat = candidate
+                        break
+            time.sleep(0.01)
+        assert heartbeat is not None
         assert coordinator._last_quote_at is not None
         assert heartbeat.last_quote_at is not None
         assert heartbeat.ws_connected is True

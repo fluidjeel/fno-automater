@@ -142,3 +142,43 @@ Repeats for the same fault are suppressed for 15 minutes.
 - A session with only abstentions is not an observed fill. Each abstention needs
   a reason code in the cycle evidence.
 
+## Stuck PAPER exits (EXIT_PENDING / rejected exit legs)
+
+When a PAPER trade is `EXIT_PENDING`, has rejected exit orders
+(`PRICE_UNAVAILABLE: paper fill requires a published quote`), or left a
+`CRITICAL` lifecycle `ReconciliationEvent` after a failed exit, entries stay
+blocked until the position is flat or reconciled. **LIVE has no equivalent;
+this command is PAPER-only.**
+
+1. Collect current bid/ask for every open leg symbol (from the dashboard,
+   `trading data fetch`, or Fyers quotes).
+2. Write `data/paper/recovery_quotes.json`:
+
+```json
+{
+  "NIFTY26SEP24500CE": {"bid": "91.95", "ask": "92.00"},
+  "NIFTY26SEP24500PE": {"bid": "88.10", "ask": "88.20"}
+}
+```
+
+3. Dry-run (lists stuck trades only):
+
+```bash
+uv run trading ops retry-stuck-paper-exits \
+  --quotes-json data/paper/recovery_quotes.json \
+  --dry-run
+```
+
+4. Force-retry at those quotes and resolve lifecycle reconciliation events:
+
+```bash
+uv run trading ops retry-stuck-paper-exits \
+  --quotes-json data/paper/recovery_quotes.json
+```
+
+Optional: `--trade-id TRD-…` limits to one trade. The command reloads
+`data/paper/trading.sqlite` and `data/paper/broker_state.json`, publishes the
+supplied quotes, resubmits remaining exit legs, appends resolved reconciliation
+records, and re-runs boot reconcile. Verify `entries_blocked=0` in the output and
+that open positions are flat before expecting new entries.
+

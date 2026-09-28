@@ -6,9 +6,11 @@ STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A14_DONE (margin soft-resize,
 safe projection, evaluation-error defense); DISC-A15_DONE (quote freshness from
 fetch/calculation time, not bar event_time); DISC-A16_DONE (CAS depth dedup,
 DUPLICATE quality flag, top5 imbalance fix, multi-symbol health.json);
-DISC-A17 monthly chain fetch (M3/M4 20-35 DTE); DISC-A20_DONE (protection
-monitor WS handler + REST fallback for held-leg quotes; heartbeat
-`last_quote_at`); Oracle rsync + restart still pending (DISC-A12)
+DISC-A17 monthly chain fetch (M3/M4 20-35 DTE); DISC-A19_DONE (exit quote
+publish/seed, DISCOVERY protection staleness fix, partial-leg exits,
+`trading ops retry-stuck-paper-exits`); DISC-A20_DONE (protection monitor WS
+handler + REST fallback for held-leg quotes; heartbeat `last_quote_at`); Oracle
+rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
 

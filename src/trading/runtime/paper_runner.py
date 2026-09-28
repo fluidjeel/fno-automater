@@ -892,6 +892,7 @@ class PaperRunner:
         """Evaluate frozen exit policy and submit opposite LIMIT orders."""
         events: list[OrderEvent] = []
         gaps: list[str] = []
+        self._seed_open_position_quote_cache(snapshots)
         events.extend(self._resume_inflight_exits(snapshots))
         for position in self._services.trade_manager.list_positions():
             if position.state is not TradeState.OPEN:
@@ -915,7 +916,7 @@ class PaperRunner:
             leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
             if leg_snapshots is None:
                 continue
-            feature = _monitor_snapshot(intent, leg_snapshots)
+            feature = _exit_feature_snapshot(position, intent, leg_snapshots)
             if feature is None:
                 continue
             self._note_exit_depth(feature, leg_snapshots, gaps)
@@ -1168,7 +1169,7 @@ class PaperRunner:
             self._clear_protection_degraded(position)
             leg_snapshots = self._exit_leg_snapshots(position, intent, snapshots)
             feature = (
-                _monitor_snapshot(intent, leg_snapshots)
+                _exit_feature_snapshot(position, intent, leg_snapshots)
                 if leg_snapshots is not None
                 else None
             )
@@ -1662,6 +1663,7 @@ class PaperRunner:
             return self._adopt_existing_exit_orders(
                 record, remaining_stays_open=remaining_stays_open
             )
+        self._publish_exit_quotes(position, snapshots)
         plan = self._exit_plan(
             intent,
             decision,
@@ -1682,7 +1684,11 @@ class PaperRunner:
             self._freeze_unknown_exit(position.trade_id)
             return ()
         order_ids = tuple(event.identity.internal_order_id for event in submit.events)
-        persist_ids: tuple[str, ...] = () if remaining_stays_open else order_ids
+        terminal_fail = {
+            OrderState.REJECTED,
+            OrderState.CANCELLED,
+            OrderState.EXPIRED,
+        }
         self._write_lifecycle(position.trade_id, exit_order_ids=order_ids)
         for event in submit.events:
             if event.state is OrderState.UNKNOWN:
@@ -1694,6 +1700,12 @@ class PaperRunner:
                 capital_reservation_id=decision.capital_reservation_id,
                 remaining_stays_open=remaining_stays_open,
             )
+        all_rejected = bool(submit.events) and all(
+            event.state in terminal_fail for event in submit.events
+        )
+        persist_ids: tuple[str, ...] = (
+            () if remaining_stays_open or all_rejected else order_ids
+        )
         self._write_lifecycle(position.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(position.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
@@ -1751,7 +1763,17 @@ class PaperRunner:
                     capital_reservation_id=decision.capital_reservation_id,
                     remaining_stays_open=remaining_stays_open,
                 )
-        persist_ids = () if remaining_stays_open else record.exit_order_ids
+        terminal_fail = {
+            OrderState.REJECTED,
+            OrderState.CANCELLED,
+            OrderState.EXPIRED,
+        }
+        all_rejected = bool(events) and all(
+            event.state in terminal_fail for event in events
+        )
+        persist_ids: tuple[str, ...] = (
+            () if remaining_stays_open or all_rejected else record.exit_order_ids
+        )
         self._write_lifecycle(record.trade_id, exit_order_ids=persist_ids)
         closed = self._services.trade_manager.get_position(record.trade_id)
         if closed is not None and closed.state is TradeState.CLOSED:
@@ -1791,11 +1813,9 @@ class PaperRunner:
         snapshots: Mapping[str, FeatureSnapshot],
     ) -> dict[str, FeatureSnapshot] | None:
         mapping: dict[str, FeatureSnapshot] = {}
+        if not position.legs:
+            return None
         required_legs = position.legs
-        if position.exit_policy.scope is ExitScope.STRATEGY_PNL:
-            position_ids = {leg.leg_id for leg in position.legs}
-            if any(leg.leg_id not in position_ids for leg in intent.legs):
-                return None
         for leg in required_legs:
             snapshot = snapshots.get(leg.contract.symbol)
             if snapshot is None or snapshot.quality.state.blocks_new_exposure:
@@ -2216,8 +2236,77 @@ class PaperRunner:
         intent: TradeIntent,
         snapshots: Mapping[str, FeatureSnapshot],
     ) -> _ProtectionDiagnosis:
+        if position.exit_policy.scope in {
+            ExitScope.STRATEGY_PNL,
+            ExitScope.SPREAD_VALUE,
+        }:
+            return self._diagnose_structure_protection(position, snapshots)
+        return self._diagnose_monitor_protection(position, intent, snapshots)
+
+    def _diagnose_structure_protection(
+        self,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> _ProtectionDiagnosis:
+        """P&L/spread exits only require quotes for legs still on the position."""
+        if not position.legs:
+            return _ProtectionDiagnosis(
+                kind=_ProtectionKind.MISSING_MONITOR,
+                reason_code=ReasonCode.UNPROTECTED_POSITION,
+                detail=(
+                    "no remaining structure legs; software stop cannot evaluate "
+                    "and PAPER has no broker-resident stop"
+                ),
+            )
+        for leg in position.legs:
+            snap = snapshots.get(leg.contract.symbol)
+            if snap is None:
+                return _ProtectionDiagnosis(
+                    kind=_ProtectionKind.MISSING_MONITOR,
+                    reason_code=ReasonCode.UNPROTECTED_POSITION,
+                    detail=(
+                        "structure leg quote missing; software stop cannot "
+                        "evaluate and PAPER has no broker-resident stop"
+                    ),
+                )
+            if self._quote_is_stale(snap):
+                return _ProtectionDiagnosis(
+                    kind=_ProtectionKind.STALE,
+                    reason_code=ReasonCode.PROTECTION_DEGRADED,
+                    detail=(
+                        "required quotes are stale; software stop cannot "
+                        "evaluate and PAPER has no broker-resident stop"
+                    ),
+                )
+        return _ProtectionDiagnosis(
+            kind=_ProtectionKind.OK,
+            reason_code=ReasonCode.OK,
+            detail="protection quotes are fresh",
+        )
+
+    def _diagnose_monitor_protection(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> _ProtectionDiagnosis:
+        """LEG_PRICE protection follows the monitor leg, or a remaining open leg."""
+        open_ids = {leg.leg_id for leg in position.legs}
         watched = monitor_leg(intent)
-        monitor_snap = snapshots.get(watched.contract.symbol)
+        if watched.leg_id in open_ids:
+            symbol = watched.contract.symbol
+        elif position.legs:
+            symbol = position.legs[0].contract.symbol
+        else:
+            return _ProtectionDiagnosis(
+                kind=_ProtectionKind.MISSING_MONITOR,
+                reason_code=ReasonCode.UNPROTECTED_POSITION,
+                detail=(
+                    "monitor leg is closed and no remaining legs are open; "
+                    "software stop cannot evaluate and PAPER has no broker-resident stop"
+                ),
+            )
+        monitor_snap = snapshots.get(symbol)
         if monitor_snap is None:
             return _ProtectionDiagnosis(
                 kind=_ProtectionKind.MISSING_MONITOR,
@@ -2236,27 +2325,6 @@ class PaperRunner:
                     "and PAPER has no broker-resident stop"
                 ),
             )
-        if position.exit_policy.scope is ExitScope.STRATEGY_PNL:
-            for leg in position.legs:
-                snap = snapshots.get(leg.contract.symbol)
-                if snap is None:
-                    return _ProtectionDiagnosis(
-                        kind=_ProtectionKind.MISSING_MONITOR,
-                        reason_code=ReasonCode.UNPROTECTED_POSITION,
-                        detail=(
-                            "structure leg quote missing; software stop cannot "
-                            "evaluate and PAPER has no broker-resident stop"
-                        ),
-                    )
-                if self._quote_is_stale(snap):
-                    return _ProtectionDiagnosis(
-                        kind=_ProtectionKind.STALE,
-                        reason_code=ReasonCode.PROTECTION_DEGRADED,
-                        detail=(
-                            "required quotes are stale; software stop cannot "
-                            "evaluate and PAPER has no broker-resident stop"
-                        ),
-                    )
         return _ProtectionDiagnosis(
             kind=_ProtectionKind.OK,
             reason_code=ReasonCode.OK,
@@ -2284,11 +2352,19 @@ class PaperRunner:
     def _quote_is_stale(self, snapshot: FeatureSnapshot) -> bool:
         if snapshot.quality.state.blocks_new_exposure:
             return True
-        max_age_ms = self._account.config.freshness.quote_max_age_ms
-        if max_age_ms is None:
-            return True
-        age = snapshot.times.age_at(self._clock.now_utc())
-        return int(age.total_seconds() * 1000) > max_age_ms
+        now = self._clock.now_utc()
+        if self._entry_profile is EntryProfile.DISCOVERY:
+            if self._discovery_config is None:
+                return True
+            limit_ms = self._discovery_config.hard_quote_max_age_ms
+            age = snapshot.times.quote_freshness_age_at(now)
+        else:
+            strict_limit = self._account.config.freshness.quote_max_age_ms
+            if strict_limit is None:
+                return True
+            limit_ms = strict_limit
+            age = snapshot.times.age_at(now)
+        return int(age.total_seconds() * 1000) > limit_ms
 
     def _handle_missing_monitor(
         self,
@@ -3000,6 +3076,40 @@ class PaperRunner:
             if quote is not None:
                 self._services.broker.publish_quote(leg.contract.symbol, quote)
 
+    def _publish_exit_quotes(
+        self,
+        position: PositionState,
+        snapshots: Mapping[str, FeatureSnapshot],
+    ) -> None:
+        """Publish current snapshot quotes so paper exits fill at decision time."""
+        for leg in position.legs:
+            snapshot = snapshots.get(leg.contract.symbol)
+            if snapshot is None:
+                continue
+            quote = snapshot.market
+            if quote.bid_size is None or quote.ask_size is None:
+                cached = self._services.broker._quotes.get(leg.contract.symbol)
+                quote = quote.model_copy(
+                    update={
+                        "bid_size": quote.bid_size
+                        or (cached.bid_size if cached is not None else None)
+                        or 300,
+                        "ask_size": quote.ask_size
+                        or (cached.ask_size if cached is not None else None)
+                        or 300,
+                    }
+                )
+            self._services.broker.publish_quote(leg.contract.symbol, quote)
+
+    def _seed_open_position_quote_cache(
+        self, snapshots: Mapping[str, FeatureSnapshot]
+    ) -> None:
+        """After restart the paper broker quote cache is empty; seed open legs."""
+        for position in self._services.trade_manager.list_positions():
+            if position.state is TradeState.CLOSED:
+                continue
+            self._publish_exit_quotes(position, snapshots)
+
     def _maybe_record_fill_charges(
         self,
         event: OrderEvent,
@@ -3186,6 +3296,27 @@ def _monitor_snapshot(
 ) -> FeatureSnapshot | None:
     watched = monitor_leg(intent)
     return leg_snapshots.get(watched.leg_id)
+
+
+def _exit_feature_snapshot(
+    position: PositionState,
+    intent: TradeIntent,
+    leg_snapshots: Mapping[str, FeatureSnapshot],
+) -> FeatureSnapshot | None:
+    """Pick the monitor snapshot, or any remaining leg for partial structures."""
+    feature = _monitor_snapshot(intent, leg_snapshots)
+    if feature is not None:
+        return feature
+    if position.exit_policy.scope not in {
+        ExitScope.STRATEGY_PNL,
+        ExitScope.SPREAD_VALUE,
+    }:
+        return None
+    for leg in position.legs:
+        snap = leg_snapshots.get(leg.leg_id)
+        if snap is not None:
+            return snap
+    return None
 
 
 def _lifecycle_unchanged(
