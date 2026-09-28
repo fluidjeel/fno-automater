@@ -528,9 +528,9 @@ def _is_stuck_exit_record(
     scope = f"trade/{record.trade_id}/lifecycle"
     if _has_unresolved_lifecycle_event(store, scope):
         return True
-    return _broker_has_failed_exit_orders(
-        broker, record.trade_id
-    ) or bool(_exit_idempotency_keys_from_store(store, record.trade_id))
+    return _broker_has_failed_exit_orders(broker, record.trade_id) or bool(
+        _exit_idempotency_keys_from_store(store, record.trade_id)
+    )
 
 
 def _has_unresolved_lifecycle_event(store: TradingStore, scope: str) -> bool:
