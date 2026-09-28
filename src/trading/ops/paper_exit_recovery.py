@@ -22,11 +22,12 @@ from trading.domain.clock import Clock, WallClock
 from trading.domain.contracts import (
     ContractRef,
     FeatureSnapshot,
-    OrderEvent,
     PositionLifecycleRecord,
+    PositionState,
     ReconciliationEvent,
 )
 from trading.domain.contracts.common import DataQualityReport, Lineage, Versions
+from trading.domain.contracts.order import OrderEvent
 from trading.domain.contracts.snapshot import (
     DerivativesContext,
     MarketQuote,
@@ -55,6 +56,10 @@ __all__ = [
     "load_quotes_from_json",
     "retry_stuck_paper_exits",
 ]
+
+_TERMINAL_EXIT_FAILURE = frozenset(
+    {OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +134,7 @@ def retry_stuck_paper_exits(
     recovered = _retry_records(ctx, stuck, quote_book, now=wall.now_utc())
     resolved_ids = _resolve_lifecycle_reconciliation(
         ctx.store,
-        trade_ids=tuple(item.trade_id for item in stuck),
+        trade_ids=tuple(recovered),
         now=wall.now_utc(),
         id_factory=ctx.id_factory,
     )
@@ -251,31 +256,99 @@ def _retry_records(
     recovered: list[str] = []
     for record in stuck:
         snapshots = _snapshots_for_record(record, quote_book, now=now)
-        for symbol, quote in quote_book.items():
-            if symbol in snapshots:
-                ctx.broker.publish_quote(symbol, quote)
-        position = ctx.runner.trade_manager.get_position(record.trade_id)
-        if position is None:
-            continue
-        if position.state is TradeState.EXIT_PENDING:
-            ctx.runner.trade_manager.apply_exit_evaluation(
-                record.trade_id,
-                ExitEvaluation(
-                    kind=ExitKind.STOP,
-                    reason_code=ReasonCode.OK,
-                    detail="operator retry-stuck-paper-exits",
-                    updated_policy=position.exit_policy,
-                ),
-            )
-        pending = ctx.runner.trade_manager.get_position(record.trade_id)
+        _publish_recovery_quotes(ctx, snapshots, quote_book)
+        pending = _prepare_exit_retry(ctx, record)
         if pending is None:
             continue
-        intent, decision = ctx.runner.open_book[record.trade_id]
+        book = ctx.runner.open_book.get(record.trade_id)
+        if book is None:
+            continue
+        intent, decision = book
         ctx.runner._submit_exit(intent, decision, pending, snapshots)
         after = ctx.runner.trade_manager.get_position(record.trade_id)
         if after is not None and after.state is TradeState.CLOSED:
             recovered.append(record.trade_id)
     return recovered
+
+
+def _prepare_exit_retry(
+    ctx: _RecoveryContext,
+    record: PositionLifecycleRecord,
+) -> PositionState | None:
+    """Drop stale failed exit orders so resubmit reaches the paper broker."""
+    position = ctx.runner.trade_manager.get_position(record.trade_id)
+    if position is None:
+        return None
+    if record.exit_order_ids and _exit_orders_terminal_rejected(ctx.store, record):
+        stale_keys = _idempotency_keys_for_orders(ctx.store, record.exit_order_ids)
+        _purge_stale_exit_orders(ctx, stale_keys)
+        ctx.runner._write_lifecycle(record.trade_id, exit_order_ids=())
+    position = ctx.runner.trade_manager.get_position(record.trade_id)
+    if position is None:
+        return None
+    if position.state is TradeState.OPEN:
+        position = ctx.runner.trade_manager.apply_exit_evaluation(
+            record.trade_id,
+            ExitEvaluation(
+                kind=ExitKind.STOP,
+                reason_code=ReasonCode.OK,
+                detail="operator retry-stuck-paper-exits",
+                updated_policy=position.exit_policy,
+            ),
+        )
+    return position
+
+
+def _publish_recovery_quotes(
+    ctx: _RecoveryContext,
+    snapshots: Mapping[str, FeatureSnapshot],
+    quote_book: Mapping[str, MarketQuote],
+) -> None:
+    for symbol, quote in quote_book.items():
+        if symbol in snapshots:
+            ctx.broker.publish_quote(symbol, quote)
+
+
+def _idempotency_keys_for_orders(
+    store: TradingStore, order_ids: tuple[str, ...]
+) -> frozenset[str]:
+    wanted = set(order_ids)
+    keys: set[str] = set()
+    for stored in store.read_events():
+        if stored.event_type is not TradingEventType.ORDER_EVENT:
+            continue
+        event = stored.deserialize()
+        if not isinstance(event, OrderEvent):
+            continue
+        if event.identity.internal_order_id in wanted:
+            keys.add(event.identity.idempotency_key)
+    return frozenset(keys)
+
+
+def _purge_stale_exit_orders(
+    ctx: _RecoveryContext, idempotency_keys: frozenset[str]
+) -> None:
+    if not idempotency_keys:
+        return
+    oms = ctx.runner._services.oms
+    for key in idempotency_keys:
+        oms._latest_by_key.pop(key, None)
+    payload = ctx.broker.dump_state()
+    orders = payload.get("orders")
+    if not isinstance(orders, list):
+        return
+    filtered = [
+        row
+        for row in orders
+        if not (
+            isinstance(row, dict)
+            and row.get("identity", {}).get("idempotency_key") in idempotency_keys
+        )
+    ]
+    if len(filtered) == len(orders):
+        return
+    payload["orders"] = filtered
+    ctx.broker.load_state(payload)
 
 
 def _stuck_lifecycle_records(
@@ -302,13 +375,12 @@ def _stuck_lifecycle_records(
 def _exit_orders_terminal_rejected(
     store: TradingStore, record: PositionLifecycleRecord
 ) -> bool:
-    terminal = {OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED}
     saw_terminal = False
     for order_id in record.exit_order_ids:
         event = _latest_order_event(store, order_id)
         if event is None:
             return False
-        if event.state not in terminal:
+        if event.state not in _TERMINAL_EXIT_FAILURE:
             return False
         saw_terminal = True
     return saw_terminal
