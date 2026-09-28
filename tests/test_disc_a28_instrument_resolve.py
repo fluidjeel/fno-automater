@@ -22,8 +22,20 @@ from trading.broker.paper import PaperBroker
 from trading.data.events import CanonicalMarketEvent
 from trading.data.storage.instrument_store import InstrumentSpecStore
 from trading.domain.clock import FrozenClock
-from trading.domain.contracts import DerivativesContext, IntentLeg
+from trading.domain.contracts import (
+    DerivativesContext,
+    FeatureSnapshot,
+    IntentLeg,
+    MarketState,
+)
+from trading.domain.contracts.identification import (
+    MacroStatus,
+    TrendState,
+    VolatilityState,
+)
+from trading.domain.contracts.snapshot import Greeks
 from trading.domain.enums import (
+    DataQuality,
     Exchange,
     ExecutionMode,
     InstrumentKind,
@@ -33,15 +45,26 @@ from trading.domain.enums import (
     Side,
 )
 from trading.domain.ids import SequentialIdFactory
+from trading.identification import (
+    bind_iron_condor,
+    bind_long_call_butterfly,
+    load_identification_policy,
+)
 from trading.risk import RiskGateway, RiskGatewayRequest
 from trading.risk.instrument_registry import InstrumentRegistry
 from trading.risk.instrument_resolve import resolve_discovery_risk_context
 from trading.risk.reservation import CapitalReservationService
+from trading.risk.sizing.butterfly import is_long_butterfly
+from trading.risk.sizing.iron_condor import is_iron_condor
 from trading.runtime.candidates import build_option_candidates
 from trading.runtime.paper_runner import PaperStrategyRequest
 from trading.storage import TradingStore
 
+ROOT = Path(__file__).resolve().parent.parent
+POLICY = load_identification_policy(ROOT / "config" / "identification.yaml")
 ZONE = ZoneInfo("Asia/Kolkata")
+FW_EXPIRY = date(2026, 10, 6)
+MO_EXPIRY = date(2026, 10, 27)
 
 
 def _following_week_spec() -> dict[str, object]:
@@ -239,3 +262,254 @@ def test_discovery_risk_context_resolves_instrument_for_intent(
     assert not isinstance(resolved, ReasonCode)
     assert resolved.instrument.trading_symbol == "NSE:NIFTY26OCT24500CE"
     assert resolved.feature_snapshot.derivatives is not None
+
+
+def _range_market() -> MarketState:
+    return MarketState.model_validate(
+        {
+            "market_state_id": "market-a28",
+            "feature_version": POLICY.feature_version,
+            "calculated_at": NOW,
+            "source_snapshot_ids": ("snapshot-1",),
+            "trend": TrendState.RANGE,
+            "volatility": VolatilityState.NORMAL,
+            "return_15m": Decimal("0.001"),
+            "return_60m": Decimal("0.002"),
+            "normalized_return_15m": Decimal("0.1"),
+            "normalized_return_60m": Decimal("0.1"),
+            "normalized_vwap_distance": Decimal("0.1"),
+            "realized_volatility_ratio": Decimal("1.0"),
+            "realized_volatility_annualized": Decimal("15"),
+            "iv_percentile": Decimal("55"),
+            "iv_rv_ratio": Decimal("1.0"),
+            "trend_score": Decimal("0.05"),
+            "event_state": "NORMAL",
+            "macro_status": MacroStatus.NEUTRAL,
+            "quality": DataQuality.VALID,
+            "warmup_complete": True,
+            "completed_bar_count": 60,
+            "session_count": 20,
+            "reason_codes": (),
+        }
+    )
+
+
+def _merged_option(
+    symbol: str,
+    *,
+    strike: str,
+    expiry: date,
+    option_type: OptionType,
+    delta: str,
+    dte: int,
+) -> FeatureSnapshot:
+    return f.snapshot(
+        contract=f.option_contract(
+            symbol=symbol,
+            strike=Decimal(strike),
+            option_type=option_type,
+            expiry=expiry,
+        ),
+        market=f.quote(
+            bid=f.price("20.00"),
+            ask=f.price("20.10"),
+            last=f.price("20.10"),
+            bid_size=500,
+            ask_size=500,
+        ),
+        features={"lot_size": Decimal(65), "top_of_book_observed": Decimal(1)},
+        derivatives=DerivativesContext(
+            days_to_expiry=dte,
+            open_interest=5000,
+            option_type=option_type,
+            greeks=Greeks(
+                model="fixture",
+                calculation_version="1",
+                converged=True,
+                implied_volatility=Decimal("15"),
+                delta=Decimal(delta),
+            ),
+            underlying_price=f.price("22950"),
+        ),
+    )
+
+
+def _merged_multi_expiry_chain() -> tuple[FeatureSnapshot, ...]:
+    """Near + following-week (O06) + monthly (OCT) rows on overlapping strikes."""
+    fw = FW_EXPIRY
+    mo = MO_EXPIRY
+    return (
+        _merged_option(
+            "NIFTY26O0622900PE",
+            strike="22900",
+            expiry=fw,
+            option_type=OptionType.PUT,
+            delta="-0.15",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26O0622950PE",
+            strike="22950",
+            expiry=fw,
+            option_type=OptionType.PUT,
+            delta="-0.35",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26O0623000CE",
+            strike="23000",
+            expiry=fw,
+            option_type=OptionType.CALL,
+            delta="0.35",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26O0623050CE",
+            strike="23050",
+            expiry=fw,
+            option_type=OptionType.CALL,
+            delta="0.15",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26OCT22900PE",
+            strike="22900",
+            expiry=mo,
+            option_type=OptionType.PUT,
+            delta="-0.12",
+            dte=29,
+        ),
+        _merged_option(
+            "NIFTY26OCT22950PE",
+            strike="22950",
+            expiry=mo,
+            option_type=OptionType.PUT,
+            delta="-0.30",
+            dte=29,
+        ),
+        _merged_option(
+            "NIFTY26OCT23000CE",
+            strike="23000",
+            expiry=mo,
+            option_type=OptionType.CALL,
+            delta="0.30",
+            dte=29,
+        ),
+        _merged_option(
+            "NIFTY26OCT23050CE",
+            strike="23050",
+            expiry=mo,
+            option_type=OptionType.CALL,
+            delta="0.12",
+            dte=29,
+        ),
+        _merged_option(
+            "NIFTY26O0622850CE",
+            strike="22850",
+            expiry=fw,
+            option_type=OptionType.CALL,
+            delta="0.45",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26O0622900CE",
+            strike="22900",
+            expiry=fw,
+            option_type=OptionType.CALL,
+            delta="0.50",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26O0622950CE",
+            strike="22950",
+            expiry=fw,
+            option_type=OptionType.CALL,
+            delta="0.15",
+            dte=8,
+        ),
+        _merged_option(
+            "NIFTY26OCT22900CE",
+            strike="22900",
+            expiry=mo,
+            option_type=OptionType.CALL,
+            delta="0.48",
+            dte=29,
+        ),
+        _merged_option(
+            "NIFTY26OCT22950CE",
+            strike="22950",
+            expiry=mo,
+            option_type=OptionType.CALL,
+            delta="0.20",
+            dte=29,
+        ),
+    )
+
+
+class TestMergedChainSameExpiry:
+    def test_iron_condor_legs_share_one_expiry(self) -> None:
+        """M4 iron condor must not mix O06 following-week with OCT monthly legs."""
+        candidates = _merged_multi_expiry_chain()
+        bound = bind_iron_condor(
+            candidates,
+            market=_range_market(),
+            policy=POLICY,
+        )
+        assert bound.binding.eligible is True
+        expiries = {item.contract.expiry for item in bound.candidates}
+        assert len(expiries) == 1
+        symbols = {item.contract.symbol for item in bound.candidates}
+        assert symbols.issubset({item.contract.symbol for item in candidates})
+
+    def test_long_call_butterfly_legs_share_one_expiry(self) -> None:
+        """Butterfly low-wing O06 + body OCT must not bind across expiries."""
+        candidates = _merged_multi_expiry_chain()
+        bound = bind_long_call_butterfly(
+            candidates,
+            market=_range_market(),
+            policy=POLICY,
+        )
+        assert bound.binding.eligible is True
+        expiries = {item.contract.expiry for item in bound.candidates}
+        assert len(expiries) == 1
+
+    def test_bound_structures_classify_in_layer2(self) -> None:
+        """Same-expiry binds must reach Layer 2 structure detection, not INSTRUMENT_UNKNOWN."""
+        candidates = _merged_multi_expiry_chain()
+        condor = bind_iron_condor(
+            candidates,
+            market=_range_market(),
+            policy=POLICY,
+        )
+        butterfly = bind_long_call_butterfly(
+            candidates,
+            market=_range_market(),
+            policy=POLICY,
+        )
+        assert condor.binding.eligible and butterfly.binding.eligible
+        lp, sp, sc, lc = condor.candidates
+        condor_intent = f.intent(
+            family_id="short_iron_condor_defined",
+            legs=(
+                IntentLeg(leg_id="lp", contract=lp.contract, side=Side.BUY, ratio=1),
+                IntentLeg(leg_id="sp", contract=sp.contract, side=Side.SELL, ratio=1),
+                IntentLeg(leg_id="sc", contract=sc.contract, side=Side.SELL, ratio=1),
+                IntentLeg(leg_id="lc", contract=lc.contract, side=Side.BUY, ratio=1),
+            ),
+        )
+        assert is_iron_condor(condor_intent)
+
+        low, mid, high = butterfly.candidates
+        butterfly_intent = f.intent(
+            family_id="long_call_butterfly",
+            legs=(
+                IntentLeg(leg_id="low", contract=low.contract, side=Side.BUY, ratio=1),
+                IntentLeg(
+                    leg_id="body", contract=mid.contract, side=Side.SELL, ratio=2
+                ),
+                IntentLeg(
+                    leg_id="high", contract=high.contract, side=Side.BUY, ratio=1
+                ),
+            ),
+        )
+        assert is_long_butterfly(butterfly_intent)

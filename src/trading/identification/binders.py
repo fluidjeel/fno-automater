@@ -286,6 +286,12 @@ def _credit_option_type(
     return None
 
 
+def _same_expiry(*items: FeatureSnapshot) -> bool:
+    """True when every leg shares one non-null expiry (same-expiry structures only)."""
+    expiries = {item.contract.expiry for item in items}
+    return len(expiries) == 1 and None not in expiries
+
+
 def _order_credit_pair(
     first: FeatureSnapshot,
     second: FeatureSnapshot,
@@ -553,6 +559,8 @@ def bind_iron_condor(
                         < lc.contract.strike
                     ):
                         continue
+                    if not _same_expiry(lp, sp, sc, lc):
+                        continue
                     put_width = sp.contract.strike - lp.contract.strike
                     call_width = lc.contract.strike - sc.contract.strike
                     width_penalty = abs(put_width - call_width)
@@ -772,6 +780,8 @@ def bind_short_iron_butterfly(
                     if not (
                         lp.contract.strike < sp.contract.strike < lc.contract.strike
                     ):
+                        continue
+                    if not _same_expiry(lp, sp, sc, lc):
                         continue
                     score = (
                         _candidate_score(lp, candidates, policy, p1=p1, role="long")
@@ -1100,6 +1110,8 @@ def _bind_long_butterfly(
                     != mid.contract.strike - low.contract.strike
                 ):
                     continue
+                if not _same_expiry(low, mid, high):
+                    continue
                 score = (
                     _candidate_score(low, candidates, policy, p1=p1, role="long")
                     + _candidate_score(mid, candidates, policy, p1=p1, role="short")
@@ -1204,6 +1216,8 @@ def _bind_long_volatility_pair(
                 if put_strike != call_strike:
                     continue
             elif put_strike >= call_strike:
+                continue
+            if not _same_expiry(put, call):
                 continue
             score = (
                 _candidate_score(put, candidates, policy, p1=p1, role="long")
