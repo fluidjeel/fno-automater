@@ -8,10 +8,12 @@ Invariant 25: every comparison produces an auditable ReconciliationEvent.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from trading.broker.ports import BrokerPort
+from trading.broker.ports import BrokerFunds, BrokerPort
+from trading.config.schema import Environment
 from trading.domain.clock import Clock
 from trading.domain.contracts.common import Versions
 from trading.domain.contracts.order import OrderEvent
@@ -25,6 +27,7 @@ from trading.domain.contracts.reconciliation import ReconciliationEvent
 from trading.domain.contracts.reconciliation_result import ReconciliationResult
 from trading.domain.enums import (
     DifferenceClass,
+    EntryProfile,
     OrderState,
     ReasonCode,
     ReconciliationTrigger,
@@ -43,6 +46,15 @@ from trading.portfolio.view import build_portfolio_view
 from trading.storage.trading_store import TradingEventType, TradingStore
 
 __all__ = ["PortfolioReconciler", "ReconcileOutcome"]
+
+_logger = logging.getLogger(__name__)
+
+_POSITION_DRIFT_CLASSES = frozenset(
+    {
+        DifferenceClass.UNEXPECTED_BROKER_STATE,
+        DifferenceClass.LOCAL_ORDER_ABSENT_AT_BROKER,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +92,13 @@ class PortfolioReconciler:
         self._ids = id_factory
         self._versions = versions
 
-    def boot_reconcile(self, account_id: str) -> ReconcileOutcome:
+    def boot_reconcile(
+        self,
+        account_id: str,
+        *,
+        entry_profile: EntryProfile = EntryProfile.STRICT,
+        environment: Environment = Environment.PAPER,
+    ) -> ReconcileOutcome:
         """Run boot reconciliation, persist evidence and update readiness."""
         started_at = self._clock.now_utc()
         prior_state, _ = self._store.get_system_state()
@@ -112,9 +130,23 @@ class PortfolioReconciler:
             detected_at=started_at,
             id_factory=self._ids,
         )
-        entries_blocked = any(
-            event.entries_blocked and not event.is_resolved for event in events
+        events = _apply_discovery_entry_downgrades(
+            events,
+            entry_profile=entry_profile,
+            environment=environment,
         )
+        entries_blocked, blocking_reasons = _effective_entries_blocked(
+            events,
+            funds=funds,
+            entry_profile=entry_profile,
+            environment=environment,
+        )
+        if blocking_reasons:
+            _logger.error(
+                "reconciliation blocked entries from prior=%s: %s",
+                prior_state.value,
+                "; ".join(blocking_reasons),
+            )
         resulting_state = _resulting_system_state(reconcile_from, entries_blocked)
         if resulting_state is not reconcile_from:
             SYSTEM_MACHINE.transition(
@@ -192,11 +224,92 @@ def rebuild_local_state(
     )
 
 
+def _apply_discovery_entry_downgrades(
+    events: list[ReconciliationEvent],
+    *,
+    entry_profile: EntryProfile,
+    environment: Environment,
+) -> list[ReconciliationEvent]:
+    """Record drift under DISCOVERY without leaving blocking events unresolved."""
+    adjusted: list[ReconciliationEvent] = []
+    for event in events:
+        if not _discovery_downgrades_reconciliation_block(
+            event,
+            entry_profile=entry_profile,
+            environment=environment,
+        ):
+            adjusted.append(event)
+            continue
+        _logger.warning(
+            "DISCOVERY: broker/DB position drift (%s) at %s does not block entries",
+            event.difference_class.value,
+            event.scope,
+        )
+        adjusted.append(
+            event.model_copy(
+                update={
+                    "entries_blocked": False,
+                    "repair_action": (
+                        "DISCOVERY: broker/DB position drift tolerated; "
+                        "entries remain open under PAPER discovery profile"
+                    ),
+                    "repair_succeeded": True,
+                    "resolved_at": event.detected_at,
+                }
+            )
+        )
+    return adjusted
+
+
+def _discovery_downgrades_reconciliation_block(
+    event: ReconciliationEvent,
+    *,
+    entry_profile: EntryProfile,
+    environment: Environment,
+) -> bool:
+    """PAPER+DISCOVERY treats broker/local drift as warning-only."""
+    if entry_profile is not EntryProfile.DISCOVERY:
+        return False
+    if environment is not Environment.PAPER:
+        return False
+    return event.difference_class in _POSITION_DRIFT_CLASSES
+
+
+def _effective_entries_blocked(
+    events: list[ReconciliationEvent],
+    *,
+    funds: BrokerFunds,
+    entry_profile: EntryProfile,
+    environment: Environment,
+) -> tuple[bool, tuple[str, ...]]:
+    """Return whether entries stay blocked and which checks tripped it."""
+    reasons: list[str] = []
+    for event in events:
+        if not event.entries_blocked or event.is_resolved:
+            continue
+        reasons.append(
+            f"{event.difference_class.value} scope={event.scope} "
+            f"reason={event.reason_code.value}"
+        )
+    if (
+        entry_profile is EntryProfile.DISCOVERY
+        and environment is Environment.PAPER
+        and funds.margin_available.is_negative
+    ):
+        _logger.warning(
+            "DISCOVERY: MARGIN_OVERDRAWN margin_available=%s does not block entries",
+            funds.margin_available,
+        )
+    return bool(reasons), tuple(reasons)
+
+
 def _resulting_system_state(
     reconcile_from: SystemState,
     entries_blocked: bool,
 ) -> SystemState:
     if entries_blocked:
+        if reconcile_from is SystemState.READY:
+            return SystemState.DEGRADED
         return reconcile_from
     if reconcile_from in {SystemState.RECOVERY, SystemState.DEGRADED}:
         return SystemState.READY
