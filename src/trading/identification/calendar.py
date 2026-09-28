@@ -271,6 +271,10 @@ class TradingCalendarPort:
             and (d + timedelta(days=DAYS_IN_WEEK)).month != d.month
         )
 
+    def is_monthly_contract(self, d: date) -> bool:
+        """Return True if contract fulfills monthly expiry role."""
+        return self._is_monthly_contract(d)
+
     def _is_monthly_contract(self, d: date) -> bool:
         """Return True if contract fulfills monthly expiry role."""
         return self.is_last_thursday_of_month(d) or (

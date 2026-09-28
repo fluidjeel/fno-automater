@@ -1,9 +1,9 @@
 # Current State
 
-LAST_UPDATED: 2026-09-27
+LAST_UPDATED: 2026-09-28
 CURRENT_MILESTONE: PAPER Discovery Mode (`docs/context/DISCOVERY_MODE.md`)
-STATUS: DISC-A0..A11_DONE; DISC-A13_DONE (capital caps soft in DISCOVERY PAPER);
-Oracle rsync + restart still pending (DISC-A12)
+STATUS: DISC-A0..A11_DONE; DISC-A13_DONE; DISC-A17 monthly chain fetch (M3/M4
+20-35 DTE); Oracle rsync + restart still pending (DISC-A12)
 
 ## Evidence labels
 
@@ -23,6 +23,7 @@ Oracle rsync + restart still pending (DISC-A12)
 | Fills | `touch-v1` with `conservative-v1` shadow verdict |
 | Straddle/strangle | `PAPER` under DISCOVERY |
 | Calendars | `SUSPENDED` (dual-expiry lifecycle unproven; no change in A13) |
+| Monthly chain | Supplemental fetch for 20-35 DTE expiries (`monthly_chain=1`); TTL-cached REST; M3/M4 binders only |
 | Capital caps in DISCOVERY | Soft only — downsize and/or `strict_would_block`; never reject |
 
 ## Mode stances (file and loaded)
