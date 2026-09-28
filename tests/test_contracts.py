@@ -330,6 +330,19 @@ class TestFeatureSnapshot:
             seconds=5
         )
 
+    def test_quote_freshness_age_uses_calculation_time(self) -> None:
+        quote_at = f.NOW - timedelta(seconds=20)
+        times = f.snapshot_times(
+            event_time=f.NOW - timedelta(minutes=4),
+            source_time=f.NOW - timedelta(minutes=4),
+            receive_time=quote_at - timedelta(milliseconds=50),
+            calculation_time=quote_at,
+        )
+        assert times.quote_freshness_age_at(f.NOW) == timedelta(seconds=20)
+        payload = times.model_dump(mode="json")
+        restored = type(times).model_validate(payload)
+        assert restored.quote_freshness_age_at(f.NOW) == timedelta(seconds=20)
+
 
 class TestAIProposal:
     def test_a_proposal_cannot_promote_itself(self) -> None:

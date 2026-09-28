@@ -436,6 +436,8 @@ class RiskGateway:
                 request.leg_snapshots,
                 now=now,
                 freshness=self._account_config.config.freshness,
+                entry_profile=entry_profile,
+                discovery_config=discovery_config,
             )
             audit = _SnapshotAudit(
                 decision_snapshot_id=bundle.decision_snapshot_id,

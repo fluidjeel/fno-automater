@@ -12,11 +12,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from trading.config.discovery import DiscoveryConfig
 from trading.config.schema import ConfigNotVerifiedError, FreshnessRules
 from trading.domain.contracts.intent import IntentLeg, TradeIntent
 from trading.domain.contracts.risk import LegQuoteRef
 from trading.domain.contracts.snapshot import FeatureSnapshot
-from trading.domain.enums import ReasonCode
+from trading.domain.enums import EntryProfile, ReasonCode
 
 __all__ = ["LegSnapshotBundle", "validate_leg_snapshot_bundle"]
 
@@ -33,12 +34,14 @@ class LegSnapshotBundle:
     reason: ReasonCode | None = None
 
 
-def validate_leg_snapshot_bundle(
+def validate_leg_snapshot_bundle(  # noqa: PLR0912
     intent: TradeIntent,
     leg_snapshots: Mapping[str, FeatureSnapshot],
     *,
     now: datetime,
     freshness: FreshnessRules,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    discovery_config: DiscoveryConfig | None = None,
 ) -> LegSnapshotBundle:
     """Validate a multi-leg quote map without rewriting snapshot IDs.
 
@@ -61,10 +64,18 @@ def validate_leg_snapshot_bundle(
         if identity is not None:
             return _reject(audit, identity)
     try:
-        max_age_ms = freshness.require_quote_max_age_ms()
         max_skew_ms = freshness.require_max_leg_quote_skew_ms()
     except ConfigNotVerifiedError:
         return _reject(audit, ReasonCode.CONFIG_UNVERIFIED)
+    if entry_profile is EntryProfile.DISCOVERY:
+        if discovery_config is None:
+            return _reject(audit, ReasonCode.CONFIG_UNVERIFIED)
+        max_age_ms = discovery_config.hard_quote_max_age_ms
+    else:
+        try:
+            max_age_ms = freshness.require_quote_max_age_ms()
+        except ConfigNotVerifiedError:
+            return _reject(audit, ReasonCode.CONFIG_UNVERIFIED)
 
     event_times: list[datetime] = []
     for snapshot in (leg_snapshots[leg.leg_id] for leg in intent.legs):
@@ -72,8 +83,13 @@ def validate_leg_snapshot_bundle(
             return _reject(audit, ReasonCode.SNAPSHOT_MISMATCH)
         if snapshot.quality.state.blocks_new_exposure:
             return _reject(audit, ReasonCode.DATA_STALE)
-        age = snapshot.times.age_at(now)
-        if age < timedelta(0) or _timedelta_ms(age) > max_age_ms:
+        if entry_profile is EntryProfile.DISCOVERY:
+            age = snapshot.times.quote_freshness_age_at(now)
+        else:
+            age = snapshot.times.age_at(now)
+        if age < timedelta(0):
+            return _reject(audit, ReasonCode.SNAPSHOT_MISMATCH)
+        if _timedelta_ms(age) > max_age_ms:
             return _reject(audit, ReasonCode.DATA_STALE)
         event_times.append(snapshot.times.event_time)
     if len(event_times) >= _SKEW_COMPARISON_LEGS:
