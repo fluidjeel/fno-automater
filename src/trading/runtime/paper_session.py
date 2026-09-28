@@ -313,6 +313,7 @@ class PaperSession:
         self._latest_market_state: MarketState | None = None
         self._drawdown_alerts = DrawdownAlertTracker()
         self._data_feed_alerts = DataFeedAlertTracker()
+        self._feed_cycle_backoff_seconds = float(session_config.poll_interval_seconds)
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -440,14 +441,17 @@ class PaperSession:
                 return 0
             in_window = self._open <= local.time() <= self._close
             if in_window or self._has_open_positions():
-                self.tick()
+                try:
+                    self.tick()
+                except _BUILDER_FEED_ERRORS as exc:
+                    self._handle_builder_feed_error(exc, now=now)
                 self.sync_sentinel()
             if self._protection is not None:
                 self._protection.refresh_subscriptions()
                 self._protection.tick()
             if once:
                 return 0
-            self._sleeper(float(self._config.poll_interval_seconds))
+            self._sleeper(self._feed_cycle_backoff_seconds)
 
     def tick(self) -> PaperCycleResult | None:
         """One L1→L3→L2 cycle plus exits. Returns None when the builder is empty."""
@@ -460,6 +464,7 @@ class PaperSession:
         except _BUILDER_FEED_ERRORS as exc:
             self._handle_builder_feed_error(exc, now=now)
             return None
+        self._feed_cycle_backoff_seconds = float(self._config.poll_interval_seconds)
         self._data_feed_alerts.record_success(notify=self._notifier.send)
         latest = getattr(self._builder, "latest_market_state", None)
         if isinstance(latest, MarketState):
@@ -526,6 +531,11 @@ class PaperSession:
 
     def _handle_builder_feed_error(self, exc: BaseException, *, now: datetime) -> None:
         """Log, record, alert and continue without new entries after a feed failure."""
+        poll = float(self._config.poll_interval_seconds)
+        self._feed_cycle_backoff_seconds = min(
+            max(self._feed_cycle_backoff_seconds * 2.0, poll),
+            60.0,
+        )
         logging.getLogger(__name__).error(
             "paper session builder feed error; skipping entries this cycle",
             exc_info=exc,
@@ -587,7 +597,11 @@ class PaperSession:
         holder["event"] = event
         try:
             now = self._clock.now_utc()
-            requests, snapshots = self._builder(now)
+            try:
+                requests, snapshots = self._builder(now)
+            except _BUILDER_FEED_ERRORS as exc:
+                self._handle_builder_feed_error(exc, now=now)
+                return None
             m1 = tuple(
                 item
                 for item in self._entry_requests(requests)

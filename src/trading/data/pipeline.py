@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -113,8 +113,25 @@ class DataPipeline:
         *,
         now: datetime | None = None,
     ) -> PipelineResult:
-        if not underlying.fetch_option_chain:
-            return self._run_once_index_quote(underlying, now=now)
+        try:
+            if not underlying.fetch_option_chain:
+                return self._run_once_index_quote(underlying, now=now)
+            return self._run_once_option_chain(underlying, now=now)
+        except FyersApiError as exc:
+            _LOG.warning(
+                "pipeline cycle degraded for %s: %s",
+                underlying.symbol,
+                exc,
+                exc_info=exc,
+            )
+            return self._degraded_pipeline_result(underlying.symbol)
+
+    def _run_once_option_chain(
+        self,
+        underlying: UnderlyingConfig,
+        *,
+        now: datetime | None = None,
+    ) -> PipelineResult:
         symbol = underlying.symbol
         fyers = self._pipeline_config.fyers
         # None until `data backfill instruments` has run, which keeps tick and
@@ -126,7 +143,10 @@ class DataPipeline:
         status_capture: RawMarketCapture | None = None
         expiry_capture: RawMarketCapture | None = None
         if fyers.fetch_depth:
-            depth_capture = self._feed.fetch_depth(symbol)
+            try:
+                depth_capture = self._feed.fetch_depth(symbol)
+            except FyersApiError as exc:
+                _LOG.warning("depth fetch unavailable for %s: %s", symbol, exc)
         if fyers.fetch_market_status:
             status_capture = self._fetch_market_status()
         if fyers.fetch_expiry_dates:
@@ -136,20 +156,12 @@ class DataPipeline:
                 expiry_capture = None
         bar_captures: list[tuple[str, RawMarketCapture]] = []
         trade_date = chain_capture.received_at.astimezone(_IST).date()
-        range_from = (trade_date - timedelta(days=fyers.bar_lookback_days)).isoformat()
-        range_to = trade_date.isoformat()
-        for resolution in fyers.bar_resolutions:
-            bar_captures.append(
-                (
-                    resolution,
-                    self._feed.fetch_history(
-                        symbol,
-                        resolution=resolution,
-                        range_from=range_from,
-                        range_to=range_to,
-                    ),
-                )
-            )
+        bar_captures = self._fetch_history_captures(
+            symbol,
+            trade_date=trade_date,
+            lookback_days=fyers.bar_lookback_days,
+            resolutions=fyers.bar_resolutions,
+        )
         captures = [chain_capture, quote_capture, *(c for _, c in bar_captures)]
         if depth_capture is not None:
             captures.append(depth_capture)
@@ -240,6 +252,21 @@ class DataPipeline:
                 raw_ref=persist(capture),
             )
             events.append(bar_event)
+        for resolution in fyers.bar_resolutions:
+            if any(item[0] == resolution for item in bar_captures):
+                continue
+            stored_bar = self._stored_bar_event(
+                symbol, resolution=resolution, as_of=instant
+            )
+            if stored_bar is None:
+                continue
+            _LOG.warning(
+                "reusing stored BAR_SNAPSHOT for %s resolution=%s",
+                symbol,
+                resolution,
+            )
+            bar_event = stored_bar
+            events.append(stored_bar)
         for event in events:
             self._store.append_canonical(event)
         if self._catalog is not None:
@@ -306,25 +333,19 @@ class DataPipeline:
         depth_capture: RawMarketCapture | None = None
         status_capture: RawMarketCapture | None = None
         if fyers.fetch_depth:
-            depth_capture = self._feed.fetch_depth(symbol)
+            try:
+                depth_capture = self._feed.fetch_depth(symbol)
+            except FyersApiError as exc:
+                _LOG.warning("depth fetch unavailable for %s: %s", symbol, exc)
         if fyers.fetch_market_status:
             status_capture = self._fetch_market_status()
         trade_date = quote_capture.received_at.astimezone(_IST).date()
-        range_from = (trade_date - timedelta(days=fyers.bar_lookback_days)).isoformat()
-        range_to = trade_date.isoformat()
-        bar_captures: list[tuple[str, RawMarketCapture]] = []
-        for resolution in fyers.bar_resolutions:
-            bar_captures.append(
-                (
-                    resolution,
-                    self._feed.fetch_history(
-                        symbol,
-                        resolution=resolution,
-                        range_from=range_from,
-                        range_to=range_to,
-                    ),
-                )
-            )
+        bar_captures = self._fetch_history_captures(
+            symbol,
+            trade_date=trade_date,
+            lookback_days=fyers.bar_lookback_days,
+            resolutions=fyers.bar_resolutions,
+        )
         captures = [quote_capture, *(capture for _, capture in bar_captures)]
         if depth_capture is not None:
             captures.append(depth_capture)
@@ -394,6 +415,21 @@ class DataPipeline:
                 raw_ref=persist(capture),
             )
             events.append(bar_event)
+        for resolution in fyers.bar_resolutions:
+            if any(item[0] == resolution for item in bar_captures):
+                continue
+            stored_bar = self._stored_bar_event(
+                symbol, resolution=resolution, as_of=instant
+            )
+            if stored_bar is None:
+                continue
+            _LOG.warning(
+                "reusing stored BAR_SNAPSHOT for %s resolution=%s",
+                symbol,
+                resolution,
+            )
+            bar_event = stored_bar
+            events.append(stored_bar)
         for event in events:
             self._store.append_canonical(event)
         if self._catalog is not None:
@@ -453,6 +489,71 @@ class DataPipeline:
                 "market status unavailable: %s; continuing without status", exc
             )
             return None
+
+    @staticmethod
+    def _degraded_pipeline_result(symbol: str) -> PipelineResult:
+        return PipelineResult(
+            symbol=symbol,
+            events=(),
+            snapshot=None,
+            raw_refs=(),
+            macro_news_factor=None,
+        )
+
+    def _fetch_history_captures(
+        self,
+        symbol: str,
+        *,
+        trade_date: date,
+        lookback_days: int,
+        resolutions: tuple[str, ...] | list[str],
+    ) -> list[tuple[str, RawMarketCapture]]:
+        range_from = (trade_date - timedelta(days=lookback_days)).isoformat()
+        range_to = trade_date.isoformat()
+        captures: list[tuple[str, RawMarketCapture]] = []
+        for resolution in resolutions:
+            try:
+                captures.append(
+                    (
+                        resolution,
+                        self._feed.fetch_history(
+                            symbol,
+                            resolution=resolution,
+                            range_from=range_from,
+                            range_to=range_to,
+                        ),
+                    )
+                )
+            except FyersApiError as exc:
+                _LOG.warning(
+                    "history fetch failed for %s resolution=%s: %s; "
+                    "will reuse stored bars if available",
+                    symbol,
+                    resolution,
+                    exc,
+                )
+        return captures
+
+    def _stored_bar_event(
+        self,
+        symbol: str,
+        *,
+        resolution: str,
+        as_of: datetime,
+    ) -> CanonicalMarketEvent | None:
+        lookback = timedelta(milliseconds=max(self._bar_max_age_ms, 1) * 12)
+        stored = self._store.read_canonical(
+            symbol=symbol,
+            start=as_of - lookback,
+            end=as_of,
+        )
+        for event in reversed(stored):
+            if (
+                event.event_type == "BAR_SNAPSHOT"
+                and event.payload.get("resolution") == resolution
+            ):
+                return event
+        return None
 
     def _with_prior_depth(
         self,
