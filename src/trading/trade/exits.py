@@ -8,6 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum, unique
 
+from trading.config.discovery import DiscoveryExitsConfig
 from trading.domain.contracts.intent import ExitTemplate, IntentLeg, TradeIntent
 from trading.domain.contracts.position import (
     ExitPolicy,
@@ -19,6 +20,14 @@ from trading.domain.contracts.terminal_policy import TerminalPolicy
 from trading.domain.enums import ExitScope, ReasonCode, Side, TradeState
 from trading.domain.primitives import Currency, Money, Price, Rounding
 from trading.risk.sizing.credit_spread import is_credit_spread
+from trading.trade.discovery_exits import (
+    apply_discovery_trailing,
+    evaluate_discovery_confirmation,
+    is_premium_scaled_policy,
+    leg_stop_target_breached_mid,
+    structure_net_debit_per_unit,
+    structure_unrealized_pnl_mid,
+)
 
 __all__ = [
     "ExitEngine",
@@ -57,6 +66,9 @@ class ExitEvaluation:
 
 class ExitEngine:
     """Evaluate stop, target, time and monotonic trail rules."""
+
+    def __init__(self, *, discovery_exits: DiscoveryExitsConfig | None = None) -> None:
+        self._discovery_exits = discovery_exits
 
     def evaluate(
         self,
@@ -175,7 +187,15 @@ class ExitEngine:
             return ExitKind.STOP, "strategy P&L stop breached"
         if policy.pnl_target is not None and pnl >= policy.pnl_target:
             return ExitKind.TARGET, "strategy P&L target reached"
-        if ExitEngine._auxiliary_stop_breached(position, intent, policy, leg_snapshots):
+        if is_premium_scaled_policy(policy):
+            leg_kind, leg_detail = ExitEngine._discovery_leg_price_exit(
+                position, intent, leg_snapshots
+            )
+            if leg_kind is not ExitKind.NONE:
+                return leg_kind, leg_detail
+        elif ExitEngine._auxiliary_stop_breached(
+            position, intent, policy, leg_snapshots
+        ):
             return ExitKind.STOP, "auxiliary leg stop price breached"
         return ExitKind.NONE, "no exit condition met"
 
@@ -191,6 +211,10 @@ class ExitEngine:
         policy = position.exit_policy
         if leg_snapshots is None:
             return self._evaluate_missing_snapshots(position, intent, feature)
+        if is_premium_scaled_policy(policy):
+            return self._evaluate_premium_scaled_strategy_pnl(
+                position, intent, leg_snapshots=leg_snapshots, now=now
+            )
         pnl = strategy_unrealized_pnl(position, intent, leg_snapshots)
         if pnl is None:
             return ExitEvaluation(
@@ -209,6 +233,117 @@ class ExitEngine:
                 updated_policy=policy,
             )
         return _no_exit(policy)
+
+    def _evaluate_premium_scaled_strategy_pnl(
+        self,
+        position: PositionState,
+        intent: TradeIntent,
+        *,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+        now: datetime,
+    ) -> ExitEvaluation:
+        """DISCOVERY premium-scaled structure exits on mid with confirmation."""
+        config = self._discovery_exits
+        if config is None:
+            return ExitEvaluation(
+                kind=ExitKind.NONE,
+                reason_code=ReasonCode.PRICE_UNAVAILABLE,
+                detail="discovery exit config unavailable",
+            )
+        policy = position.exit_policy
+        pnl = structure_unrealized_pnl_mid(position, intent, leg_snapshots)
+        if pnl is None:
+            return ExitEvaluation(
+                kind=ExitKind.NONE,
+                reason_code=ReasonCode.PRICE_UNAVAILABLE,
+                detail="strategy P&L mid mark unavailable",
+            )
+        basis = abs(structure_net_debit_per_unit(position.legs))
+        qty = max(leg.quantity_contracts for leg in position.legs)
+        policy = apply_discovery_trailing(
+            policy,
+            pnl=pnl,
+            structure_basis=basis,
+            quantity_contracts=qty,
+            config=config,
+        )
+        if policy.time_exit is not None and now >= policy.time_exit:
+            state = evaluate_discovery_confirmation(
+                policy,
+                exit_kind=ExitKind.TIME.value,
+                detail="scheduled time exit reached",
+            )
+            return ExitEvaluation(
+                kind=ExitKind(state.exit_kind)
+                if state.exit_kind != "NONE"
+                else ExitKind.NONE,
+                reason_code=ReasonCode.OK,
+                detail=state.detail,
+                updated_policy=state.policy,
+            )
+        kind = ExitKind.NONE
+        detail = "no exit condition met"
+        if policy.pnl_stop is not None and pnl <= policy.pnl_stop:
+            kind = ExitKind.STOP
+            detail = "strategy P&L stop breached"
+        elif policy.pnl_target is not None and pnl >= policy.pnl_target:
+            kind = ExitKind.TARGET
+            detail = "strategy P&L target reached"
+        elif policy.pnl_trail_stop is not None and pnl <= policy.pnl_trail_stop:
+            kind = ExitKind.STOP
+            detail = "strategy P&L trail stop breached"
+        else:
+            leg_kind, leg_detail = leg_stop_target_breached_mid(
+                position, intent, leg_snapshots
+            )
+            if leg_kind == "STOP":
+                kind = ExitKind.STOP
+                detail = leg_detail
+            elif leg_kind == "TARGET":
+                kind = ExitKind.TARGET
+                detail = leg_detail
+        state = evaluate_discovery_confirmation(
+            policy,
+            exit_kind=kind.value if kind is not ExitKind.NONE else "NONE",
+            detail=detail,
+        )
+        return ExitEvaluation(
+            kind=ExitKind(state.exit_kind)
+            if state.exit_kind != "NONE"
+            else ExitKind.NONE,
+            reason_code=ReasonCode.OK,
+            detail=state.detail,
+            updated_policy=state.policy,
+        )
+
+    @staticmethod
+    def _discovery_leg_price_exit(
+        position: PositionState,
+        intent: TradeIntent,
+        leg_snapshots: Mapping[str, FeatureSnapshot],
+    ) -> tuple[ExitKind, str]:
+        """Check each open leg's own stop/target; never a copied strategy stop."""
+        leg_by_id = {leg.leg_id: leg for leg in position.legs}
+        for intent_leg in intent.legs:
+            position_leg = leg_by_id.get(intent_leg.leg_id)
+            if position_leg is None:
+                continue
+            leg_snap = _snapshot_for_leg(intent_leg, leg_snapshots)
+            if leg_snap is None:
+                continue
+            monitor = _monitor_price(leg_snap, position_leg.side)
+            if monitor is None:
+                continue
+            stop = position_leg.current_stop_price
+            if stop is not None and _stop_hit(position_leg.side, monitor, stop):
+                return ExitKind.STOP, f"leg {position_leg.leg_id} stop price breached"
+            target = position_leg.current_target_price
+            if target is not None and _target_hit(position_leg.side, monitor, target):
+                return (
+                    ExitKind.TARGET,
+                    f"leg {position_leg.leg_id} target price reached",
+                )
+        return ExitKind.NONE, "no exit condition met"
 
     @staticmethod
     def _auxiliary_stop_breached(

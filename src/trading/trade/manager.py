@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
+from trading.config.discovery import DiscoveryConfig
 from trading.domain.clock import Clock
 from trading.domain.contracts.common import ContractRef
 from trading.domain.contracts.intent import IntentLeg, TradeIntent
@@ -17,14 +18,27 @@ from trading.domain.contracts.position import (
     PositionState,
 )
 from trading.domain.contracts.snapshot import FeatureSnapshot
-from trading.domain.enums import ExitScope, OrderState, Side, TradeState, Trigger
+from trading.domain.enums import (
+    EntryProfile,
+    ExitScope,
+    OrderState,
+    Side,
+    TradeState,
+    Trigger,
+)
 from trading.domain.ids import IdFactory
-from trading.domain.primitives import Price
+from trading.domain.primitives import Money, Price
 from trading.domain.state import TRADE_MACHINE, IllegalTransitionError
 from trading.risk.reservation import CapitalReservationService
 from trading.risk.sizing.credit_spread import is_credit_spread
 from trading.risk.sizing.debit_spread import is_debit_spread
 from trading.risk.sizing.iron_condor import is_iron_condor
+from trading.trade.discovery_exits import (
+    apply_discovery_leg_exit_prices,
+    build_discovery_exit_policy,
+    compute_leg_stop_price,
+    compute_leg_target_price,
+)
 from trading.trade.exits import (
     ExitEngine,
     ExitEvaluation,
@@ -67,11 +81,19 @@ class TradeManager:
         id_factory: IdFactory,
         reservation_service: CapitalReservationService | None = None,
         exit_engine: ExitEngine | None = None,
+        discovery_config: DiscoveryConfig | None = None,
+        entry_profile: EntryProfile = EntryProfile.STRICT,
     ) -> None:
         self._clock = clock
         self._ids = id_factory
         self._reservations = reservation_service
-        self._exit_engine = exit_engine or ExitEngine()
+        self._discovery_config = discovery_config
+        self._entry_profile = entry_profile
+        self._exit_engine = exit_engine or ExitEngine(
+            discovery_exits=(
+                discovery_config.exits if discovery_config is not None else None
+            )
+        )
         self._pending: dict[str, _PendingEntry] = {}
         self._positions: dict[str, PositionState] = {}
 
@@ -476,15 +498,13 @@ class TradeManager:
             else self._ids.new_id("EXIT-POL")
         )
         entry_price = _planned_entry_price(self._pending.get(trade_id), intent)
-        policy = _build_trade_exit_policy(
-            intent,
-            trade_id=trade_id,
-            policy_id=policy_id,
-            entry_price=entry_price,
-            initialized_at=now,
-            quantity_contracts=event.filled_quantity,
-        )
         existing_legs = position.legs if position is not None else ()
+        leg_stop, leg_target = _leg_exit_prices(
+            leg,
+            fill_price,
+            discovery_config=self._discovery_config,
+            entry_profile=self._entry_profile,
+        )
         legs = _upsert_leg(
             existing_legs,
             leg_id=leg.leg_id,
@@ -492,7 +512,31 @@ class TradeManager:
             side=leg.side,
             quantity_contracts=event.filled_quantity,
             average_entry_price=fill_price,
-            current_stop_price=policy.stop_price,
+            current_stop_price=leg_stop,
+            current_target_price=leg_target,
+        )
+        pending = self._pending.get(trade_id)
+        entry_complete = pending is not None and _plan_filled_by_legs(
+            legs, pending.plan
+        )
+        if (
+            entry_complete
+            and self._entry_profile is EntryProfile.DISCOVERY
+            and self._discovery_config is not None
+        ):
+            legs = apply_discovery_leg_exit_prices(legs, self._discovery_config.exits)
+        policy = _build_trade_exit_policy(
+            intent,
+            trade_id=trade_id,
+            policy_id=policy_id,
+            entry_price=entry_price,
+            initialized_at=now,
+            quantity_contracts=event.filled_quantity,
+            legs=legs,
+            discovery_config=self._discovery_config,
+            entry_profile=self._entry_profile,
+            max_loss=intent.estimated_max_loss,
+            entry_complete=entry_complete,
         )
         base = position or self._create_opening(trade_id, intent, now=now)
         updated = base.model_copy(
@@ -581,9 +625,31 @@ def _build_trade_exit_policy(
     entry_price: Price,
     initialized_at: datetime,
     quantity_contracts: int = 1,
+    legs: tuple[PositionLegState, ...] = (),
+    discovery_config: DiscoveryConfig | None = None,
+    entry_profile: EntryProfile = EntryProfile.STRICT,
+    max_loss: Money | None = None,
+    entry_complete: bool = True,
 ) -> ExitPolicy:
     scope = _exit_scope(intent)
     watched = monitor_leg(intent)
+    if (
+        entry_profile is EntryProfile.DISCOVERY
+        and discovery_config is not None
+        and entry_complete
+        and legs
+    ):
+        return build_discovery_exit_policy(
+            intent,
+            legs,
+            intent.exit_template,
+            trade_id=trade_id,
+            policy_id=policy_id,
+            initialized_at=initialized_at,
+            config=discovery_config.exits,
+            scope=ExitScope.STRATEGY_PNL,
+            max_loss=max_loss,
+        )
     return build_exit_policy(
         intent.exit_template,
         trade_id=trade_id,
@@ -594,6 +660,34 @@ def _build_trade_exit_policy(
         quantity_contracts=quantity_contracts,
         monitor_side=watched.side,
     )
+
+
+def _leg_exit_prices(
+    leg: IntentLeg,
+    fill_price: Price,
+    *,
+    discovery_config: DiscoveryConfig | None,
+    entry_profile: EntryProfile,
+) -> tuple[Price | None, Price | None]:
+    if entry_profile is not EntryProfile.DISCOVERY or discovery_config is None:
+        return None, None
+    config = discovery_config.exits
+    stop = compute_leg_stop_price(entry_price=fill_price, side=leg.side, config=config)
+    target = compute_leg_target_price(
+        entry_price=fill_price, side=leg.side, config=config
+    )
+    return stop, target
+
+
+def _plan_filled_by_legs(legs: tuple[PositionLegState, ...], plan: OrderPlan) -> bool:
+    filled_by_leg = {leg.leg_id: leg for leg in legs}
+    for order in plan.orders:
+        filled = filled_by_leg.get(order.leg_id)
+        if filled is None:
+            return False
+        if filled.quantity_contracts != order.command.quantity_contracts:
+            return False
+    return True
 
 
 def _intent_leg_for_event(intent: TradeIntent, event: OrderEvent) -> IntentLeg:
@@ -613,6 +707,7 @@ def _upsert_leg(
     quantity_contracts: int,
     average_entry_price: Price,
     current_stop_price: Price | None = None,
+    current_target_price: Price | None = None,
 ) -> tuple[PositionLegState, ...]:
     updated = PositionLegState(
         leg_id=leg_id,
@@ -621,6 +716,7 @@ def _upsert_leg(
         quantity_contracts=quantity_contracts,
         average_entry_price=average_entry_price,
         current_stop_price=current_stop_price,
+        current_target_price=current_target_price,
     )
     kept = tuple(leg for leg in legs if leg.leg_id != leg_id)
     return (*kept, updated)

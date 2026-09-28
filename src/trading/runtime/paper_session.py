@@ -40,6 +40,7 @@ from trading.data.normalize import (
     normalize_fyers_depth,
     normalize_fyers_option_chain,
     normalize_fyers_quotes,
+    normalize_fyers_quotes_batch,
 )
 from trading.data.pipeline import build_pipeline
 from trading.data.prices import depth_top_sizes, observed_book_sizes, optional_int_qty
@@ -916,6 +917,8 @@ def run_paper_session(
             _protection_rest_fetch(protection_feed),
             poll_seconds=session_cfg.protection.rest_poll_seconds,
         )
+        if discovery_cfg is not None:
+            runner.set_rest_quote_fetch(_protection_rest_fetch(protection_feed))
         ws_monitor = None
         if session_cfg.protection.ws_enabled:
             ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
@@ -1065,35 +1068,33 @@ def _quotes_for_symbols(
     """REST protection quotes when only trading symbols are known."""
     if not symbols:
         return {}
-    event = normalize_fyers_quotes(
+    events = normalize_fyers_quotes_batch(
         capture,
-        symbol=symbols[0],
+        symbols=symbols,
         normalization_version="1",
         raw_ref="paper://protection",
     )
-    rows = event.payload.get("quotes", [])
-    if not isinstance(rows, list):
-        return {}
     tick = TickSize.of(Decimal("0.05"))
     quotes: dict[str, MarketQuote] = {}
-    for row in rows:
-        if not isinstance(row, dict):
+    for symbol in symbols:
+        event = events.get(symbol)
+        if event is None:
             continue
-        symbol = row.get("symbol")
-        if symbol not in symbols:
+        rows = event.payload.get("quotes", [])
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
             continue
+        row = rows[0]
         last = row.get("lp", row.get("ltp"))
         bid = row.get("bid")
         ask = row.get("ask")
-        if last is None:
+        if last is None or bid is None or ask is None:
             continue
         quote = MarketQuote(
             last=Price.snap(str(last), tick),
-            bid=Price.snap(str(bid), tick) if bid else None,
-            ask=Price.snap(str(ask), tick) if ask else None,
+            bid=Price.snap(str(bid), tick),
+            ask=Price.snap(str(ask), tick),
         )
-        if quote.bid is not None and quote.ask is not None:
-            quotes[str(symbol)] = quote
+        quotes[symbol] = quote
     return quotes
 
 

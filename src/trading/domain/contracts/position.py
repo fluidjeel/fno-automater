@@ -40,6 +40,13 @@ class ExitPolicy(VersionedModel):
     # ADESK-C2: frozen at entry; None = legacy flatten-only behaviour.
     terminal_policy: TerminalPolicy | None = None
     initialized_at: UtcDatetime
+    # DISC-A21: premium-scaled DISCOVERY exits frozen at entry.
+    premium_scaled: StrictBool = False
+    strategy_pnl_hwm: Money | None = None
+    pnl_trail_stop: Money | None = None
+    exit_confirm_count: StrictInt = 0
+    exit_confirm_required: StrictInt = Field(default=1, ge=1)
+    pending_exit_kind: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def _stops_never_widen(self) -> ExitPolicy:
@@ -48,6 +55,14 @@ class ExitPolicy(VersionedModel):
                 f"current stop distance {self.current_stop_distance_ticks} exceeds "
                 f"initial {self.initial_stop_distance_ticks}; stops may only tighten "
                 "(invariant 17)"
+            )
+        if (
+            self.pnl_trail_stop is not None
+            and self.pnl_stop is not None
+            and self.pnl_trail_stop.amount < self.pnl_stop.amount
+        ):
+            raise ValueError(
+                "pnl_trail_stop may not sit below the initial pnl_stop (invariant 17)"
             )
         return self
 
@@ -61,6 +76,7 @@ class PositionLegState(StrictModel):
     quantity_contracts: StrictInt = Field(gt=0)
     average_entry_price: Price
     current_stop_price: Price | None = None
+    current_target_price: Price | None = None
 
 
 class PositionState(VersionedModel):
