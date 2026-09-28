@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
 from decimal import Decimal
@@ -108,7 +108,7 @@ from trading.runtime.four_mode_producers import (
 )
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.m2_chain import following_week_epoch
+from trading.runtime.m2_chain import following_week_epoch, monthly_window_epoch
 from trading.runtime.notify import (
     format_eod_report,
     format_lifecycle_alert,
@@ -125,6 +125,7 @@ from trading.runtime.protection import (
     ProtectionCoordinator,
     build_protection_coordinator,
 )
+from trading.runtime.rest_quote_monitor import RestQuoteMonitor, RestQuoteRateLimitError
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.runtime.session_heartbeat import write_session_heartbeat
 from trading.runtime.session_routing import ProducedFamilyRequest, SessionRoutingProfile
@@ -903,6 +904,18 @@ def run_paper_session(
             )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
+        protection_feed = FyersMarketFeed(
+            settings,
+            clock,
+            strike_count=pipeline_cfg.fyers.option_chain_strike_count,
+            chain_greeks=pipeline_cfg.fyers.chain_greeks,
+            history_oi_flag=pipeline_cfg.fyers.history_oi_flag,
+        )
+        rest_monitor = RestQuoteMonitor(
+            clock,
+            _protection_rest_fetch(protection_feed),
+            poll_seconds=session_cfg.protection.rest_poll_seconds,
+        )
         ws_monitor = None
         if session_cfg.protection.ws_enabled:
             ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)
@@ -911,6 +924,7 @@ def run_paper_session(
             clock=clock,
             config=session_cfg.protection,
             repo_root=repo_root,
+            rest_fetch=rest_monitor,
             ws=ws_monitor,
         )
     session = PaperSession(
@@ -1081,6 +1095,25 @@ def _quotes_for_symbols(
         if quote.bid is not None and quote.ask is not None:
             quotes[str(symbol)] = quote
     return quotes
+
+
+def _protection_rest_fetch(
+    feed: FyersMarketFeed,
+) -> Callable[[tuple[str, ...]], dict[str, MarketQuote]]:
+    """Batch REST quotes for held-leg symbols; raise on provider 429."""
+
+    def fetch(symbols: tuple[str, ...]) -> dict[str, MarketQuote]:
+        if not symbols:
+            return {}
+        try:
+            capture = feed.fetch_quotes(symbols)
+        except FyersApiError as exc:
+            if "429" in str(exc):
+                raise RestQuoteRateLimitError(str(exc)) from exc
+            return {}
+        return _quotes_for_symbols(capture, symbols)
+
+    return fetch
 
 
 def _live_request_builder(
@@ -1384,21 +1417,28 @@ def _four_mode_request_builder(
     cas_session_date: date | None = None
     m1_holder: dict[str, object] = {"event": None, "keep": False}
     feed_errors: list[str] = []
+    monthly_chain_cache: _MonthlyChainCache | None = None
 
     def build(
         now: datetime,
     ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
-        nonlocal cas_attempts_today, cas_session_date
+        nonlocal cas_attempts_today, cas_session_date, monthly_chain_cache
         session_day = now.astimezone(_IST).date()
         if cas_session_date != session_day:
             cas_session_date = session_day
             cas_attempts_today = 0
         near_strikes = session_cfg.option_strikes_each_side
         following_strikes = _FOLLOWING_WEEK_STRIKES
+        monthly_strikes = _FOLLOWING_WEEK_STRIKES
+        monthly_cache_ttl = _DEFAULT_MONTHLY_CACHE_TTL
         if discovery_config is not None:
             near_strikes = discovery_config.selection.near_strikes_each_side
             following_strikes = (
                 discovery_config.selection.following_week_strikes_each_side
+            )
+            monthly_strikes = discovery_config.selection.monthly_strikes()
+            monthly_cache_ttl = (
+                discovery_config.selection.monthly_chain_cache_ttl_seconds
             )
         event_risk = collect_event_risk(collector, news_config, as_of=now)
         snapshots: dict[str, FeatureSnapshot] = {}
@@ -1475,6 +1515,26 @@ def _four_mode_request_builder(
             )
             if fw_error is not None:
                 feed_errors.append(fw_error)
+            option_candidates, option_specs, mc_error, monthly_chain_cache = (
+                _merge_monthly_chain(
+                    option_candidates,
+                    option_specs,
+                    chain=chain,
+                    catalog=catalog,
+                    underlying=index_underlying,
+                    as_of=now,
+                    zone=zone,
+                    feed=feed,
+                    pipeline_symbol=underlying_cfg.symbol,
+                    monthly_strikes=monthly_strikes,
+                    monthly_dte_min=identification.contracts.monthly_dte_min,
+                    monthly_dte_max=identification.contracts.monthly_dte_max,
+                    cache_ttl_seconds=monthly_cache_ttl,
+                    cache=monthly_chain_cache,
+                )
+            )
+            if mc_error is not None:
+                feed_errors.append(mc_error)
             instruments.update(option_specs)
             for candidate in option_candidates:
                 snapshots[candidate.contract.symbol] = candidate
@@ -1695,6 +1755,17 @@ def _vix_history(
 
 
 _FOLLOWING_WEEK_STRIKES = 8
+_DEFAULT_MONTHLY_CACHE_TTL = 90
+
+
+@dataclass(frozen=True, slots=True)
+class _MonthlyChainCache:
+    """Cached monthly-chain fetch to avoid duplicate Fyers REST calls."""
+
+    fetched_at: float
+    epoch: int
+    candidates: tuple[FeatureSnapshot, ...]
+    specs: dict[str, InstrumentSpec]
 
 
 def _merge_following_week_chain(
@@ -1758,3 +1829,98 @@ def _merge_following_week_chain(
     merged_specs = dict(option_specs)
     merged_specs.update(extra_specs)
     return option_candidates + tuple(marked), merged_specs, None
+
+
+def _merge_monthly_chain(
+    option_candidates: tuple[FeatureSnapshot, ...],
+    option_specs: dict[str, InstrumentSpec],
+    *,
+    chain: CanonicalMarketEvent,
+    catalog: InstrumentSpecStore,
+    underlying: FeatureSnapshot,
+    as_of: datetime,
+    zone: ZoneInfo,
+    feed: FyersMarketFeed,
+    pipeline_symbol: str,
+    monthly_strikes: int = _FOLLOWING_WEEK_STRIKES,
+    monthly_dte_min: int,
+    monthly_dte_max: int,
+    cache_ttl_seconds: int = _DEFAULT_MONTHLY_CACHE_TTL,
+    cache: _MonthlyChainCache | None = None,
+) -> tuple[
+    tuple[FeatureSnapshot, ...],
+    dict[str, InstrumentSpec],
+    str | None,
+    _MonthlyChainCache | None,
+]:
+    """Add the monthly-window chain when a 20-35 DTE expiry is listed but unloaded."""
+    already = {
+        item.contract.expiry
+        for item in option_candidates
+        if item.contract.expiry is not None
+    }
+    session_day = as_of.astimezone(zone).date()
+    epoch = monthly_window_epoch(
+        chain,
+        as_of=session_day,
+        calendar=get_calendar_port(),
+        already_listed=already,
+        monthly_dte_min=monthly_dte_min,
+        monthly_dte_max=monthly_dte_max,
+    )
+    if epoch is None:
+        return option_candidates, option_specs, None, cache
+    now_mono = time.monotonic()
+    if (
+        cache is not None
+        and cache.epoch == epoch
+        and now_mono - cache.fetched_at < cache_ttl_seconds
+    ):
+        merged_specs = dict(option_specs)
+        merged_specs.update(cache.specs)
+        return option_candidates + cache.candidates, merged_specs, None, cache
+    try:
+        capture = feed.fetch_option_chain(pipeline_symbol, expiry_epoch=epoch)
+    except (FyersApiError, OSError) as exc:
+        detail = (
+            f"monthly chain fetch failed for {pipeline_symbol} "
+            f"expiry_epoch={epoch}: {exc}"
+        )
+        logging.getLogger(__name__).warning(
+            "%s; near and following-week chains retained",
+            detail,
+        )
+        return option_candidates, option_specs, detail, cache
+    event = normalize_fyers_option_chain(
+        capture,
+        symbol=pipeline_symbol,
+        normalization_version="1",
+        raw_ref="m2-monthly-window",
+    )
+    extra, extra_specs = build_option_candidates(
+        event,
+        catalog,
+        underlying=underlying,
+        as_of=as_of,
+        zone=zone,
+        strikes_each_side=monthly_strikes,
+    )
+    marked: list[FeatureSnapshot] = []
+    for snap in extra:
+        features = dict(snap.features)
+        features["monthly_chain"] = Decimal(1)
+        marked.append(snap.model_copy(update={"features": features}))
+    merged_specs = dict(option_specs)
+    merged_specs.update(extra_specs)
+    updated_cache = _MonthlyChainCache(
+        fetched_at=now_mono,
+        epoch=epoch,
+        candidates=tuple(marked),
+        specs=extra_specs,
+    )
+    return (
+        option_candidates + tuple(marked),
+        merged_specs,
+        None,
+        updated_cache,
+    )

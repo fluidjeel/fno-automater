@@ -1,4 +1,4 @@
-"""Following-week NIFTY chain selection from provider expiry rows."""
+"""Following-week and monthly-window NIFTY chain selection from provider expiry rows."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from decimal import Decimal
 from trading.data.events import CanonicalMarketEvent
 from trading.identification.calendar import TradingCalendarPort
 
-__all__ = ["expiry_epochs", "following_week_epoch"]
+__all__ = ["expiry_epochs", "following_week_epoch", "monthly_window_epoch"]
 
 
 _DATE_PARTS = 3
@@ -60,6 +60,59 @@ def following_week_epoch(
             continue
         return epochs.get(expiry)
     return None
+
+
+def monthly_window_epoch(
+    chain: CanonicalMarketEvent,
+    *,
+    as_of: date,
+    calendar: TradingCalendarPort,
+    already_listed: set[date],
+    monthly_dte_min: int,
+    monthly_dte_max: int,
+) -> int | None:
+    """Epoch of the listed monthly-window expiry not yet loaded in the session."""
+    epochs = expiry_epochs(chain.payload)
+    if not epochs:
+        return None
+    last_listed_by_month = _last_listed_expiry_by_month(epochs)
+    all_in_window = [
+        expiry
+        for expiry in sorted(epochs)
+        if monthly_dte_min <= (expiry - as_of).days <= monthly_dte_max
+    ]
+    if not all_in_window:
+        return None
+    midpoint = (monthly_dte_min + monthly_dte_max) / 2
+    monthly_preferred = [
+        expiry
+        for expiry in all_in_window
+        if expiry == last_listed_by_month[(expiry.year, expiry.month)]
+        and calendar.is_monthly_contract(expiry)
+    ]
+    selected = _pick_nearest_dte(
+        monthly_preferred or all_in_window, as_of=as_of, midpoint=midpoint
+    )
+    if selected in already_listed:
+        return None
+    return epochs.get(selected)
+
+
+def _last_listed_expiry_by_month(
+    epochs: dict[date, int],
+) -> dict[tuple[int, int], date]:
+    last_by_month: dict[tuple[int, int], date] = {}
+    for expiry in epochs:
+        key = (expiry.year, expiry.month)
+        if key not in last_by_month or expiry > last_by_month[key]:
+            last_by_month[key] = expiry
+    return last_by_month
+
+
+def _pick_nearest_dte(candidates: list[date], *, as_of: date, midpoint: float) -> date:
+    return min(
+        candidates, key=lambda expiry: (abs((expiry - as_of).days - midpoint), expiry)
+    )
 
 
 def _parse_date(value: object) -> date | None:
