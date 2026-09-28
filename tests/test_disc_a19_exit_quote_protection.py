@@ -329,7 +329,20 @@ def _open_discovery_long(store: TradingStore, clock: FrozenClock) -> PaperRunner
     return runner
 
 
+def _first_rejected_order_id(store: TradingStore) -> str:
+    for stored in store.read_events():
+        if stored.event_type is not TradingEventType.ORDER_EVENT:
+            continue
+        event = stored.deserialize()
+        if not isinstance(event, OrderEvent):
+            continue
+        if event.state is OrderState.REJECTED:
+            return event.identity.internal_order_id
+    raise AssertionError("expected a rejected ORDER_EVENT in the store")
+
+
 def _reject_exit_without_quotes(
+    monkeypatch: pytest.MonkeyPatch,
     runner: PaperRunner,
     trade_id: str,
     snapshots: dict[str, FeatureSnapshot],
@@ -339,12 +352,8 @@ def _reject_exit_without_quotes(
     assert pending is not None and pending.state is TradeState.EXIT_PENDING
     intent, decision = runner.open_book[trade_id]
     runner.broker._quotes.clear()
-    publish = runner._publish_exit_quotes
-    runner._publish_exit_quotes = lambda *args, **kwargs: None
-    try:
-        events = runner._submit_exit(intent, decision, pending, snapshots)
-    finally:
-        runner._publish_exit_quotes = publish
+    monkeypatch.setattr(runner, "_publish_exit_quotes", lambda *_args, **_kwargs: None)
+    events = runner._submit_exit(intent, decision, pending, snapshots)
     assert events
     assert all(event.state is OrderState.REJECTED for event in events)
     assert all(event.reason_code is ReasonCode.PRICE_UNAVAILABLE for event in events)
@@ -399,7 +408,11 @@ def _filled_exit_events(store: TradingStore, trade_id: str) -> tuple[OrderEvent,
 
 class TestOpsRetryStuckPaperExits:
     def test_ops_retries_exit_pending_with_rejected_orders(
-        self, store: TradingStore, clock: FrozenClock, tmp_path: Path
+        self,
+        store: TradingStore,
+        clock: FrozenClock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """EXIT_PENDING with rejected exit leg closes at operator quotes."""
         runner = _open_discovery_long(store, clock)
@@ -419,13 +432,10 @@ class TestOpsRetryStuckPaperExits:
             opened.legs[0].contract,
             market=f.quote(bid=f.price("1.00"), ask=f.price("1.05")),
         )
-        _reject_exit_without_quotes(runner, opened.trade_id, {symbol: snap})
-        rejected_id = next(
-            stored.deserialize().identity.internal_order_id
-            for stored in store.read_events()
-            if stored.event_type is TradingEventType.ORDER_EVENT
-            and stored.deserialize().state is OrderState.REJECTED
+        _reject_exit_without_quotes(
+            monkeypatch, runner, opened.trade_id, {symbol: snap}
         )
+        rejected_id = _first_rejected_order_id(store)
         stuck_record = store.get_position_lifecycle(opened.trade_id)
         assert stuck_record is not None
         pending_position = stuck_record.position.model_copy(
@@ -487,7 +497,11 @@ class TestOpsRetryStuckPaperExits:
         reopened.close()
 
     def test_ops_retries_open_trade_after_rejected_exit(
-        self, store: TradingStore, clock: FrozenClock, tmp_path: Path
+        self,
+        store: TradingStore,
+        clock: FrozenClock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """OPEN trade with a prior rejected exit closes at operator quotes."""
         runner = _open_discovery_long(store, clock)
@@ -507,22 +521,19 @@ class TestOpsRetryStuckPaperExits:
             opened.legs[0].contract,
             market=f.quote(bid=f.price("2.00"), ask=f.price("2.05")),
         )
-        _reject_exit_without_quotes(runner, opened.trade_id, {symbol: snap})
-        rejected_id = next(
-            stored.deserialize().identity.internal_order_id
-            for stored in store.read_events()
-            if stored.event_type is TradingEventType.ORDER_EVENT
-            and stored.deserialize().state is OrderState.REJECTED
+        _reject_exit_without_quotes(
+            monkeypatch, runner, opened.trade_id, {symbol: snap}
         )
+        rejected_id = _first_rejected_order_id(store)
         stuck_record = store.get_position_lifecycle(opened.trade_id)
         assert stuck_record is not None
         store.upsert_position_lifecycle(
             stuck_record.model_copy(update={"exit_order_ids": (rejected_id,)}),
             event_id="PLC-OPEN-REJECT",
         )
-        assert (
-            runner.trade_manager.get_position(opened.trade_id).state is TradeState.OPEN
-        )
+        reopened_position = runner.trade_manager.get_position(opened.trade_id)
+        assert reopened_position is not None
+        assert reopened_position.state is TradeState.OPEN
 
         session_root, quotes_path = _persist_repo_for_retry(
             runner,
@@ -552,7 +563,11 @@ class TestOpsRetryStuckPaperExits:
         reopened.close()
 
     def test_ops_retries_strangle_exit_pending_first_leg_rejected(
-        self, store: TradingStore, clock: FrozenClock, tmp_path: Path
+        self,
+        store: TradingStore,
+        clock: FrozenClock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Strangle EXIT_PENDING with one rejected leg closes both at quotes."""
         put_contract = f.option_contract(
@@ -654,16 +669,12 @@ class TestOpsRetryStuckPaperExits:
             call_contract, market=f.quote(bid=f.price("4.00"), ask=f.price("4.05"))
         )
         _reject_exit_without_quotes(
+            monkeypatch,
             runner,
             position.trade_id,
             {put_contract.symbol: put_snap, call_contract.symbol: call_snap},
         )
-        rejected_id = next(
-            stored.deserialize().identity.internal_order_id
-            for stored in store.read_events()
-            if stored.event_type is TradingEventType.ORDER_EVENT
-            and stored.deserialize().state is OrderState.REJECTED
-        )
+        rejected_id = _first_rejected_order_id(store)
         stuck_record = store.get_position_lifecycle(position.trade_id)
         assert stuck_record is not None
         pending_position = stuck_record.position.model_copy(
