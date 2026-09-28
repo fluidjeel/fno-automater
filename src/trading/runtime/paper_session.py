@@ -917,6 +917,8 @@ def run_paper_session(
             _protection_rest_fetch(protection_feed),
             poll_seconds=session_cfg.protection.rest_poll_seconds,
         )
+        if discovery_cfg is not None:
+            runner.set_rest_quote_fetch(_protection_rest_fetch(protection_feed))
         ws_monitor = None
         if session_cfg.protection.ws_enabled:
             ws_monitor = FyersWsQuoteMonitor(settings, clock, repo_root)

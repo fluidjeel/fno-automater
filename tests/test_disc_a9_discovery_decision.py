@@ -258,13 +258,14 @@ def test_exit_record_names_rule_prices_and_pnl(tmp_path: Path) -> None:
         update={
             "market": option.market.model_copy(
                 update={
-                    "last": f.price("40.00"),
-                    "bid": f.price("39.95"),
-                    "ask": f.price("40.05"),
+                    "last": f.price("32.50"),
+                    "bid": f.price("32.45"),
+                    "ask": f.price("32.55"),
                 }
             )
         }
     )
+    runner.manage_exits({option.contract.symbol: crashed})
     runner.manage_exits({option.contract.symbol: crashed})
     rows = _decision_rows(store)
     assert rows

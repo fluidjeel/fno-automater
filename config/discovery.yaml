@@ -88,3 +88,12 @@ selection:            # strict first, fallback only if nothing passes strict
 direction:
   fallback_trend_threshold: "0.30"   # used when strict trend is not UP/DOWN
   fallback_min_bars: 14
+exits:
+  leg_stop_fraction: "0.35"
+  leg_target_fraction: "0.80"
+  short_leg_stop_multiple: "2.0"
+  short_leg_target_fraction: "0.50"
+  trail_activate_fraction: "0.30"
+  trail_giveback_fraction: "0.50"
+  confirm_quotes: 2
+  rest_batch_size: 50
