@@ -53,8 +53,12 @@ cas_event_driven:
   prefer_delta_min: "0.15"
   prefer_delta_max: "0.40"
   measured_latency_path: data/paper/m1_latency_report.json
-
+# Interim 2026-09-28: one Fyers data WebSocket per account; fno-data-tick owns it.
+# Protection uses batched REST /quotes (<=20 calls/min) until DISC-A22 shared
+# data-socket hub lands. Do not re-enable without the hub.
 # Session startup takes ~60s before the first protection heartbeat; the
 # minute watchdog restarted it in a loop at the 30s default (2026-09-28).
 protection:
+  ws_enabled: false
+  rest_poll_seconds: 3
   watchdog_max_silence_seconds: 180
