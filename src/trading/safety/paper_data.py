@@ -71,7 +71,14 @@ def assess_paper_data(
             )
             continue
         if spec.tier is PaperDataTier.P0:
-            results.append(_assess_p0(spec, inputs))
+            results.append(
+                _assess_p0(
+                    spec,
+                    inputs,
+                    entry_profile=entry_profile,
+                    discovery_config=discovery_config,
+                )
+            )
             continue
         if spec.field in p1_present:
             results.append(
@@ -148,10 +155,19 @@ def strict_would_block_p0(
 
 
 def _assess_p0(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> PaperDataFieldResult:
     checker = _P0_CHECKERS[spec.field]
-    presence, reason, detail = checker(spec, inputs)
+    presence, reason, detail = checker(
+        spec,
+        inputs,
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
+    )
     return PaperDataFieldResult(
         field=spec.field,
         tier=PaperDataTier.P0,
@@ -184,7 +200,11 @@ def _zero(
 
 
 def _check_ltp(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
     if not inputs.snapshots:
         return _missing(ReasonCode.PRICE_UNAVAILABLE, "no_snapshots")
@@ -194,11 +214,21 @@ def _check_ltp(
             return _missing(ReasonCode.PRICE_UNAVAILABLE, snapshot.snapshot_id)
         if spec.zero_invalid and last.value <= 0:
             return _zero(ReasonCode.PRICE_UNAVAILABLE, snapshot.snapshot_id)
-    return _check_snapshot_age(spec, inputs.snapshots, inputs.now)
+    return _check_snapshot_age(
+        spec,
+        inputs.snapshots,
+        inputs.now,
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
+    )
 
 
 def _check_bid_ask(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
     if not inputs.snapshots:
         return _missing(ReasonCode.PRICE_UNAVAILABLE, "no_snapshots")
@@ -208,11 +238,21 @@ def _check_bid_ask(
             return _missing(ReasonCode.PRICE_UNAVAILABLE, snapshot.snapshot_id)
         if spec.zero_invalid and (bid.value <= 0 or ask.value <= 0):
             return _zero(ReasonCode.PRICE_UNAVAILABLE, snapshot.snapshot_id)
-    return _check_snapshot_age(spec, inputs.snapshots, inputs.now)
+    return _check_snapshot_age(
+        spec,
+        inputs.snapshots,
+        inputs.now,
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
+    )
 
 
 def _check_freshness(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
     if not inputs.snapshots:
         return _missing(ReasonCode.DATA_STALE, "no_snapshots")
@@ -221,12 +261,23 @@ def _check_freshness(
             return _missing(ReasonCode.SNAPSHOT_MISMATCH, snapshot.snapshot_id)
         if snapshot.quality.state.blocks_new_exposure:
             return _stale(snapshot.snapshot_id)
-    return _check_snapshot_age(spec, inputs.snapshots, inputs.now)
+    return _check_snapshot_age(
+        spec,
+        inputs.snapshots,
+        inputs.now,
+        entry_profile=entry_profile,
+        discovery_config=discovery_config,
+    )
 
 
 def _check_volume(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
+    del entry_profile, discovery_config
     if not inputs.snapshots:
         return _missing(ReasonCode.DATA_GAP, "no_snapshots")
     for snapshot in inputs.snapshots:
@@ -239,8 +290,13 @@ def _check_volume(
 
 
 def _check_open_interest(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
+    del entry_profile, discovery_config
     derivatives = _derivative_snapshots(inputs.snapshots)
     if not derivatives:
         return _missing(ReasonCode.DEPTH_INSUFFICIENT, "no_derivative_snapshots")
@@ -257,9 +313,13 @@ def _check_open_interest(
 
 
 def _check_metadata(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
-    del spec
+    del spec, entry_profile, discovery_config
     if not inputs.snapshots:
         return _missing(ReasonCode.INSTRUMENT_UNKNOWN, "no_snapshots")
     for snapshot in inputs.snapshots:
@@ -283,8 +343,13 @@ def _check_metadata(
 
 
 def _check_margin(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
+    del entry_profile, discovery_config
     if inputs.margin_confirmed is None or inputs.margin_required is None:
         return _missing(ReasonCode.MARGIN_INSUFFICIENT, "margin_not_previewed")
     if not inputs.margin_confirmed:
@@ -295,9 +360,13 @@ def _check_margin(
 
 
 def _check_broker(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
-    del spec
+    del spec, entry_profile, discovery_config
     if inputs.portfolio is None:
         return _missing(ReasonCode.RECONCILIATION_UNRESOLVED, "portfolio_missing")
     if not inputs.broker_state_ok:
@@ -306,8 +375,13 @@ def _check_broker(
 
 
 def _check_event(
-    spec: PaperDataFieldSpec, inputs: PaperDataInputs
+    spec: PaperDataFieldSpec,
+    inputs: PaperDataInputs,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
+    del entry_profile, discovery_config
     event = inputs.event_risk
     if event is None:
         return _missing(ReasonCode.EVENT_BLACKOUT, "event_state_missing")
@@ -328,13 +402,28 @@ def _check_snapshot_age(
     spec: PaperDataFieldSpec,
     snapshots: Sequence[FeatureSnapshot],
     now: datetime,
+    *,
+    entry_profile: EntryProfile,
+    discovery_config: DiscoveryConfig | None,
 ) -> tuple[PaperDataPresence, ReasonCode | None, str | None]:
-    if spec.max_age_ms is None:
-        return _ok()
+    if entry_profile is EntryProfile.DISCOVERY:
+        if discovery_config is None:
+            return _stale("discovery_config_missing")
+        max_age_ms = discovery_config.hard_quote_max_age_ms
+    else:
+        if spec.max_age_ms is None:
+            return _ok()
+        max_age_ms = spec.max_age_ms
+
     for snapshot in snapshots:
-        age = snapshot.times.age_at(now)
+        if entry_profile is EntryProfile.DISCOVERY:
+            age = snapshot.times.quote_freshness_age_at(now)
+        else:
+            age = snapshot.times.age_at(now)
+        if age.total_seconds() < 0:
+            return _missing(ReasonCode.SNAPSHOT_MISMATCH, snapshot.snapshot_id)
         age_ms = int(age.total_seconds() * 1000)
-        if age.total_seconds() < 0 or age_ms > spec.max_age_ms:
+        if age_ms > max_age_ms:
             return _stale(snapshot.snapshot_id)
     return _ok()
 

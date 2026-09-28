@@ -453,7 +453,7 @@ def build_decision_record(
     strict_would_block = tuple(
         dict.fromkeys((*outcome.strict_would_block, *_soft_shadows(outcome)))
     )
-    inputs = _build_inputs(request, outcome, market_state=market_state)
+    inputs = _build_inputs(request, outcome, as_of=as_of, market_state=market_state)
     candidates = _build_candidates(request, outcome)
     sizing, fill = _build_trade_snapshots(outcome)
     ctx = _text_context(request, outcome, reason_codes, inputs)
@@ -583,6 +583,7 @@ def _build_inputs(
     request: PaperStrategyRequest,
     outcome: PaperStrategyOutcome,
     *,
+    as_of: datetime,
     market_state: MarketState | None,
 ) -> DiscoveryDecisionInputs:
     underlying = request.underlying
@@ -612,10 +613,8 @@ def _build_inputs(
     quote_age_ms = None
     times = underlying.times
     if times is not None:
-        quote_age_ms = max(
-            0,
-            int((times.calculation_time - times.event_time).total_seconds() * 1000),
-        )
+        age = times.quote_freshness_age_at(as_of)
+        quote_age_ms = max(0, int(age.total_seconds() * 1000))
     return DiscoveryDecisionInputs(
         spot=spot,
         trend=trend,

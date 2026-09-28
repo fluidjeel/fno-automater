@@ -28,6 +28,7 @@ class CasSymbolsConfig(BaseModel):
     index_or_future: str
     options: tuple[str, ...] = ()
     stock_option_underlying: str = "NSE:RELIANCE-EQ"
+    stock_option_selection: Literal["liquid", "atm_nearest"] = "liquid"
     mcx: tuple[str, ...] = ("MCX:GOLDM", "MCX:CRUDEOILM")
     max_options: int = Field(default=2, ge=0, le=5)
 

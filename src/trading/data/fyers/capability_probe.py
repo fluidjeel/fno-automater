@@ -782,6 +782,17 @@ def pick_liquid_option(chain_capture: Any) -> str | None:
     return _pick_liquid_option(chain_capture)
 
 
+def pick_stock_option(
+    chain_capture: Any,
+    *,
+    selection: str = "liquid",
+) -> str | None:
+    """Pick a stock option from one chain response."""
+    if selection == "atm_nearest":
+        return _pick_atm_nearest_option(chain_capture)
+    return _pick_liquid_option(chain_capture)
+
+
 def _pick_liquid_option(chain_capture: Any) -> str | None:
     data = chain_capture.payload.get("data", chain_capture.payload)
     rows = data.get("optionsChain") or data.get("options_chain") or []
@@ -810,6 +821,37 @@ def _pick_liquid_option(chain_capture: Any) -> str | None:
     if not candidates:
         return None
     candidates.sort(reverse=True)
+    return candidates[0][2]
+
+
+def _pick_atm_nearest_option(chain_capture: Any) -> str | None:
+    data = chain_capture.payload.get("data", chain_capture.payload)
+    rows = data.get("optionsChain") or data.get("options_chain") or []
+    if not isinstance(rows, list):
+        return None
+    underlying_ltp = None
+    candidates: list[tuple[float, int, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("option_type") not in {"CE", "PE"}:
+            if row.get("strike_price") in {-1, None}:
+                underlying_ltp = row.get("ltp") or row.get("fp")
+            continue
+        symbol = row.get("symbol")
+        if not isinstance(symbol, str):
+            continue
+        volume = int(row.get("volume") or 0)
+        oi = int(row.get("oi") or 0)
+        strike = row.get("strike_price")
+        if underlying_ltp is not None and isinstance(strike, (int, float)):
+            distance = abs(float(strike) - float(underlying_ltp))
+        else:
+            distance = 0.0
+        candidates.append((distance, -(volume + oi), symbol))
+    if not candidates:
+        return None
+    candidates.sort()
     return candidates[0][2]
 
 

@@ -10,7 +10,11 @@ from decimal import Decimal
 from enum import StrEnum, unique
 from typing import TypedDict
 
-from trading.broker.ports import MarginPreviewPort
+from trading.broker.ports import (
+    MarginPreviewLeg,
+    MarginPreviewPort,
+    MarginPreviewRequest,
+)
 from trading.config.discovery import DiscoveryConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, RiskPolicyConfig
@@ -44,6 +48,7 @@ from trading.research.registry import is_experimental_off_strict_book
 from trading.risk.discovery_sizing import (
     apply_discovery_cap_sizing,
     apply_discovery_lots,
+    apply_discovery_margin_sizing,
     collect_strict_would_block,
     discovery_guide_budget,
     rescale_approved_legs,
@@ -54,6 +59,7 @@ from trading.risk.limits import (
     evaluate_campaign_limit,
     evaluate_exposure_limits,
     evaluate_pre_trade_limits,
+    project_discovery_post_trade_exposure,
     project_post_trade_exposure,
 )
 from trading.risk.mode_ledger import FourModeBook
@@ -270,6 +276,19 @@ class RiskGateway:
             return
         self._mode_book.release_reservation(mode_id, amount)
 
+    def reject_evaluation_error(
+        self,
+        intent: TradeIntent,
+        portfolio: PortfolioSnapshot,
+    ) -> RiskDecision:
+        """Reject one candidate after an unexpected evaluation failure in DISCOVERY."""
+        return self._reject(
+            intent,
+            portfolio,
+            reason_codes=(ReasonCode.RISK_EVALUATION_ERROR,),
+            decided_at=self._clock.now_utc(),
+        )
+
     def evaluate(self, request: RiskGatewayRequest) -> RiskDecision:
         """Return an approval with reserved capital or a machine-readable rejection."""
         now = self._clock.now_utc()
@@ -436,6 +455,8 @@ class RiskGateway:
                 request.leg_snapshots,
                 now=now,
                 freshness=self._account_config.config.freshness,
+                entry_profile=entry_profile,
+                discovery_config=discovery_config,
             )
             audit = _SnapshotAudit(
                 decision_snapshot_id=bundle.decision_snapshot_id,
@@ -544,26 +565,10 @@ class RiskGateway:
                 audit=audit,
             )
 
-        paper_block, paper_soft = _paper_p0_reason(
-            request,
-            now=now,
-            margin=sizing.estimated_margin,
-            entry_profile=entry_profile,
-            discovery_config=discovery_config,
-        )
-        early_strict_would_block.extend(paper_soft)
-        if paper_block:
-            return self._reject(
-                intent,
-                portfolio,
-                reason_codes=paper_block,
-                decided_at=now,
-                audit=audit,
-            )
-
         strict_would_block: tuple[ReasonCode, ...] = ()
         approval_reasons: list[ReasonCode] = []
         applied_limits: tuple[str, ...] = ()
+        margin_projection_adjustment = None
         if (
             discovery_config is not None
             and intent.mode_id is not None
@@ -583,23 +588,21 @@ class RiskGateway:
                     decided_at=now,
                     audit=audit,
                 )
-            old_lots = sizing.approved_lots if sizing.approved_lots > 0 else 1
-            margin_per_lot = sizing.estimated_margin / old_lots
-            sizing = _SizingOutcome(
+            margin_per_lot = _margin_per_lot(
+                sizing,
+                fallback=_preview_one_lot_margin(
+                    self._margin_preview,
+                    structure,
+                    request,
+                    account_id=self._account_config.config.account_id,
+                    preview_request_id=self._ids.new_id("MARGIN-PREV"),
+                ),
+            )
+            sizing = _rescale_sizing_outcome(
+                sizing,
                 approved_lots=discovery_sized.approved_lots,
-                bounds=sizing.bounds,
-                cost_per_lot=sizing.cost_per_lot,
                 recalculated_max_loss=discovery_sized.recalculated_max_loss,
-                estimated_margin=(
-                    margin_per_lot * discovery_sized.approved_lots
-                ).quantized(Rounding.CEILING),
-                approved_legs=rescale_approved_legs(
-                    sizing.approved_legs,
-                    discovery_sized.approved_lots,
-                )
-                if sizing.approved_legs
-                else sizing.approved_legs,
-                net_delta_delta=sizing.net_delta_delta,
+                margin_per_lot=margin_per_lot,
             )
             cap_sizing = apply_discovery_cap_sizing(
                 cost_per_lot=sizing.cost_per_lot,
@@ -618,25 +621,59 @@ class RiskGateway:
                     audit=audit,
                 )
             if cap_sizing.approved_lots != sizing.approved_lots:
-                old_lots = sizing.approved_lots if sizing.approved_lots > 0 else 1
-                margin_per_lot = sizing.estimated_margin / old_lots
-                sizing = _SizingOutcome(
+                sizing = _rescale_sizing_outcome(
+                    sizing,
                     approved_lots=cap_sizing.approved_lots,
-                    bounds=sizing.bounds,
-                    cost_per_lot=sizing.cost_per_lot,
                     recalculated_max_loss=cap_sizing.recalculated_max_loss,
-                    estimated_margin=(
-                        margin_per_lot * cap_sizing.approved_lots
-                    ).quantized(Rounding.CEILING),
-                    approved_legs=rescale_approved_legs(
-                        sizing.approved_legs,
-                        cap_sizing.approved_lots,
-                    )
-                    if sizing.approved_legs
-                    else sizing.approved_legs,
-                    net_delta_delta=sizing.net_delta_delta,
+                    margin_per_lot=margin_per_lot,
                 )
-            applied_limits = cap_sizing.applied_limits
+            margin_sizing = apply_discovery_margin_sizing(
+                approved_lots=sizing.approved_lots,
+                recalculated_max_loss=sizing.recalculated_max_loss,
+                estimated_margin=sizing.estimated_margin,
+                cost_per_lot=sizing.cost_per_lot,
+                margin_per_lot=margin_per_lot,
+                margin_lots=sizing.bounds.margin_lots,
+                broker_margin_available=portfolio.exposure.margin_available,
+            )
+            if margin_sizing.approved_lots <= 0:
+                return self._reject(
+                    intent,
+                    portfolio,
+                    reason_codes=(ReasonCode.SIZE_BELOW_MINIMUM,),
+                    decided_at=now,
+                    audit=audit,
+                )
+            if (
+                margin_sizing.approved_lots != sizing.approved_lots
+                or margin_sizing.estimated_margin != sizing.estimated_margin
+            ):
+                sizing = _rescale_sizing_outcome(
+                    sizing,
+                    approved_lots=margin_sizing.approved_lots,
+                    recalculated_max_loss=margin_sizing.recalculated_max_loss,
+                    margin_per_lot=margin_per_lot,
+                    estimated_margin=margin_sizing.estimated_margin,
+                )
+            elif (
+                sizing.estimated_margin.is_zero
+                and not margin_sizing.estimated_margin.is_zero
+            ):
+                sizing = _rescale_sizing_outcome(
+                    sizing,
+                    approved_lots=sizing.approved_lots,
+                    recalculated_max_loss=sizing.recalculated_max_loss,
+                    margin_per_lot=margin_per_lot,
+                    estimated_margin=margin_sizing.estimated_margin,
+                )
+            applied_limits = tuple(
+                dict.fromkeys(
+                    (
+                        *cap_sizing.applied_limits,
+                        *margin_sizing.applied_limits,
+                    )
+                )
+            )
             strict_would_block = collect_strict_would_block(
                 intent,
                 portfolio,
@@ -653,11 +690,19 @@ class RiskGateway:
                 campaign_ledger=self._campaign_ledger,
             )
             strict_would_block = tuple(
-                dict.fromkeys((*cap_sizing.strict_would_block, *strict_would_block))
+                dict.fromkeys(
+                    (
+                        *cap_sizing.strict_would_block,
+                        *margin_sizing.strict_would_block,
+                        *strict_would_block,
+                    )
+                )
             )
             approval_reasons = [ReasonCode.OK]
             if discovery_sized.one_lot_over_guide:
                 approval_reasons.append(ReasonCode.ONE_LOT_OVER_GUIDE)
+            if margin_sizing.margin_oversubscribed:
+                approval_reasons.append(ReasonCode.MARGIN_OVERSUBSCRIBED)
         else:
             limit_check = evaluate_pre_trade_limits(
                 intent,
@@ -711,6 +756,23 @@ class RiskGateway:
                     )
             approval_reasons = list(limit_check.reason_codes)
             applied_limits = limit_check.applied_limits
+
+        paper_block, paper_soft = _paper_p0_reason(
+            request,
+            now=now,
+            margin=sizing.estimated_margin,
+            entry_profile=entry_profile,
+            discovery_config=discovery_config,
+        )
+        early_strict_would_block.extend(paper_soft)
+        if paper_block:
+            return self._reject(
+                intent,
+                portfolio,
+                reason_codes=paper_block,
+                decided_at=now,
+                audit=audit,
+            )
 
         decision_id = self._ids.new_id("DEC")
         reservation_margin = limits.margin_available
@@ -770,12 +832,22 @@ class RiskGateway:
                     audit=audit,
                 )
 
-        post_trade = project_post_trade_exposure(
-            portfolio,
-            margin_required=sizing.estimated_margin,
-            premium_paid=sizing.recalculated_max_loss,
-            net_delta_delta=sizing.net_delta_delta,
-        )
+        if discovery_active:
+            post_trade, margin_projection_adjustment = (
+                project_discovery_post_trade_exposure(
+                    portfolio,
+                    margin_required=sizing.estimated_margin,
+                    premium_paid=sizing.recalculated_max_loss,
+                    net_delta_delta=sizing.net_delta_delta,
+                )
+            )
+        else:
+            post_trade = project_post_trade_exposure(
+                portfolio,
+                margin_required=sizing.estimated_margin,
+                premium_paid=sizing.recalculated_max_loss,
+                net_delta_delta=sizing.net_delta_delta,
+            )
         action = (
             RiskAction.RESIZE
             if sizing.recalculated_max_loss < intent.requested_risk
@@ -798,6 +870,7 @@ class RiskGateway:
             margin_required=sizing.estimated_margin,
             pre_trade_exposure=pre_trade,
             post_trade_projection=post_trade,
+            margin_projection_adjustment=margin_projection_adjustment,
             applied_limits=applied_limits,
             reason_codes=tuple(approval_reasons),
             strict_would_block=tuple(
@@ -1555,6 +1628,88 @@ def _spread_reason(feature: FeatureSnapshot, max_spread: Percent) -> ReasonCode 
     if spread_fraction > max_spread.fraction:
         return ReasonCode.SPREAD_TOO_WIDE
     return None
+
+
+def _margin_per_lot(sizing: _SizingOutcome, *, fallback: Money) -> Money:
+    """Derive per-lot margin from sizing output or a one-lot preview."""
+    if sizing.approved_lots > 0 and not sizing.estimated_margin.is_zero:
+        return (sizing.estimated_margin / sizing.approved_lots).quantized(
+            Rounding.CEILING
+        )
+    if not fallback.is_zero:
+        return fallback
+    return Money.zero(sizing.cost_per_lot.currency)
+
+
+def _rescale_sizing_outcome(
+    sizing: _SizingOutcome,
+    *,
+    approved_lots: int,
+    recalculated_max_loss: Money,
+    margin_per_lot: Money,
+    estimated_margin: Money | None = None,
+) -> _SizingOutcome:
+    """Rebuild sizing after discovery lot rescaling."""
+    margin = estimated_margin
+    if margin is None:
+        margin = (margin_per_lot * approved_lots).quantized(Rounding.CEILING)
+    return _SizingOutcome(
+        approved_lots=approved_lots,
+        bounds=sizing.bounds,
+        cost_per_lot=sizing.cost_per_lot,
+        recalculated_max_loss=recalculated_max_loss,
+        estimated_margin=margin,
+        approved_legs=rescale_approved_legs(sizing.approved_legs, approved_lots)
+        if sizing.approved_legs
+        else sizing.approved_legs,
+        net_delta_delta=sizing.net_delta_delta,
+    )
+
+
+def _preview_one_lot_margin(
+    margin_preview: MarginPreviewPort,
+    structure: _StructureKind,
+    request: RiskGatewayRequest,
+    *,
+    account_id: str,
+    preview_request_id: str,
+) -> Money:
+    """Preview broker margin for one lot when sizing returned zero lots."""
+    lot_size = LotSize(request.instrument.lot_size)
+    quantity = Lots(1).to_quantity(lot_size).contracts
+    legs: tuple[MarginPreviewLeg, ...]
+    if structure in {
+        _StructureKind.LONG_STRADDLE,
+        _StructureKind.LONG_STRANGLE,
+    }:
+        legs = tuple(
+            MarginPreviewLeg(
+                contract=leg.contract,
+                side=leg.side,
+                quantity_contracts=quantity,
+            )
+            for leg in request.intent.legs
+        )
+    else:
+        leg = request.intent.legs[0]
+        legs = (
+            MarginPreviewLeg(
+                contract=leg.contract,
+                side=leg.side,
+                quantity_contracts=quantity,
+            ),
+        )
+    preview = margin_preview.preview_margin(
+        MarginPreviewRequest(
+            request_id=preview_request_id,
+            account_id=account_id,
+            legs=legs,
+        )
+    )
+    currency = request.portfolio_snapshot.exposure.equity.currency
+    if not preview.confirmed or preview.margin_required.is_zero:
+        return Money.zero(currency)
+    return preview.margin_required.quantized(Rounding.CEILING)
 
 
 def _zero_lot_reason(bounds: LotBounds, *, mode_id: ModeId | None = None) -> ReasonCode:

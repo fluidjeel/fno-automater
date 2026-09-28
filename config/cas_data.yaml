@@ -17,6 +17,7 @@ symbols:
   index_or_future: "NSE:NIFTY50-INDEX"
   options: []  # resolved at runtime from option chain when empty
   stock_option_underlying: "NSE:RELIANCE-EQ"
+  # stock_option_selection: liquid  # optional: liquid (default) | atm_nearest
   mcx:
     - "MCX:GOLDM"
     - "MCX:CRUDEOILM"

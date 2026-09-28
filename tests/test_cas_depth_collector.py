@@ -67,7 +67,7 @@ def test_sort_levels_orders_by_price() -> None:
         DepthLevel(price=Decimal("102.00"), quantity=1),
         DepthLevel(price=Decimal("101.50"), quantity=2),
     ]
-    sorted_bids, sorted_asks = sort_levels(bids, asks)
+    sorted_bids, sorted_asks, _ = sort_levels(bids, asks)
     assert sorted_bids[0].price == Decimal("101.00")
     assert sorted_asks[0].price == Decimal("101.50")
 
@@ -83,8 +83,9 @@ def test_normalize_data_ws_depth_from_unordered_levels() -> None:
         "ask_size1": 8,
         "type": "dp",
     }
-    update = normalize_data_ws_depth(message, receive_time=now)
+    update, duplicate_prices = normalize_data_ws_depth(message, receive_time=now)
     assert update is not None
+    assert duplicate_prices is False
     assert update.bid_levels[0].price == Decimal("75000.00")
     assert update.trade_aggressor is TradeAggressor.UNKNOWN
 

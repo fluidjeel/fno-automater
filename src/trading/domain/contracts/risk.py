@@ -23,6 +23,7 @@ from trading.domain.contracts.base import (
     VersionedModel,
 )
 from trading.domain.contracts.common import ExposureSnapshot
+from trading.domain.contracts.margin_projection import MarginProjectionAdjustment
 from trading.domain.enums import ExecutionMode, ReasonCode, RiskAction
 from trading.domain.primitives import Lots, LotSize, Money, Quantity
 
@@ -77,6 +78,7 @@ class RiskDecision(VersionedModel):
     margin_required: Money | None = None
     pre_trade_exposure: ExposureSnapshot
     post_trade_projection: ExposureSnapshot | None = None
+    margin_projection_adjustment: MarginProjectionAdjustment | None = None
     applied_limits: tuple[NonEmptyStr, ...] = ()
     reason_codes: tuple[ReasonCode, ...]
     strict_would_block: tuple[ReasonCode, ...] = ()

@@ -60,6 +60,10 @@ class SnapshotTimes(StrictModel):
         """How stale this snapshot is relative to an injected clock reading."""
         return now - self.event_time
 
+    def quote_freshness_age_at(self, now: datetime) -> timedelta:
+        """Quote staleness from calculation time, not bar event time (DISC-A5/A15)."""
+        return max(timedelta(0), now - self.calculation_time)
+
 
 class MarketQuote(StrictModel):
     """Top-of-book and bar state. Depth detail stays summarized here."""

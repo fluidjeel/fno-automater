@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from trading.config import load_config
@@ -20,6 +20,10 @@ from trading.data.storage.parquet_store import JsonlEventStore
 from trading.domain.contracts import FeatureSnapshot
 
 __all__ = ["ReplayEngine", "ReplayResult"]
+
+# When replay `end` is within this window of a cycle's receive time, treat `end`
+# as the injected decision clock (pipeline.run_once uses max(now, receive_time)).
+_REPLAY_DECISION_CLOCK_SLACK = timedelta(minutes=15)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +112,12 @@ class ReplayEngine:
         )
         snapshots: list[FeatureSnapshot] = []
         for group in _group_events(events):
-            calculation_time = group[-1].receive_time
+            latest_receive = max(event.receive_time for event in group)
+            if end - latest_receive <= _REPLAY_DECISION_CLOCK_SLACK:
+                decision_now = max(latest_receive, end)
+            else:
+                decision_now = latest_receive
+            calculation_time = decision_now
             if underlying.fetch_option_chain:
                 chain = _latest_in_group(group, "OPTION_CHAIN_SNAPSHOT")
                 if chain is None:
@@ -117,7 +126,7 @@ class ReplayEngine:
                     chain=chain,
                     quote=_latest_in_group(group, "QUOTE_SNAPSHOT"),
                     bar=_latest_in_group(group, "BAR_SNAPSHOT"),
-                    now=calculation_time,
+                    now=decision_now,
                     chain_max_age_ms=self._chain_max_age_ms,
                     quote_max_age_ms=self._quote_max_age_ms,
                     bar_max_age_ms=self._bar_max_age_ms,
@@ -135,7 +144,7 @@ class ReplayEngine:
                 quality = assess_index_snapshot(
                     quote=quote,
                     bar=_latest_in_group(group, "BAR_SNAPSHOT"),
-                    now=calculation_time,
+                    now=decision_now,
                     quote_max_age_ms=self._quote_max_age_ms,
                     bar_max_age_ms=self._bar_max_age_ms,
                     depth=_latest_in_group(group, "DEPTH_SNAPSHOT"),

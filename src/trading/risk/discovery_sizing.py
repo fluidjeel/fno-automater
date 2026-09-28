@@ -27,9 +27,11 @@ from trading.risk.mode_ledger import FourModeBook, ModeLedger
 
 __all__ = [
     "DiscoveryCapSizingResult",
+    "DiscoveryMarginSizingResult",
     "DiscoverySizingResult",
     "apply_discovery_cap_sizing",
     "apply_discovery_lots",
+    "apply_discovery_margin_sizing",
     "collect_strict_would_block",
     "discovery_bug_guard_cap",
     "discovery_guide_budget",
@@ -56,6 +58,18 @@ class DiscoveryCapSizingResult:
     recalculated_max_loss: Money
     strict_would_block: tuple[ReasonCode, ...]
     applied_limits: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryMarginSizingResult:
+    """Lots and margin after soft broker-margin downsizing."""
+
+    approved_lots: int
+    recalculated_max_loss: Money
+    estimated_margin: Money
+    strict_would_block: tuple[ReasonCode, ...]
+    applied_limits: tuple[str, ...]
+    margin_oversubscribed: bool
 
 
 def discovery_guide_budget(
@@ -165,6 +179,73 @@ def apply_discovery_cap_sizing(
         recalculated_max_loss=recalculated,
         strict_would_block=tuple(dict.fromkeys(shadow)),
         applied_limits=tuple(applied),
+    )
+
+
+def apply_discovery_margin_sizing(
+    *,
+    approved_lots: int,
+    recalculated_max_loss: Money,
+    estimated_margin: Money,
+    cost_per_lot: Money,
+    margin_per_lot: Money,
+    margin_lots: int,
+    broker_margin_available: Money,
+) -> DiscoveryMarginSizingResult:
+    """Downsize to min 1 lot when broker margin binds; never reject."""
+    zero = Money.zero(cost_per_lot.currency)
+    if approved_lots <= 0:
+        return DiscoveryMarginSizingResult(
+            approved_lots=0,
+            recalculated_max_loss=zero,
+            estimated_margin=zero,
+            strict_would_block=(),
+            applied_limits=(),
+            margin_oversubscribed=False,
+        )
+    shadow: list[ReasonCode] = []
+    applied: list[str] = []
+    lots = approved_lots
+    effective_margin_per_lot = margin_per_lot
+    if effective_margin_per_lot.is_zero:
+        effective_margin_per_lot = (
+            estimated_margin / approved_lots
+            if approved_lots > 0 and not estimated_margin.is_zero
+            else zero
+        )
+    margin_binds = margin_lots <= 0 or estimated_margin > broker_margin_available
+    if margin_binds:
+        if margin_lots <= 0:
+            lots = 1
+        elif not effective_margin_per_lot.is_zero:
+            affordable = max(
+                1, floor_divide_money(broker_margin_available, effective_margin_per_lot)
+            )
+            lots = max(1, min(lots, affordable))
+        else:
+            lots = max(1, min(lots, 1))
+        shadow.append(ReasonCode.MARGIN_INSUFFICIENT)
+        applied.append("broker_margin_available")
+    recalculated = (cost_per_lot * lots).quantized(Rounding.CEILING)
+    margin_required = (
+        (effective_margin_per_lot * lots).quantized(Rounding.CEILING)
+        if not effective_margin_per_lot.is_zero
+        else estimated_margin
+    )
+    if margin_required.is_zero and not recalculated.is_zero:
+        margin_required = recalculated
+    oversubscribed = margin_required > broker_margin_available
+    if oversubscribed and ReasonCode.MARGIN_OVERSUBSCRIBED not in shadow:
+        shadow.append(ReasonCode.MARGIN_OVERSUBSCRIBED)
+        if "broker_margin_available" not in applied:
+            applied.append("broker_margin_available")
+    return DiscoveryMarginSizingResult(
+        approved_lots=lots,
+        recalculated_max_loss=recalculated,
+        estimated_margin=margin_required,
+        strict_would_block=tuple(dict.fromkeys(shadow)),
+        applied_limits=tuple(applied),
+        margin_oversubscribed=oversubscribed,
     )
 
 
