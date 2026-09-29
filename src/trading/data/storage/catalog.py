@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
-from datetime import UTC
+import os
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +38,95 @@ _EVENT_INDEX_COLUMNS: tuple[tuple[str, type], ...] = (
     ("raw_ref", str),
     ("normalization_version", str),
 )
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist a rename in ``directory``; best effort where unsupported."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _atomic_write_parquet(frame: Any, path: Path) -> None:
+    """Write ``frame`` to ``path`` so readers never observe a partial file.
+
+    Writes a unique temp file in the same directory, fsyncs it, then
+    ``os.replace``s it over the target. On failure the target is untouched and
+    the temp file is removed. The temp name ends in ``.tmp`` so ``*.parquet``
+    globs never pick it up.
+    """
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        frame.write_parquet(tmp)
+        with tmp.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    _fsync_directory(path.parent)
+
+
+def _quarantine_corrupt(path: Path, exc: BaseException) -> None:
+    """Move an unreadable derived Parquet file aside instead of crashing."""
+    # Stamp with the torn file's own mtime (when it was damaged); production
+    # code never reads ambient wall time (Invariant 21).
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, UTC)
+        stamp = mtime.strftime("%Y%m%dT%H%M%SZ")
+    except OSError:
+        stamp = "unknown"
+    target = path.with_name(f"{path.name}.corrupt-{stamp}")
+    suffix = 1
+    while target.exists():
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{suffix}")
+        suffix += 1
+    try:
+        os.replace(path, target)
+    except OSError as move_exc:
+        logger.warning(
+            "catalog parquet %s unreadable (%s); could not move aside: %s",
+            path,
+            exc,
+            move_exc,
+        )
+        return
+    logger.warning(
+        "catalog parquet %s unreadable (%s); moved aside to %s and continuing "
+        "with incoming rows only",
+        path,
+        exc,
+        target,
+    )
+
+
+def _read_existing(path: Path, normalize: Callable[[Any], Any]) -> Any | None:
+    """Return the normalized existing frame, or ``None`` if absent or corrupt.
+
+    The catalog is derived (JSONL stays the replay authority), so a torn file
+    must never take the decision cycle down with it.
+    """
+    import polars as pl
+
+    if not path.is_file():
+        return None
+    try:
+        raw = pl.read_parquet(path)
+    except (Exception, pl.exceptions.PanicException) as exc:
+        _quarantine_corrupt(path, exc)
+        return None
+    return normalize(raw)
 
 
 def _event_row(event: CanonicalMarketEvent) -> dict[str, Any]:
@@ -82,17 +173,17 @@ class CatalogWriter:
         incoming = self._normalize_event_index(
             pl.DataFrame([_event_row(event) for event in events])
         )
-        if path.is_file():
-            existing = self._normalize_event_index(pl.read_parquet(path))
+        existing = _read_existing(path, self._normalize_event_index)
+        if existing is not None:
             merged = pl.concat([existing, incoming], how="vertical").unique(
                 subset=["event_id"],
                 keep="last",
             )
         else:
             merged = incoming
-        merged.write_parquet(path)
+        _atomic_write_parquet(merged, path)
         incoming_path = self._parquet / f"{day}.incoming.parquet"
-        incoming.write_parquet(incoming_path)
+        _atomic_write_parquet(incoming, incoming_path)
         self._upsert_duckdb(
             incoming_path,
             (
@@ -152,17 +243,17 @@ class CatalogWriter:
         incoming = self._normalize_snapshot_index(
             pl.DataFrame([dict(row) for row in rows])
         )
-        if path.is_file():
-            existing = self._normalize_snapshot_index(pl.read_parquet(path))
+        existing = _read_existing(path, self._normalize_snapshot_index)
+        if existing is not None:
             merged = pl.concat([existing, incoming], how="vertical").unique(
                 subset=["as_of", "symbol"],
                 keep="last",
             )
         else:
             merged = incoming
-        merged.write_parquet(path)
+        _atomic_write_parquet(merged, path)
         incoming_path = self._parquet / f"snapshots-{day}.incoming.parquet"
-        incoming.write_parquet(incoming_path)
+        _atomic_write_parquet(incoming, incoming_path)
         self._upsert_duckdb(
             incoming_path,
             (
