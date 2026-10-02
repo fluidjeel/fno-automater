@@ -54,7 +54,9 @@ from trading.trade.exits import ExitEvaluation, ExitKind
 __all__ = [
     "PaperExitRecoveryResult",
     "load_quotes_from_json",
+    "open_paper_recovery_context",
     "retry_stuck_paper_exits",
+    "synthetic_quotes_for_open_positions",
 ]
 
 _TERMINAL_EXIT_FAILURE = frozenset(
@@ -190,6 +192,39 @@ def _load_quote_book(
     if quotes_json is not None:
         quote_book.update(load_quotes_from_json(quotes_json))
     return quote_book
+
+
+def open_paper_recovery_context(
+    repo_root: Path, *, clock: Clock | None = None
+) -> _RecoveryContext:
+    """Open store, paper broker, and runner for operator recovery commands."""
+    return _open_recovery_context(repo_root, clock=clock or WallClock())
+
+
+def synthetic_quotes_for_open_positions(
+    store: TradingStore,
+) -> dict[str, MarketQuote]:
+    """Build bid/ask from leg entry marks so PAPER exits can fill without Fyers."""
+    quotes: dict[str, MarketQuote] = {}
+    for record in store.list_position_lifecycle():
+        if record.position.state is TradeState.CLOSED:
+            continue
+        for leg in record.position.legs:
+            symbol = leg.contract.symbol
+            if symbol in quotes:
+                continue
+            mid = leg.average_entry_price
+            tick = mid.tick.value
+            bid_val = max(mid.value - tick, tick)
+            ask_val = mid.value + tick
+            quotes[symbol] = MarketQuote(
+                bid=Price(value=bid_val, tick=mid.tick),
+                ask=Price(value=ask_val, tick=mid.tick),
+                last=mid,
+                bid_size=300,
+                ask_size=300,
+            )
+    return quotes
 
 
 def _open_recovery_context(repo_root: Path, *, clock: Clock) -> _RecoveryContext:

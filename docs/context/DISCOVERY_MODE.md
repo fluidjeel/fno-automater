@@ -126,7 +126,9 @@ values, not code constants.
 
 - Bug guard (`bug_guard_trade_risk_fraction`): downsize to ≥1 lot.
 - Per-mode open-risk cap (`open_risk_cap`): may downsize; never reject.
-- Daily entry cap and max open positions per mode.
+- Daily entry cap per mode.
+- **Hard:** max open positions per mode (`OPEN_POSITION_CAP`); at most one
+  `OPEN`/`PENDING_ENTRY` position per mode in DISCOVERY.
 - Capital reservation shortfalls (`CAPITAL_UNAVAILABLE`) and all STRICT portfolio
   overlays listed below.
 

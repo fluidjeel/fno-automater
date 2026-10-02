@@ -421,12 +421,12 @@ def test_m1_instrument_master_validation() -> None:
 
 
 def test_m1_direction_check() -> None:
-    """bind_m1_cas_option returns PRICE_UNAVAILABLE on non-directional trend."""
+    """bind_m1_cas_option returns DIRECTION_UNRESOLVED on non-directional trend."""
     c1 = _option("SYM1", strike="24300", delta="0.30", expiry=date(2026, 9, 24), dte=5)
 
     bound = bind_m1_cas_option((c1,), market=_market(TrendState.RANGE), policy=POLICY)
     assert bound.binding.eligible is False
-    assert bound.binding.reason_codes == (ReasonCode.PRICE_UNAVAILABLE,)
+    assert bound.binding.reason_codes == (ReasonCode.DIRECTION_UNRESOLVED,)
     assert bound.binding.strategy_id == "cas_microstructure"
 
 

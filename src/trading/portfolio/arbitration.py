@@ -317,14 +317,16 @@ class PortfolioArbiter:
                         _first_mode_incumbent(existing_positions, approved, mode_id)
                         or f"{mode_id.value}_CAP"
                     )
-                    _log_soft_warning(
+                    _log_suppression(
                         reason_code=ReasonCode.OPEN_POSITION_CAP,
                         incumbent_id=incumbent_id,
                         detail=(
                             f"Open position cap {open_cap} reached for {mode_id.value}; "
                             f"incumbent: {incumbent_id}"
                         ),
+                        action="SUPPRESSED_OPEN_POSITION_CAP",
                     )
+                    continue
             elif (
                 candidate.mode_id is ModeId.M4_STRATEGIC_POSITIONAL
                 and count_m4_positions(

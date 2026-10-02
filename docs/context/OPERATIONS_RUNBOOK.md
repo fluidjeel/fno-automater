@@ -182,3 +182,18 @@ supplied quotes, resubmits remaining exit legs, appends resolved reconciliation
 records, and re-runs boot reconcile. Verify `entries_blocked=0` in the output and
 that open positions are flat before expecting new entries.
 
+## Fresh PAPER observation (Monday reset)
+
+Stop `fno-paper-session.service`, then flatten everything and clear entry
+latches (backs up `trading.sqlite` and `broker_state.json` under
+`data/paper/backups/` unless `--no-backup`):
+
+```bash
+uv run trading ops reset-paper-portfolio
+sudo systemctl start fno-paper-session.service
+```
+
+Optional `--quotes-json data/paper/recovery_quotes.json` uses live marks instead
+of leg entry prices. Confirm `entries_released=True` and zero open positions in
+the heartbeat before Monday's open.
+

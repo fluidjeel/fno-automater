@@ -525,6 +525,7 @@ class PaperRunner:
         )
         self._open_book: dict[str, tuple[TradeIntent, RiskDecision]] = {}
         self._protection_snapshots: dict[str, FeatureSnapshot] = {}
+        self._m1_monitor_symbols: tuple[str, ...] = ()
         self._unresolved_lifecycle_alerts: set[tuple[str, ReasonCode]] = set()
         self._lifecycle_recovered = False
         self._decision_log = DecisionLog(store)
@@ -711,8 +712,12 @@ class PaperRunner:
             for position in self._services.trade_manager.list_positions()
         )
 
+    def set_m1_monitor_symbols(self, symbols: Sequence[str]) -> None:
+        """REST/WS symbols for M1 ingress when flat (DISC-B1 poll watchlist)."""
+        self._m1_monitor_symbols = tuple(sorted(set(symbols)))
+
     def monitor_symbols(self) -> tuple[str, ...]:
-        symbols: set[str] = set()
+        symbols: set[str] = set(self._m1_monitor_symbols)
         for position in self._services.trade_manager.list_positions():
             if position.state is TradeState.CLOSED:
                 continue

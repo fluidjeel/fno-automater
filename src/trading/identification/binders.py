@@ -1498,7 +1498,7 @@ def bind_m1_cas_option(
                 selected_symbols=(),
                 score=_ZERO,
                 eligible=False,
-                reason_codes=(ReasonCode.PRICE_UNAVAILABLE,),
+                reason_codes=(ReasonCode.DIRECTION_UNRESOLVED,),
                 rejected_symbols=tuple(
                     sorted(c.contract.symbol for c in all_candidates)
                 ),

@@ -11,6 +11,7 @@ from tests.test_p12_economic_overlap_m4_cap import (
     NOW,
     _bull_call_debit,
     _bull_put_credit,
+    _m4_condor,
     _option_snap,
 )
 from tests.test_paper_runner import BROKER_FIXTURES, ROOT, _paper_config
@@ -139,6 +140,35 @@ class TestDiscA8CrossModeDuplicateAllowed:
             is ReasonCode.EXACT_DUPLICATE_SUPPRESSED
         )
         assert result.suppressed_intents[0].candidate_intent_id == "INTENT-M2-REENTRY"
+
+
+def _open_m4_position(trade_id: str) -> PositionState:
+    return f.position_state(
+        trade_id=trade_id,
+        intent_id=f"{trade_id}-INT",
+        mode_id=ModeId.M4_STRATEGIC_POSITIONAL,
+        state=TradeState.OPEN,
+        exit_policy=f.exit_policy(trade_id=trade_id),
+    )
+
+
+class TestDiscA8OpenPositionCap:
+    def test_discovery_second_m4_suppressed_when_cap_reached(self) -> None:
+        """DISCOVERY hard-suppresses when max_open_positions is reached."""
+        arbiter = _discovery_arbiter()
+        existing = (_open_m4_position("TRD-M4-1"),)
+        second = cast(TradeIntent, _m4_condor("INTENT-M4-2", wing_shift=50))
+        result = arbiter.arbitrate(
+            [second],
+            existing_positions=existing,
+            now=NOW,
+        )
+        assert result.approved_intents == ()
+        assert len(result.suppressed_intents) == 1
+        assert (
+            result.suppressed_intents[0].reason_code is ReasonCode.OPEN_POSITION_CAP
+        )
+        assert result.suppressed_intents[0].candidate_intent_id == "INTENT-M4-2"
 
 
 class TestDiscA8DailyEntryCap:

@@ -115,6 +115,10 @@ from trading.runtime.four_mode_producers import (
 )
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
+from trading.runtime.m1_poll_ingress import (
+    feed_m1_poll_provider_event,
+    m1_poll_watch_symbols,
+)
 from trading.runtime.m2_chain import following_week_epoch, monthly_window_epoch
 from trading.runtime.notify import (
     format_eod_report,
@@ -511,6 +515,19 @@ class PaperSession:
                 )
                 for text in format_post_trade(outcome, experiment_id=experiment_id):
                     self._notifier.send(text[:_NOTIFY_MAX])
+        if snapshots and isinstance(self._latest_market_state, MarketState):
+            watch = m1_poll_watch_symbols(
+                snapshots,
+                self._latest_market_state,
+                config=self._config.cas_event_driven,
+            )
+            self._runner.set_m1_monitor_symbols(watch)
+            feed_m1_poll_provider_event(
+                self,
+                snapshots,
+                self._latest_market_state,
+                now=now,
+            )
         if snapshots:
             self._runner.manage_exits(snapshots)
         self._record_portfolio_risk(snapshots)

@@ -182,7 +182,7 @@ class TestDiscA7M4CapFromConfig:
         assert m4_open_position_cap(risk_policy=RISK.config) == 2
 
     def test_discovery_cap_from_mode_config(self) -> None:
-        assert m4_open_position_cap(discovery_config=DISCOVERY) == 4
+        assert m4_open_position_cap(discovery_config=DISCOVERY) == 1
 
     def test_discovery_fourth_m4_allowed_fifth_rejected(self) -> None:
         arbiter = PortfolioArbiter(max_m4_open_positions=4)

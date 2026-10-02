@@ -7,6 +7,7 @@ provided; missing VIX is fail-visible via ReasonCode.DATA_GAP (no invented level
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = ["apply_discovery_direction_fallback", "build_market_state"]
 
+_logger = logging.getLogger(__name__)
 _IST = ZoneInfo("Asia/Kolkata")
 _BAR_SECONDS = 300
 _ANNUAL_BARS = Decimal(75 * 252)
@@ -162,6 +164,16 @@ def apply_discovery_direction_fallback(
     elif r15 < 0 and r60 < 0 and score <= -threshold:
         resolved = TrendState.DOWN
     else:
+        if state.completed_bar_count >= direction.fallback_min_bars:
+            _logger.info(
+                "M2/M1 direction fallback abstain: r15=%s r60=%s score=%s "
+                "threshold=%s trend=%s",
+                r15,
+                r60,
+                score,
+                threshold,
+                state.trend.value,
+            )
         return state
     reasons = list(state.reason_codes)
     if not state.warmup_complete:

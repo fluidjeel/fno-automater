@@ -1476,6 +1476,32 @@ def _cmd_ops_retry_stuck_paper_exits(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ops_reset_paper_portfolio(args: argparse.Namespace) -> int:
+    """PAPER only: flatten all opens, clear latches, reset broker book for Monday."""
+    from trading.ops.paper_exit_recovery import load_quotes_from_json
+    from trading.ops.paper_portfolio_reset import reset_paper_portfolio
+
+    quotes_path = Path(args.quotes_json) if args.quotes_json else None
+    if quotes_path is not None and not quotes_path.is_absolute():
+        quotes_path = _repo_root() / quotes_path
+    quotes = load_quotes_from_json(quotes_path) if quotes_path else None
+    result = reset_paper_portfolio(
+        _repo_root(),
+        quotes=quotes,
+        dry_run=bool(args.dry_run),
+        backup=not bool(args.no_backup),
+    )
+    print(result.detail)
+    if result.closed_trade_ids:
+        print("closed:", ",".join(result.closed_trade_ids))
+    if result.administratively_closed:
+        print("admin_closed:", ",".join(result.administratively_closed))
+    if result.backup_dir is not None:
+        print(f"backup={result.backup_dir}")
+    print(f"entries_released={result.entries_released}")
+    return 0
+
+
 def _cmd_ops_telegram_bot(args: argparse.Namespace) -> int:
     import threading
 
@@ -2156,6 +2182,31 @@ def main(argv: list[str] | None = None) -> int:
         help="log each recovery decision to stderr",
     )
     retry_exits.set_defaults(func=_cmd_ops_retry_stuck_paper_exits)
+
+    reset_portfolio = ops_sub.add_parser(
+        "reset-paper-portfolio",
+        help=(
+            "PAPER only: close all open trades, clear reservations and entry "
+            "freezes, reset broker_state to flat ₹7L for a fresh observation "
+            "session (optional exit quotes JSON; else uses entry marks)"
+        ),
+    )
+    reset_portfolio.add_argument(
+        "--quotes-json",
+        default="",
+        help="optional JSON map of symbol -> {bid, ask} for exit fills",
+    )
+    reset_portfolio.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report open trade count without mutating state",
+    )
+    reset_portfolio.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="skip copying trading.sqlite and broker_state.json before reset",
+    )
+    reset_portfolio.set_defaults(func=_cmd_ops_reset_paper_portfolio)
 
     tg_bot = ops_sub.add_parser(
         "telegram-bot", help="run two-way interactive Telegram bot"
