@@ -16,7 +16,6 @@ from trading.domain.contracts.snapshot import MarketQuote
 from trading.domain.enums import (
     Environment,
     ModeId,
-    ReasonCode,
     ReconciliationTrigger,
     SystemState,
     TradeState,
@@ -24,6 +23,7 @@ from trading.domain.enums import (
 )
 from trading.domain.primitives import Currency, Money
 from trading.ops.paper_exit_recovery import (
+    _load_quote_book,
     _RecoveryContext,
     _resolve_lifecycle_reconciliation,
     _retry_records,
@@ -54,8 +54,6 @@ def reset_paper_portfolio(
     backup: bool = True,
 ) -> PaperPortfolioResetResult:
     """Close all open PAPER trades and clear entry blocks for a fresh session."""
-    from trading.ops.paper_exit_recovery import _load_quote_book
-
     ctx = open_paper_recovery_context(repo_root)
     if ctx.account.config.environment is not Environment.PAPER:
         ctx.store.close()
