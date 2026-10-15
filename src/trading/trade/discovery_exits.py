@@ -26,6 +26,7 @@ __all__ = [
     "compute_leg_stop_price",
     "compute_leg_target_price",
     "evaluate_discovery_confirmation",
+    "is_multi_leg",
     "is_premium_scaled_policy",
     "leg_stop_target_breached_mid",
     "structure_net_debit_per_unit",
@@ -85,10 +86,54 @@ def structure_pnl_bounds(
     *,
     max_loss: Money | None = None,
 ) -> tuple[Money, Money]:
-    """Structure pnl_stop/pnl_target consistent with per-leg fractions."""
+    """Structure pnl_stop/pnl_target on combined P&L.
+
+    Single-leg positions keep the per-leg fraction formula. Multi-leg
+    structures are bounded on the net premium: a net debit stops at
+    ``leg_stop_fraction`` and targets ``leg_target_fraction`` of the debit
+    (capped at a vertical's max profit); a net credit targets
+    ``credit_target_fraction`` of the credit and stops at
+    ``(short_leg_stop_multiple - 1)`` x credit, kept below max loss.
+    """
+    if len(legs) <= 1:
+        return _single_leg_pnl_bounds(legs, config, max_loss=max_loss)
+    net = Decimal(0)
+    for leg in legs:
+        signed = leg.average_entry_price.value * Decimal(leg.quantity_contracts)
+        net += signed if leg.side is Side.BUY else -signed
+    width = _vertical_width_amount(legs)
+    if net >= 0:
+        stop = config.leg_stop_fraction * net
+        target = config.leg_target_fraction * net
+        if width is not None and width - net > 0:
+            target = min(target, width - net)
+        if max_loss is not None:
+            stop = min(stop, max_loss.amount)
+    else:
+        credit = -net
+        target = config.credit_target_fraction * credit
+        stop = (config.short_leg_stop_multiple - Decimal(1)) * credit
+        loss_cap = width - credit if width is not None else None
+        if max_loss is not None and max_loss.amount > 0:
+            loss_cap = (
+                max_loss.amount if loss_cap is None else min(loss_cap, max_loss.amount)
+            )
+        if loss_cap is not None and loss_cap > 0:
+            stop = min(stop, config.credit_stop_max_loss_fraction * loss_cap)
+    return (
+        Money((-stop).quantize(Decimal("0.01")), Currency.INR),
+        Money(target.quantize(Decimal("0.01")), Currency.INR),
+    )
+
+
+def _single_leg_pnl_bounds(
+    legs: tuple[PositionLegState, ...],
+    config: DiscoveryExitsConfig,
+    *,
+    max_loss: Money | None,
+) -> tuple[Money, Money]:
     stop_sum = Decimal(0)
     target_sum = Decimal(0)
-    currency = Currency.INR
     for leg in legs:
         qty = Decimal(leg.quantity_contracts)
         entry = leg.average_entry_price.value
@@ -101,16 +146,50 @@ def structure_pnl_bounds(
     if max_loss is not None:
         stop_sum = min(stop_sum, max_loss.amount)
     return (
-        Money((-stop_sum).quantize(Decimal("0.01")), currency),
-        Money(target_sum.quantize(Decimal("0.01")), currency),
+        Money((-stop_sum).quantize(Decimal("0.01")), Currency.INR),
+        Money(target_sum.quantize(Decimal("0.01")), Currency.INR),
     )
+
+
+def _vertical_width_amount(legs: tuple[PositionLegState, ...]) -> Decimal | None:
+    """Strike width x quantity for a same-type, opposite-side two-leg vertical."""
+    if len(legs) != 2:  # noqa: PLR2004 - a vertical has exactly two legs
+        return None
+    first, second = legs
+    if (
+        first.side is second.side
+        or first.quantity_contracts != second.quantity_contracts
+        or first.contract.option_type is not second.contract.option_type
+        or first.contract.expiry != second.contract.expiry
+        or first.contract.strike is None
+        or second.contract.strike is None
+    ):
+        return None
+    width = abs(first.contract.strike - second.contract.strike)
+    return width * Decimal(first.quantity_contracts)
+
+
+def is_multi_leg(legs: tuple[PositionLegState, ...]) -> bool:
+    """Multi-leg structures exit on combined P&L only (no per-leg triggers)."""
+    return len(legs) > 1
 
 
 def apply_discovery_leg_exit_prices(
     legs: tuple[PositionLegState, ...],
     config: DiscoveryExitsConfig,
 ) -> tuple[PositionLegState, ...]:
-    """Stamp each leg with stop/target derived from its own average entry."""
+    """Stamp each leg with stop/target derived from its own average entry.
+
+    Multi-leg structures carry no per-leg stop/target: they exit on combined
+    structure P&L, so any leg prices are cleared.
+    """
+    if is_multi_leg(legs):
+        return tuple(
+            leg.model_copy(
+                update={"current_stop_price": None, "current_target_price": None}
+            )
+            for leg in legs
+        )
     updated: list[PositionLegState] = []
     for leg in legs:
         stop = compute_leg_stop_price(
@@ -243,7 +322,12 @@ def leg_stop_target_breached_mid(
     intent: TradeIntent,
     leg_snapshots: Mapping[str, FeatureSnapshot],
 ) -> tuple[str, str]:
-    """Return exit kind and detail when any leg hits its own stop/target on mid."""
+    """Return exit kind and detail when a single-leg position hits its stop/target.
+
+    Multi-leg structures never exit on one leg's price (combined P&L only).
+    """
+    if is_multi_leg(position.legs):
+        return "NONE", ""
     leg_by_id = {leg.leg_id: leg for leg in position.legs}
     for intent_leg in intent.legs:
         position_leg = leg_by_id.get(intent_leg.leg_id)

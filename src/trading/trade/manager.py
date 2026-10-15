@@ -504,6 +504,7 @@ class TradeManager:
             fill_price,
             discovery_config=self._discovery_config,
             entry_profile=self._entry_profile,
+            multi_leg=len(intent.legs) > 1,
         )
         legs = _upsert_leg(
             existing_legs,
@@ -668,8 +669,12 @@ def _leg_exit_prices(
     *,
     discovery_config: DiscoveryConfig | None,
     entry_profile: EntryProfile,
+    multi_leg: bool = False,
 ) -> tuple[Price | None, Price | None]:
     if entry_profile is not EntryProfile.DISCOVERY or discovery_config is None:
+        return None, None
+    if multi_leg:
+        # Multi-leg structures exit on combined P&L only (no per-leg prices).
         return None, None
     config = discovery_config.exits
     stop = compute_leg_stop_price(entry_price=fill_price, side=leg.side, config=config)

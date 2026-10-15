@@ -23,6 +23,7 @@ from trading.risk.sizing.credit_spread import is_credit_spread
 from trading.trade.discovery_exits import (
     apply_discovery_trailing,
     evaluate_discovery_confirmation,
+    is_multi_leg,
     is_premium_scaled_policy,
     leg_stop_target_breached_mid,
     structure_net_debit_per_unit,
@@ -322,7 +323,12 @@ class ExitEngine:
         intent: TradeIntent,
         leg_snapshots: Mapping[str, FeatureSnapshot],
     ) -> tuple[ExitKind, str]:
-        """Check each open leg's own stop/target; never a copied strategy stop."""
+        """Check a single-leg position's own stop/target; never a copied stop.
+
+        Multi-leg structures exit on combined P&L only.
+        """
+        if is_multi_leg(position.legs):
+            return ExitKind.NONE, "no exit condition met"
         leg_by_id = {leg.leg_id: leg for leg in position.legs}
         for intent_leg in intent.legs:
             position_leg = leg_by_id.get(intent_leg.leg_id)
