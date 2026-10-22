@@ -274,11 +274,13 @@ def _credit_option_type(
     family_id: FamilyId | None,
     market: MarketState,
 ) -> OptionType | None:
-    if family_id == FamilyId.bull_put_credit:
-        return OptionType.PUT
-    if family_id == FamilyId.bear_call_credit:
-        return OptionType.CALL
     trend = market.trend.value if hasattr(market.trend, "value") else str(market.trend)
+    # A credit family is directional: it binds only when the resolved trend
+    # (strict, or the DISCOVERY fallback) agrees, mirroring bind_debit_spread.
+    if family_id == FamilyId.bull_put_credit:
+        return OptionType.PUT if trend == "UP" else None
+    if family_id == FamilyId.bear_call_credit:
+        return OptionType.CALL if trend == "DOWN" else None
     if trend == "UP":
         return OptionType.PUT
     if trend == "DOWN":
@@ -351,7 +353,7 @@ def bind_credit_spread(
                 selected_symbols=(),
                 score=_ZERO,
                 eligible=False,
-                reason_codes=(_dominant_reason(candidates, policy),),
+                reason_codes=(ReasonCode.DIRECTION_UNRESOLVED,),
                 rejected_symbols=rejected,
             ),
             candidates=(),

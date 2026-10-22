@@ -97,4 +97,6 @@ exits:
   trail_activate_fraction: "0.30"
   trail_giveback_fraction: "0.50"
   confirm_quotes: 2
+  credit_target_fraction: "0.60"         # multi-leg credit: take profit at 60% of credit
+  credit_stop_max_loss_fraction: "0.90"  # multi-leg credit: stop stays below 90% of max loss
   rest_batch_size: 50

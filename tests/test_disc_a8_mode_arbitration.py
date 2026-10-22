@@ -165,9 +165,7 @@ class TestDiscA8OpenPositionCap:
         )
         assert result.approved_intents == ()
         assert len(result.suppressed_intents) == 1
-        assert (
-            result.suppressed_intents[0].reason_code is ReasonCode.OPEN_POSITION_CAP
-        )
+        assert result.suppressed_intents[0].reason_code is ReasonCode.OPEN_POSITION_CAP
         assert result.suppressed_intents[0].candidate_intent_id == "INTENT-M4-2"
 
 

@@ -159,6 +159,14 @@ class DiscoveryExitsConfig(StrictModel):
     trail_activate_fraction: ExactDecimal = Field(gt=Decimal("0"))
     trail_giveback_fraction: ExactDecimal = Field(gt=Decimal("0"), le=Decimal("1"))
     confirm_quotes: StrictInt = Field(ge=1)
+    # Multi-leg net-credit structures: take profit at this fraction of the
+    # credit (0.5-0.7 band) and keep the stop below this fraction of max loss.
+    credit_target_fraction: ExactDecimal = Field(
+        default=Decimal("0.60"), ge=Decimal("0.50"), le=Decimal("0.70")
+    )
+    credit_stop_max_loss_fraction: ExactDecimal = Field(
+        default=Decimal("0.90"), gt=Decimal("0"), lt=Decimal("1")
+    )
     rest_batch_size: StrictInt = Field(default=50, ge=1, le=50)
 
 

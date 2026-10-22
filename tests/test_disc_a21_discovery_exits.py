@@ -148,15 +148,28 @@ def _mid_snapshot(
 
 class TestDiscoveryLegPrices:
     def test_strangle_per_leg_stops_and_targets(self) -> None:
-        """Oracle 2026-09-28 long strangle leg prices from each entry."""
-        legs = apply_discovery_leg_exit_prices(_strangle_legs(), EXITS)
-        put, call = legs
-        assert put.current_stop_price == f.price("89.20")
-        assert put.current_target_price == f.price("247.05")
-        assert call.current_stop_price == f.price("131.75")
-        assert call.current_target_price == f.price("364.95")
-        assert put.current_stop_price != call.current_stop_price
-        assert put.current_target_price != call.current_target_price
+        """Per-leg prices derive from each entry; multi-leg legs are not stamped.
+
+        Multi-leg structures exit on combined structure P&L only, so the
+        per-leg prices are computed but never stamped on the legs.
+        """
+        put, call = _strangle_legs()
+        prices = {
+            leg.leg_id: (
+                compute_leg_stop_price(
+                    entry_price=leg.average_entry_price, side=leg.side, config=EXITS
+                ),
+                compute_leg_target_price(
+                    entry_price=leg.average_entry_price, side=leg.side, config=EXITS
+                ),
+            )
+            for leg in (put, call)
+        }
+        assert prices["put"] == (f.price("89.20"), f.price("247.05"))
+        assert prices["call"] == (f.price("131.75"), f.price("364.95"))
+        stamped = apply_discovery_leg_exit_prices((put, call), EXITS)
+        assert all(leg.current_stop_price is None for leg in stamped)
+        assert all(leg.current_target_price is None for leg in stamped)
 
     def test_straddle_structure_pnl_bounds(self) -> None:
         """Long straddle ~22950: CE 176.05 + PE 200.65 per unit."""
@@ -223,7 +236,8 @@ class TestDiscoveryLegPrices:
             for leg in legs
             if leg.current_stop_price
         )
-        assert len({leg.current_stop_price for leg in legs}) == 2
+        # Multi-leg: no per-leg stop at all (combined structure P&L only).
+        assert all(leg.current_stop_price is None for leg in legs)
 
     def test_strict_tick_policy_unchanged(self) -> None:
         """STRICT keeps 40-tick policy (Rs 130 stop on qty 65)."""

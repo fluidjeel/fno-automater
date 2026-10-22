@@ -109,7 +109,9 @@ def reset_paper_portfolio(
     ctx.runner.recover_lifecycle()
     ctx.store.set_system_state(SystemState.READY, last_reconciliation_ref=None)
     boot = ctx.runner._services.reconciler.boot_reconcile(ctx.account.config.account_id)
-    ctx.runner._maybe_release_entry_freeze(reconcile_blocked=boot.result.entries_blocked)
+    ctx.runner._maybe_release_entry_freeze(
+        reconcile_blocked=boot.result.entries_blocked
+    )
     controls = ctx.runner._services.controls
     if controls.state.entry_frozen:
         controls.release_entry_freeze(
@@ -181,9 +183,7 @@ def _administrative_close(
         payload["positions"] = [
             row
             for row in positions
-            if not (
-                isinstance(row, dict) and row.get("trade_id") == record.trade_id
-            )
+            if not (isinstance(row, dict) and row.get("trade_id") == record.trade_id)
         ]
         ctx.broker.load_state(payload)
 
