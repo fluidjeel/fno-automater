@@ -33,6 +33,7 @@ from trading.domain.enums import (
     ReasonCode,
 )
 from trading.domain.primitives import Money
+from trading.trade.intent_family import family_id_from_legs
 
 __all__ = [
     "assess_m2_thesis",
@@ -141,7 +142,8 @@ def assess_m2_thesis(
         market.calculated_at.astimezone(market.calculated_at.tzinfo).date()
         == session_date
     )
-    family = intent.family_id
+    from_legs = family_id_from_legs(intent)
+    family = from_legs.value if from_legs is not None else intent.family_id
     trend = market.trend
     if family == FamilyId.long_call.value:
         still_valid = trend in {TrendState.UP, TrendState.RANGE}

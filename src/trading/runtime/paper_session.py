@@ -473,7 +473,10 @@ class PaperSession:
                 continue
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
-            if not (self._open <= local.time() <= self._close) and not self._has_open_positions():
+            if (
+                not (self._open <= local.time() <= self._close)
+                and not self._has_open_positions()
+            ):
                 continue
             try:
                 self._protection.refresh_subscriptions()

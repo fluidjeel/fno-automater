@@ -77,6 +77,7 @@ from trading.domain.enums import (
     FamilyId,
     HoldingStyle,
     InstrumentKind,
+    M2EodMode,
     ModeId,
     OrderPlanState,
     OrderState,
@@ -162,6 +163,7 @@ from trading.trade.carry_gate import (
     resolve_carry_market,
 )
 from trading.trade.exits import ExitEvaluation, ExitKind, strategy_unrealized_pnl
+from trading.trade.intent_family import validate_intent_family_alignment
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
@@ -1163,6 +1165,7 @@ class PaperRunner:
         config = load_carry_gate_config()
         decisions: list[PositionCarryRecord] = []
         exit_events: list[OrderEvent] = []
+        positional_eod = config.m2_eod_mode is M2EodMode.POSITIONAL
         for position in self._services.trade_manager.list_positions():
             if position.state is not TradeState.OPEN:
                 continue
@@ -1177,6 +1180,35 @@ class PaperRunner:
             persisted = self._services.store.get_position_lifecycle(position.trade_id)
             prior = persisted.carry_records if persisted is not None else ()
             if any(item.session_date == session_date for item in prior):
+                continue
+            if positional_eod:
+                self._services.trade_manager.clear_intraday_time_exit(
+                    position.trade_id, now=now
+                )
+                carried = intent.model_copy(
+                    update={
+                        "exit_template": intent.exit_template.model_copy(
+                            update={"time_exit": None}
+                        ),
+                    }
+                )
+                self._open_book[position.trade_id] = (carried, decision)
+                outcome = CarryGateDecision(
+                    trade_id=position.trade_id,
+                    session_date=session_date,
+                    action=CarryGateAction.CARRY_APPROVED,
+                    mode_id=ModeId.M2_DIRECTIONAL,
+                    reason_code=ReasonCode.OK,
+                    detail="positional EOD mode; carry flatten disabled",
+                    exit_initiated=False,
+                    as_of=now,
+                    decision_id=self._ids.new_id("CRG"),
+                )
+                record = _stamp_carry(
+                    outcome, carry_id=self._ids.new_id("CRR"), now=now
+                )
+                self._write_lifecycle(position.trade_id, extra_carry=(record,))
+                decisions.append(record)
                 continue
             remaining_dte = _remaining_dte(position, intent, snapshots)
             if remaining_dte is None:
@@ -2986,8 +3018,6 @@ class PaperRunner:
         }
         if request.forced_mode_id is not None:
             intent_updates["mode_id"] = request.forced_mode_id
-        if request.forced_family_id is not None:
-            intent_updates["family_id"] = request.forced_family_id
         intents = tuple(
             intent.model_copy(
                 update={
@@ -3003,7 +3033,35 @@ class PaperRunner:
         )
         rejection_reasons = tuple(item.reason for item in decision.rejections)
         rejection_details = tuple(item.detail for item in decision.rejections)
+        kept_intents: list[TradeIntent] = []
+        for intent in intents:
+            mismatch = validate_intent_family_alignment(
+                intent,
+                producer_family_id=request.forced_family_id,
+            )
+            if mismatch is not None:
+                rejection_reasons = (*rejection_reasons, ReasonCode.FAMILY_ID_MISMATCH)
+                rejection_details = (*rejection_details, mismatch)
+                continue
+            kept_intents.append(intent)
+        intents = tuple(kept_intents)
         strict_would_block = decision.strict_would_block
+        if decision.intents and not intents:
+            early = _outcome_from_request(
+                request,
+                strategy_id=request.strategy_id,
+                snapshot_id=request.underlying.snapshot_id,
+                intents=(),
+                rejection_reasons=rejection_reasons,
+                decisions=(),
+                order_events=(),
+                strategy_version=getattr(strategy, "strategy_version", "unknown"),
+                executed=request.execute,
+                rejection_details=rejection_details,
+                strict_would_block=strict_would_block,
+                record_stage=DiscoveryStage.STRATEGY,
+            )
+            return _StrategyEvalRecord(request=request, early_outcome=early)
         if not decision.intents:
             stage = (
                 DiscoveryStage.DIRECTION
@@ -3327,6 +3385,7 @@ class PaperRunner:
         risk: RiskDecision,
         request: PaperStrategyRequest,
     ) -> tuple[OrderEvent, ...]:
+        intent = _m2_intent_for_submission(intent)
         feature = _feature_for(intent, request)
         plan = self._services.planner.build(
             OrderPlanRequest(
@@ -3603,6 +3662,24 @@ def _versions_from(account_config: LoadedConfig) -> Versions:
         code_version="0.1.0",
         config_version=account_config.version,
         config_checksum=account_config.checksum,
+    )
+
+
+def _m2_intent_for_submission(intent: TradeIntent) -> TradeIntent:
+    """Drop intraday time_exit for Mode 2 when positional EOD mode is configured."""
+    config = load_carry_gate_config()
+    if config.m2_eod_mode is not M2EodMode.POSITIONAL:
+        return intent
+    if intent.mode_id is not ModeId.M2_DIRECTIONAL:
+        return intent
+    if intent.exit_template.time_exit is None:
+        return intent
+    return intent.model_copy(
+        update={
+            "exit_template": intent.exit_template.model_copy(
+                update={"time_exit": None}
+            ),
+        }
     )
 
 
