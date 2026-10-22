@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
@@ -318,6 +319,8 @@ class PaperSession:
         self._drawdown_alerts = DrawdownAlertTracker()
         self._data_feed_alerts = DataFeedAlertTracker()
         self._feed_cycle_backoff_seconds = float(session_config.poll_interval_seconds)
+        self._protection_stop = threading.Event()
+        self._protection_thread: threading.Thread | None = None
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -415,9 +418,11 @@ class PaperSession:
             self._protection.set_m1_quote_handler(m1_handler)
             self._protection.refresh_subscriptions()
             self._protection.start()
+            self._start_protection_scheduler()
         try:
             return self._run_loop(once=once)
         finally:
+            self._stop_protection_scheduler()
             if self._protection is not None:
                 self._protection.stop()
 
@@ -438,6 +443,43 @@ class PaperSession:
         now = self._clock.now_utc()
         local = now.astimezone(self._zone)
         return self._past_eod(local.time())
+
+    def _start_protection_scheduler(self) -> None:
+        """REST position watching on its own cadence while L1 scans may block."""
+        if self._protection is None or self._protection_thread is not None:
+            return
+        self._protection_stop.clear()
+        thread = threading.Thread(
+            target=self._protection_scheduler_loop,
+            name="paper-protection",
+            daemon=True,
+        )
+        self._protection_thread = thread
+        thread.start()
+
+    def _stop_protection_scheduler(self) -> None:
+        if self._protection_thread is None:
+            return
+        self._protection_stop.set()
+        self._protection_thread.join(timeout=10.0)
+        self._protection_thread = None
+
+    def _protection_scheduler_loop(self) -> None:
+        """Keep protection heartbeat and REST quotes alive during long strategy scans."""
+        interval = float(self._config.protection.rest_poll_seconds)
+        log = logging.getLogger(__name__)
+        while not self._protection_stop.wait(timeout=interval):
+            if self._protection is None:
+                continue
+            now = self._clock.now_utc()
+            local = now.astimezone(self._zone)
+            if not (self._open <= local.time() <= self._close) and not self._has_open_positions():
+                continue
+            try:
+                self._protection.refresh_subscriptions()
+                self._protection.tick(should_stop=self._should_stop_session)
+            except Exception:
+                log.exception("protection scheduler tick failed")
 
     def _run_loop(self, *, once: bool) -> int:
         while True:
