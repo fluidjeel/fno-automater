@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from trading.config.m2_ab_study import LoadedM2AbStudyConfig, load_m2_ab_study_config
+from trading.config.risk_policy import load_risk_policy
 from trading.domain.contracts.intent import TradeIntent
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.snapshot import FeatureSnapshot
 from trading.domain.enums import ModeId, TradeState
-from trading.domain.primitives import Currency, Money
+from trading.domain.primitives import Money
 from trading.portfolio.campaign_drawdown import trade_accounting
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.trade.exits import strategy_unrealized_pnl
@@ -70,7 +71,7 @@ class M2AbStudy:
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
 
-    def run_cycle(
+    def run_cycle(  # noqa: PLR0912 - one pass over shadow and live trades
         self,
         runner: PaperRunner,
         snapshots: dict[str, FeatureSnapshot],
@@ -87,7 +88,7 @@ class M2AbStudy:
             mode = position.mode_id
             if mode is not ModeId.M2_DIRECTIONAL:
                 continue
-            book = runner._open_book.get(position.trade_id)  # noqa: SLF001
+            book = runner._open_book.get(position.trade_id)
             if book is None:
                 continue
             intent, risk = book
@@ -120,14 +121,16 @@ class M2AbStudy:
             snap = snapshots.get(shadow.symbol)
             if snap is None:
                 continue
-            leg_snaps_map = {}
-            for leg in shadow.intent.legs:
-                if leg.contract.symbol in snapshots:
-                    leg_snaps_map[leg.leg_id] = snapshots[leg.contract.symbol]
-            position = runner.trade_manager.get_position(trade_id)
-            if position is None or position.state is not TradeState.OPEN:
+            leg_snaps_map: dict[str, FeatureSnapshot] = {}
+            for intent_leg in shadow.intent.legs:
+                if intent_leg.contract.symbol in snapshots:
+                    leg_snaps_map[intent_leg.leg_id] = snapshots[
+                        intent_leg.contract.symbol
+                    ]
+            live = runner.trade_manager.get_position(trade_id)
+            if live is None or live.state is not TradeState.OPEN:
                 continue
-            pnl = strategy_unrealized_pnl(position, shadow.intent, leg_snaps_map)
+            pnl = strategy_unrealized_pnl(live, shadow.intent, leg_snaps_map)
             if pnl is None:
                 continue
             should_exit, detail = evaluate_m2_pre_close_early_exit(
@@ -154,7 +157,7 @@ class M2AbStudy:
                     "mode_a_still_open": True,
                 },
             )
-            b_rec = {
+            b_rec: dict[str, object] = {
                 "trade_id": trade_id,
                 "exit_at": now.isoformat(),
                 "mode_b_gross_inr": str(gross.quantize(Decimal("0.01"))),
@@ -171,16 +174,14 @@ class M2AbStudy:
 
     def _flush_mode_a_closes(self, runner: PaperRunner, *, now: datetime) -> None:
         cfg = self._loaded.config
-        store = runner._services.store  # noqa: SLF001
+        store = runner._services.store
         orders = index_order_events(store)
         charges = index_fill_charges(store)
-        from trading.config.risk_policy import load_risk_policy
-
         charges_per_lot = load_risk_policy(
             self._root / "config/risk.yaml"
         ).config.charges_per_lot.to_money()
         for record in store.list_position_lifecycle():
-            if record.state is not TradeState.CLOSED:
+            if record.position.state is not TradeState.CLOSED:
                 continue
             mode = record.mode_id or record.position.mode_id
             if mode is not ModeId.M2_DIRECTIONAL:
@@ -188,9 +189,9 @@ class M2AbStudy:
             if record.trade_id in self._logged_closed_a:
                 continue
             closed_at = record.as_of
-            if closed_at is None:
-                continue
-            acct = trade_accounting(record, orders, charges, charges_per_lot=charges_per_lot)
+            acct = trade_accounting(
+                record, orders, charges, charges_per_lot=charges_per_lot
+            )
             exit_reason = self._infer_exit_reason(record)
             self._append(
                 cfg.mode_a_results_file,
@@ -257,7 +258,8 @@ class M2AbStudy:
         carries = record.carry_records or ()
         if carries and carries[-1].action.value == "CARRY_REJECTED":
             return "CARRY_GATE_FLATTEN"
-        for leg in record.position.legs:
-            if leg.state is TradeState.CLOSED:
-                return "LAYER2_OR_DISCOVERY_EXIT"
+        # PositionLegState carries no per-leg state; a closed trade with exit
+        # orders was closed by the Layer-2/DISCOVERY exit path.
+        if record.exit_order_ids:
+            return "LAYER2_OR_DISCOVERY_EXIT"
         return "OTHER"

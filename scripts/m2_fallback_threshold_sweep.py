@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0912, PLR0915, PLR2004, PLC0415 - offline research script
 #!/usr/bin/env python3
 """Sweep discovery ``fallback_trend_threshold`` vs actual M2 book (Oracle window)."""
 
@@ -5,11 +6,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from trading.config.discovery import load_discovery_config
 from trading.config.risk_policy import load_risk_policy
@@ -27,9 +28,7 @@ from trading.portfolio.campaign_drawdown import trade_accounting
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.runtime.discovery_decision_recorder import query_decisions
 from trading.storage.trading_store import TradingStore
-from trading.trade.exits import ExitEngine, ExitKind
-
-import sys
+from trading.trade.exits import ExitEngine
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -100,9 +99,7 @@ def direction_only_block(rows: list[object]) -> bool:
     return False
 
 
-def load_all_decisions(
-    store: TradingStore, start: date, end: date
-) -> list[object]:
+def load_all_decisions(store: TradingStore, start: date, end: date) -> list[object]:
     rows: list[object] = []
     for i in range((end - start).days + 1):
         day = date.fromordinal(start.toordinal() + i)
@@ -121,8 +118,7 @@ def marginal_signals(
     out: list[tuple[datetime, str, str]] = []
     for cid, rows in by_cycle.items():
         if any(
-            r.stage is DiscoveryStage.FILL
-            and r.decision is DiscoveryDecisionKind.TRADE
+            r.stage is DiscoveryStage.FILL and r.decision is DiscoveryDecisionKind.TRADE
             for r in rows
         ):
             continue
@@ -145,9 +141,7 @@ def marginal_signals(
     return out
 
 
-def pick_contract(
-    root: Path, at: datetime, bias: str
-) -> tuple[str, Decimal] | None:
+def pick_contract(root: Path, at: datetime, bias: str) -> tuple[str, Decimal] | None:
     opt = "CE" if bias == "bull" else "PE"
     day_dir = root / "data/raw/fyers" / at.astimezone(IST).date().isoformat()
     if not day_dir.is_dir():
@@ -170,7 +164,7 @@ def pick_contract(
             best_path = path
     if best_path is None or best_skew > timedelta(minutes=20):
         return None
-    chain = (json.loads(best_path.read_text())["payload"]["data"]["optionsChain"])
+    chain = json.loads(best_path.read_text())["payload"]["data"]["optionsChain"]
     candidates: list[tuple[Decimal, str, Decimal]] = []
     for row in chain:
         sym = row.get("symbol") or ""
@@ -376,7 +370,9 @@ def peak_capital(trades: list[TradeSim]) -> Decimal:
     return peak.quantize(Decimal("0.01"))
 
 
-def caught_major_moves(trades: list[TradeSim], nifty_by_day: dict[date, Decimal]) -> int:
+def caught_major_moves(
+    trades: list[TradeSim], nifty_by_day: dict[date, Decimal]
+) -> int:
     caught = 0
     for day in MAJOR_MOVE_DAYS:
         move = nifty_by_day.get(day)
@@ -464,7 +460,9 @@ def main() -> None:
         leg = (rec.position.entry_legs or rec.position.legs)[0]
         prem = leg.average_entry_price.value * Decimal(leg.quantity_contracts)
         fam = str(rec.intent.family_id)
-        direction = "bull" if fam == "long_call" else "bear" if fam == "long_put" else ""
+        direction = (
+            "bull" if fam == "long_call" else "bear" if fam == "long_put" else ""
+        )
         actual_trades.append(
             TradeSim(
                 trade_id=rec.trade_id,
@@ -498,7 +496,9 @@ def main() -> None:
             if picked is not None:
                 symbols.add(picked[0])
 
-    snaps = load_chain_snaps(root, symbols, start, date.fromisoformat(args.data_to_date))
+    snaps = load_chain_snaps(
+        root, symbols, start, date.fromisoformat(args.data_to_date)
+    )
 
     sim_by_threshold: dict[str, list[TradeSim]] = {
         str(t): list(actual_trades) for t in THRESHOLDS
@@ -545,7 +545,9 @@ def main() -> None:
         trades.sort(key=lambda t: t.closed_at)
         net = sum(t.net for t in trades)
         synths = [t for t in trades if t.synthetic]
-        added_losing = sum(1 for t in synths if t.net < 0) if threshold != BASELINE else 0
+        added_losing = (
+            sum(1 for t in synths if t.net < 0) if threshold != BASELINE else 0
+        )
         rows_out.append(
             {
                 "fallback_trend_threshold": str(threshold),

@@ -29,12 +29,11 @@ from trading.domain.enums import (
     CarryGateAction,
     DataQuality,
     FamilyId,
-    M2EodMode,
     ModeId,
     ReasonCode,
 )
-from trading.trade.intent_family import family_id_from_legs
 from trading.domain.primitives import Money
+from trading.trade.intent_family import family_id_from_legs
 
 __all__ = [
     "assess_m2_thesis",

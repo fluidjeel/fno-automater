@@ -156,7 +156,6 @@ from trading.trade import (
     assert_stop_not_wider,
     monitor_leg,
 )
-from trading.trade.intent_family import validate_intent_family_alignment
 from trading.trade.carry_gate import (
     build_m2_carry_gate_input,
     evaluate_m2_carry_gate,
@@ -164,6 +163,7 @@ from trading.trade.carry_gate import (
     resolve_carry_market,
 )
 from trading.trade.exits import ExitEvaluation, ExitKind, strategy_unrealized_pnl
+from trading.trade.intent_family import validate_intent_family_alignment
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
@@ -3676,7 +3676,9 @@ def _m2_intent_for_submission(intent: TradeIntent) -> TradeIntent:
         return intent
     return intent.model_copy(
         update={
-            "exit_template": intent.exit_template.model_copy(update={"time_exit": None}),
+            "exit_template": intent.exit_template.model_copy(
+                update={"time_exit": None}
+            ),
         }
     )
 

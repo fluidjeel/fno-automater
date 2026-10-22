@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -31,13 +31,14 @@ def evaluate_m2_pre_close_early_exit(
     if unrealized_pnl.amount >= Decimal(0):
         return False, ""
     loss = (-unrealized_pnl.amount).quantize(Decimal("0.01"))
-    threshold = (max_loss.amount * config.early_exit.min_loss_fraction_of_max_loss).quantize(
-        Decimal("0.01")
-    )
+    threshold = (
+        max_loss.amount * config.early_exit.min_loss_fraction_of_max_loss
+    ).quantize(Decimal("0.01"))
     if loss < threshold:
         return False, ""
     detail = (
         f"pre-close early exit: loss {loss} >= "
-        f"{config.early_exit.min_loss_fraction_of_max_loss} * max_loss {max_loss.amount}"
+        f"{config.early_exit.min_loss_fraction_of_max_loss} * max_loss "
+        f"{max_loss.amount}"
     )
     return True, detail

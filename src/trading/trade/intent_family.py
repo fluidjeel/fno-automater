@@ -12,7 +12,13 @@ __all__ = [
 
 
 def family_id_from_legs(intent: TradeIntent) -> FamilyId | None:
-    """Derive long_call/long_put from the first option leg, if present."""
+    """Derive long_call/long_put for a single-leg option intent.
+
+    Multi-leg structures (spreads, condors, straddles) are not long_call/long_put,
+    so no family is derived from their legs.
+    """
+    if len(intent.legs) != 1:
+        return None
     for leg in intent.legs:
         contract = leg.contract
         if contract.instrument_kind is not InstrumentKind.OPTION:
@@ -36,10 +42,7 @@ def validate_intent_family_alignment(
         return "trade intent missing family_id"
     from_legs = family_id_from_legs(intent)
     if from_legs is not None and declared != from_legs.value:
-        return (
-            f"family_id {declared!r} does not match option leg "
-            f"({from_legs.value!r})"
-        )
+        return f"family_id {declared!r} does not match option leg ({from_legs.value!r})"
     if producer_family_id is not None and declared != producer_family_id.value:
         return (
             f"family_id {declared!r} does not match producer slot "

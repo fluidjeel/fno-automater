@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0912, PLR0915, PLR0917, F841, E501 - offline research script
 #!/usr/bin/env python3
 """Sweep Layer 2 pnl_stop width for M2 positional replay (Oracle chain snapshots)."""
 
@@ -5,11 +6,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from trading.config.discovery import load_discovery_config
 from trading.config.risk_policy import load_risk_policy
@@ -20,8 +21,6 @@ from trading.portfolio.campaign_drawdown import trade_accounting
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.storage.trading_store import TradingStore
 from trading.trade.exits import ExitEngine, ExitKind
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,8 +35,8 @@ from m2_positional_no_eod_replay import (
     _snap_for_leg,
     load_chain_snaps,
 )
+
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
-from trading.domain.enums import TradeState
 from trading.trade.discovery_exits import structure_unrealized_pnl_mid
 
 WIDTHS = (
@@ -260,11 +259,15 @@ def _aggregate(
     for r in rows:
         if not r.held_overnight_sim or r.sim_net is None:
             continue
-        is_stop = r.stop_at_open or r.max_loss_hit_overnight or (
-            r.sim_exit_detail
-            and (
-                "P&L stop" in r.sim_exit_detail
-                or "OPENING_RANGE" in r.sim_exit_detail
+        is_stop = (
+            r.stop_at_open
+            or r.max_loss_hit_overnight
+            or (
+                r.sim_exit_detail
+                and (
+                    "P&L stop" in r.sim_exit_detail
+                    or "OPENING_RANGE" in r.sim_exit_detail
+                )
             )
         )
         if is_stop:
@@ -339,7 +342,9 @@ def main() -> None:
         symbols.add(leg.contract.symbol)
 
     records.sort(key=lambda r: r.position.opened_at or datetime.min.replace(tzinfo=IST))
-    snaps = load_chain_snaps(root, symbols, start, date.fromisoformat(args.data_to_date))
+    snaps = load_chain_snaps(
+        root, symbols, start, date.fromisoformat(args.data_to_date)
+    )
     opening_ranges = build_opening_ranges(snaps, symbols)
 
     intraday_rows: list[SimTrade] = []
@@ -358,7 +363,9 @@ def main() -> None:
                 sim_net=acct.realized_net.amount,
                 sim_exit_at=rec.as_of,
                 sim_exit_detail="intraday_actual_book",
-                held_overnight_original=_session_date(rec.position.opened_at or rec.as_of)
+                held_overnight_original=_session_date(
+                    rec.position.opened_at or rec.as_of
+                )
                 < _session_date(rec.as_of)
                 if rec.position.opened_at
                 else False,
@@ -463,7 +470,11 @@ def main() -> None:
     baseline = results[1].net_pnl_inr if len(results) > 1 else Decimal(0)
     table = []
     for row in results:
-        delta = row.net_pnl_inr - actual_total if row.label != "INTRADAY_EOD_ACTUAL" else Decimal(0)
+        delta = (
+            row.net_pnl_inr - actual_total
+            if row.label != "INTRADAY_EOD_ACTUAL"
+            else Decimal(0)
+        )
         vs_pos_100 = (
             row.net_pnl_inr - baseline
             if row.label.startswith("POSITIONAL") and row.width_pct != "100%"
@@ -498,9 +509,7 @@ def main() -> None:
     out = {
         "period_ist": f"{start}..{end}",
         "m2_trades": len(records),
-        "opening_range_sessions_modelled": len(
-            {key[0] for key in opening_ranges}
-        ),
+        "opening_range_sessions_modelled": len({key[0] for key in opening_ranges}),
         "opening_range_symbol_days": len(opening_ranges),
         "caveats": [
             "Positional paths use sparse Fyers options-chain-v3 snapshots, not tick quotes.",

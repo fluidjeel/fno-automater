@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0915, F841 - offline research script
 #!/usr/bin/env python3
 """Sweep M2 session flatten clock (carry-reject path) on Oracle chain replay."""
 
@@ -5,10 +6,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from trading.config.risk_policy import load_risk_policy
 from trading.domain.clock import WallClock
@@ -18,8 +19,6 @@ from trading.domain.primitives import Money
 from trading.portfolio.campaign_drawdown import trade_accounting
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.storage.trading_store import TradingStore
-
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -76,7 +75,10 @@ def _bid_at_flatten(
     """First chain bid on ``session_day`` at or after ``flatten_at`` (or entry)."""
     open_local = opened.astimezone(IST)
     cutoff = flatten_at
-    if _session_date(opened) == session_day and open_local.timetz().replace(tzinfo=None) > cutoff:
+    if (
+        _session_date(opened) == session_day
+        and open_local.timetz().replace(tzinfo=None) > cutoff
+    ):
         cutoff = open_local.timetz().replace(tzinfo=None)
     for snap in snaps:
         at = snap["at"]
@@ -161,7 +163,9 @@ def main() -> None:
         symbols.add(leg.contract.symbol)
 
     records.sort(key=lambda r: r.position.opened_at or datetime.min.replace(tzinfo=IST))
-    snaps = load_chain_snaps(root, symbols, start, date.fromisoformat(args.data_to_date))
+    snaps = load_chain_snaps(
+        root, symbols, start, date.fromisoformat(args.data_to_date)
+    )
 
     actual_total = Decimal(0)
     for rec in records:

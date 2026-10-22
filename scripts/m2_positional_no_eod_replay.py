@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0912, PLR0915, PLR2004, F841 - offline research script
 """Counterfactual M2 replay: same entries, discovery exits, no M2 carry/EOD flatten."""
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from trading.domain.contracts import (
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.contracts.snapshot import DerivativesContext
 from trading.domain.enums import DataQuality, ModeId, TradeState
-from trading.domain.primitives import Currency, Money, Price, TickSize
+from trading.domain.primitives import Money, Price, TickSize
 from trading.portfolio.campaign_drawdown import trade_accounting
 from trading.portfolio.fill_ledger import index_fill_charges, index_order_events
 from trading.storage.trading_store import TradingStore
@@ -61,7 +62,9 @@ def load_chain_snaps(
             blob = json.loads(path.read_text(encoding="utf-8"))
             if blob.get("endpoint") != "options-chain-v3":
                 continue
-            chain = (blob.get("payload") or {}).get("data", {}).get("optionsChain") or []
+            chain = (blob.get("payload") or {}).get("data", {}).get(
+                "optionsChain"
+            ) or []
             ts = parse_ts(blob["received_at"])
             quotes: dict[str, dict[str, Decimal | None]] = {}
             for row in chain:
@@ -69,8 +72,12 @@ def load_chain_snaps(
                 if sym not in symbols:
                     continue
                 quotes[sym] = {
-                    "bid": Decimal(str(row["bid"])) if row.get("bid") is not None else None,
-                    "ask": Decimal(str(row["ask"])) if row.get("ask") is not None else None,
+                    "bid": Decimal(str(row["bid"]))
+                    if row.get("bid") is not None
+                    else None,
+                    "ask": Decimal(str(row["ask"]))
+                    if row.get("ask") is not None
+                    else None,
                 }
             if quotes:
                 snaps.append({"at": ts, "quotes": quotes})
@@ -240,8 +247,14 @@ def simulate_trade(
             bid = q.get("bid")
             if bid is not None:
                 gross = (bid - entry_px) * Decimal(qty)
-                lots = rec.risk_decision.approved_legs[0].lots.count if rec.risk_decision.approved_legs else 1
-                charges = (charges_per_lot.amount * Decimal(lots) * 2).quantize(Decimal("0.01"))
+                lots = (
+                    rec.risk_decision.approved_legs[0].lots.count
+                    if rec.risk_decision.approved_legs
+                    else 1
+                )
+                charges = (charges_per_lot.amount * Decimal(lots) * 2).quantize(
+                    Decimal("0.01")
+                )
                 sim_net = gross - charges
                 sim_exit_at = at
                 sim_exit_detail = ev.detail
@@ -374,9 +387,7 @@ def main() -> None:
     for rec, row in zip(records, sim_rows, strict=True):
         opened = rec.position.opened_at
         if opened:
-            hold_hours_actual.append(
-                (rec.as_of - opened).total_seconds() / 3600.0
-            )
+            hold_hours_actual.append((rec.as_of - opened).total_seconds() / 3600.0)
         if row.sim_exit_at and opened:
             hold_hours_sim.append((row.sim_exit_at - opened).total_seconds() / 3600.0)
         peak_capital = max(peak_capital, row.entry_premium)
@@ -413,9 +424,7 @@ def main() -> None:
         )
         if hold_hours_actual
         else None,
-        "avg_hold_hours_positional": round(
-            sum(hold_hours_sim) / len(hold_hours_sim), 2
-        )
+        "avg_hold_hours_positional": round(sum(hold_hours_sim) / len(hold_hours_sim), 2)
         if hold_hours_sim
         else None,
         "peak_capital_tied_up_inr": str(peak_capital.quantize(Decimal("0.01"))),

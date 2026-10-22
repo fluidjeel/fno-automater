@@ -1,5 +1,3 @@
-"""Opening-range adverse excursion from sparse chain snapshots (9:15–9:35 IST)."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -28,7 +26,7 @@ def build_opening_ranges(
     snaps: list[dict],
     symbols: set[str],
 ) -> dict[tuple[date, str], OpeningRange]:
-    """Aggregate min/max bid in 09:15–09:35 IST per symbol per session."""
+    """Aggregate min/max bid in 09:15-09:35 IST per symbol per session."""
     mins: dict[tuple[date, str], Decimal] = {}
     maxs: dict[tuple[date, str], Decimal] = {}
     counts: dict[tuple[date, str], int] = {}

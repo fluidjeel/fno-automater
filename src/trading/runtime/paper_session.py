@@ -120,6 +120,7 @@ from trading.runtime.m1_poll_ingress import (
     feed_m1_poll_provider_event,
     m1_poll_watch_symbols,
 )
+from trading.runtime.m2_ab_study import M2AbStudy
 from trading.runtime.m2_chain import following_week_epoch, monthly_window_epoch
 from trading.runtime.notify import (
     format_eod_report,
@@ -138,7 +139,6 @@ from trading.runtime.protection import (
     build_protection_coordinator,
 )
 from trading.runtime.rest_quote_monitor import RestQuoteMonitor, RestQuoteRateLimitError
-from trading.runtime.m2_ab_study import M2AbStudy
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.runtime.session_heartbeat import write_session_heartbeat
 from trading.runtime.session_routing import ProducedFamilyRequest, SessionRoutingProfile
@@ -481,7 +481,10 @@ class PaperSession:
                 continue
             now = self._clock.now_utc()
             local = now.astimezone(self._zone)
-            if not (self._open <= local.time() <= self._close) and not self._has_open_positions():
+            if (
+                not (self._open <= local.time() <= self._close)
+                and not self._has_open_positions()
+            ):
                 continue
             try:
                 self._protection.refresh_subscriptions()
@@ -583,9 +586,7 @@ class PaperSession:
         self._record_portfolio_risk(snapshots)
         self._run_due_reviews(snapshots)
         if snapshots and self._m2_ab_study.enabled:
-            self._m2_ab_study.run_cycle(
-                self._runner, dict(snapshots), now=now
-            )
+            self._m2_ab_study.run_cycle(self._runner, dict(snapshots), now=now)
         self._run_due_m2_carry_gate(snapshots, now)
         self._cycle_count += 1
         if self._discovery_config is not None:

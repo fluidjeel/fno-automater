@@ -12,7 +12,6 @@ from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.enums import ModeId
 from trading.storage.trading_store import TradingStore
 from trading.trade.intent_family import (
-    family_id_from_legs,
     validate_intent_family_alignment,
 )
 

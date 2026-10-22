@@ -1,3 +1,4 @@
+# ruff: noqa: PLR0912, PLR0915, PLR2004 - offline research script
 #!/usr/bin/env python3
 """M2 caught vs missed major Nifty session moves (Oracle paper window)."""
 
@@ -59,7 +60,9 @@ def load_nifty_session_series(
             blob = json.loads(path.read_text(encoding="utf-8"))
             if blob.get("endpoint") != "options-chain-v3":
                 continue
-            chain = (blob.get("payload") or {}).get("data", {}).get("optionsChain") or []
+            chain = (blob.get("payload") or {}).get("data", {}).get(
+                "optionsChain"
+            ) or []
             ltp: Decimal | None = None
             for row in chain:
                 if row.get("strike_price") == -1 and "NIFTY50-INDEX" in (
@@ -273,7 +276,9 @@ def main() -> None:
     # Major moves: |session_pct| >= threshold, plus ensure we include top movers
     majors = [d for d in daily if abs(Decimal(d["session_pct"])) >= BIG_MOVE_PCT]
     if args.top_n > 0:
-        by_abs = sorted(daily, key=lambda x: abs(Decimal(x["session_pct"])), reverse=True)
+        by_abs = sorted(
+            daily, key=lambda x: abs(Decimal(x["session_pct"])), reverse=True
+        )
         for row in by_abs[: args.top_n]:
             if row not in majors:
                 majors.append(row)
@@ -324,7 +329,7 @@ def main() -> None:
         for rec in records:
             acct = trade_accounting(rec, orders, charges_ix, charges_per_lot=cpl)
             cd = rec.as_of.astimezone(IST).date()
-            if cd == day or cd == next_day:
+            if cd in {day, next_day}:
                 close_attr += acct.realized_net.amount
 
         bench_pts = Decimal(row["session_pts"])
@@ -387,7 +392,9 @@ def main() -> None:
                 ],
                 "m2_fill_pnl_day": str(m2_day_net.quantize(Decimal("0.01"))),
                 "m2_fill_pnl_next": str(m2_next_net.quantize(Decimal("0.01"))),
-                "m2_close_attrib_day_or_next": str(close_attr.quantize(Decimal("0.01"))),
+                "m2_close_attrib_day_or_next": str(
+                    close_attr.quantize(Decimal("0.01"))
+                ),
                 "m2_pnl_used": str(attr.quantize(Decimal("0.01"))),
                 "bench_1lot_nifty_pnl": str(bench_pnl),
                 "label": label,
@@ -406,8 +413,12 @@ def main() -> None:
                     "major_move_count": len(move_rows),
                     "caught_profit_days": caught,
                     "missed_or_wrong_days": missed,
-                    "m2_net_pnl_on_caught_days": str(pnl_caught.quantize(Decimal("0.01"))),
-                    "m2_net_pnl_on_missed_days": str(pnl_missed.quantize(Decimal("0.01"))),
+                    "m2_net_pnl_on_caught_days": str(
+                        pnl_caught.quantize(Decimal("0.01"))
+                    ),
+                    "m2_net_pnl_on_missed_days": str(
+                        pnl_missed.quantize(Decimal("0.01"))
+                    ),
                     "total_m2_closed_in_window": len(records),
                 },
             },

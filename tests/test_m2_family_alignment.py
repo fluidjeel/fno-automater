@@ -62,3 +62,34 @@ def test_validate_accepts_aligned_put_slot() -> None:
         )
         is None
     )
+
+
+def test_multi_leg_family_not_derived_from_first_leg() -> None:
+    """Spreads/straddles are not long_call/long_put; must not be rejected."""
+    legs = tuple(
+        IntentLeg(
+            leg_id=f"leg-{idx}",
+            contract=f.option_contract(
+                symbol=f"NIFTY26OCT{strike}PE",
+                option_type=OptionType.PUT,
+                strike=Decimal(strike),
+            ),
+            side=side,
+            ratio=1,
+        )
+        for idx, (strike, side) in enumerate(
+            (("22500", Side.BUY), ("22800", Side.SELL))
+        )
+    )
+    intent = f.intent(
+        mode_id=ModeId.M3_TACTICAL_POSITIONAL,
+        family_id=FamilyId.bull_put_credit.value,
+        legs=legs,
+    )
+    assert family_id_from_legs(intent) is None
+    assert (
+        validate_intent_family_alignment(
+            intent, producer_family_id=FamilyId.bull_put_credit
+        )
+        is None
+    )
