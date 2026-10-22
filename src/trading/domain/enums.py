@@ -356,6 +356,13 @@ class CarryGateAction(StrEnum):
     CARRY_REJECTED = "CARRY_REJECTED"
 
 
+class M2EodMode(StrEnum):
+    """How Mode 2 handles the entry-cutoff / overnight boundary."""
+
+    CARRY_GATE = "carry_gate"
+    POSITIONAL = "positional"
+
+
 @unique
 class HoldingStyle(StrEnum):
     """Whether an open trade is held overnight or closed the same session."""
@@ -802,6 +809,7 @@ class ReasonCode(StrEnum):
     DIRECTION_UNRESOLVED = "DIRECTION_UNRESOLVED"
     DIRECTION_NEUTRAL = "DIRECTION_NEUTRAL"
     OPTION_TYPE_MISMATCH = "OPTION_TYPE_MISMATCH"
+    FAMILY_ID_MISMATCH = "FAMILY_ID_MISMATCH"
     MICROSTRUCTURE_UNCONFIRMED = "MICROSTRUCTURE_UNCONFIRMED"
     CONVICTION_BELOW_THRESHOLD = "CONVICTION_BELOW_THRESHOLD"
     REGIME_NOT_RANGE = "REGIME_NOT_RANGE"
