@@ -58,6 +58,8 @@ cas_event_driven:
 # data-socket hub lands. Do not re-enable without the hub.
 # Session startup takes ~60s before the first protection heartbeat; the
 # minute watchdog restarted it in a loop at the 30s default (2026-09-28).
+# PaperSession runs protection REST ticks on a background thread so long
+# four-mode strategy scans cannot stall the heartbeat (watchdog_max_silence).
 protection:
   ws_enabled: false
   rest_poll_seconds: 3

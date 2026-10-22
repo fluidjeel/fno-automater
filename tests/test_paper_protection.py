@@ -7,10 +7,13 @@ Invariant 11: duplicate quote delivery does not double-submit exits.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -44,7 +47,7 @@ except ImportError:  # pragma: no cover - WIP until wired to current runner
         "paper protection WIP not wired to current PaperRunner (QuoteUpdateResult)",
         allow_module_level=True,
     )
-from trading.runtime.paper_session import load_paper_session_config
+from trading.runtime.paper_session import PaperSession, load_paper_session_config
 from trading.runtime.protection import (
     ProtectionCoordinator,
     build_protection_coordinator,
@@ -490,3 +493,64 @@ class TestWatchdog:
         )
         assert code == 1
         assert sink.requests
+
+
+class TestProtectionScheduler:
+    def test_background_scheduler_ticks_while_main_thread_idle(
+        self, tmp_path: Path, clock: FrozenClock
+    ) -> None:
+        """Long L1 scans must not stall REST protection when ws_enabled is false."""
+        session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
+        protection_cfg = session_cfg.protection.model_copy(
+            update={"rest_poll_seconds": 1, "heartbeat_interval_seconds": 1}
+        )
+        session_cfg = session_cfg.model_copy(update={"protection": protection_cfg})
+        runner = MagicMock()
+        open_position = MagicMock()
+        open_position.state = TradeState.OPEN
+        runner.trade_manager.list_positions.return_value = [open_position]
+        runner.open_position_count.return_value = 1
+        runner.monitor_symbols.return_value = ("NSE:NIFTY26SEP24000CE",)
+        runner.protection_degraded = False
+        runner.protection_snapshots = {}
+        protection = build_protection_coordinator(
+            runner=runner,
+            clock=clock,
+            config=protection_cfg,
+            repo_root=tmp_path,
+        )
+        tick_calls = {"n": 0}
+        original_tick = protection.tick
+
+        def counting_tick(**kwargs: object) -> object:
+            tick_calls["n"] += 1
+            return original_tick(**kwargs)
+
+        protection.tick = counting_tick  # type: ignore[method-assign]
+        session = PaperSession(
+            runner=runner,
+            clock=clock,
+            session_config=session_cfg,
+            session_hours=(
+                datetime(2026, 1, 1, 9, 15).time(),
+                datetime(2026, 1, 1, 15, 30).time(),
+            ),
+            timezone=ZoneInfo("Asia/Kolkata"),
+            notifier=MagicMock(),
+            request_builder=lambda _now: ((), {}),
+            observation_start=clock.now_utc(),
+            capital_limit=f.money("100000"),
+            risk_policy_version="1",
+            fill_model_version="1",
+            code_version="test",
+            charges_verified=True,
+            cohort_dir=tmp_path,
+            protection=protection,
+            sleeper=lambda _s: None,
+        )
+        protection.start()
+        session._start_protection_scheduler()
+        time.sleep(2.5)
+        session._stop_protection_scheduler()
+        protection.stop()
+        assert tick_calls["n"] >= 2
