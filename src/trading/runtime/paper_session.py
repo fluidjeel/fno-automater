@@ -138,6 +138,7 @@ from trading.runtime.protection import (
     build_protection_coordinator,
 )
 from trading.runtime.rest_quote_monitor import RestQuoteMonitor, RestQuoteRateLimitError
+from trading.runtime.m2_ab_study import M2AbStudy
 from trading.runtime.review_schedule import ReviewSlot, due_review_slots, parse_hhmm
 from trading.runtime.session_heartbeat import write_session_heartbeat
 from trading.runtime.session_routing import ProducedFamilyRequest, SessionRoutingProfile
@@ -321,6 +322,7 @@ class PaperSession:
         self._feed_cycle_backoff_seconds = float(session_config.poll_interval_seconds)
         self._protection_stop = threading.Event()
         self._protection_thread: threading.Thread | None = None
+        self._m2_ab_study = M2AbStudy.open(Path.cwd())
 
     @property
     def session_config(self) -> PaperSessionConfig:
@@ -398,6 +400,12 @@ class PaperSession:
             banner = "ENTRY PROFILE: DISCOVERY (temporary)"
         else:
             banner = "ENTRY PROFILE: STRICT"
+        if self._m2_ab_study.enabled:
+            print(
+                "M2 A/B study: Mode A live (carry_gate); "
+                "Mode B shadow (pre-close early exit); "
+                f"results in {self._m2_ab_study.results_dir}/"
+            )
         print(banner, flush=True)
         logging.getLogger(__name__).info("%s", banner)
         recovery = self._runner.recover_lifecycle()
@@ -574,6 +582,10 @@ class PaperSession:
             self._runner.manage_exits(snapshots)
         self._record_portfolio_risk(snapshots)
         self._run_due_reviews(snapshots)
+        if snapshots and self._m2_ab_study.enabled:
+            self._m2_ab_study.run_cycle(
+                self._runner, dict(snapshots), now=now
+            )
         self._run_due_m2_carry_gate(snapshots, now)
         self._cycle_count += 1
         if self._discovery_config is not None:
