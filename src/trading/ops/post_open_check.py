@@ -54,26 +54,32 @@ def run_post_open_check(
     checks: list[tuple[str, bool, str]] = []
 
     cfg = load_paper_session_config(repo_root / "config/paper_session.yaml")
+    m2_only = cfg.routing_profile.value == "m2_only"
     checks.append(
         (
             "environment",
-            cfg.routing_profile.value == "four_mode",
+            cfg.routing_profile.value in {"four_mode", "m2_only"},
             cfg.routing_profile.value,
         )
     )
     checks.append(("entries", cfg.new_entries_enabled, str(cfg.new_entries_enabled)))
-    expected_modes = {
-        "M1_CAS",
-        "M2_DIRECTIONAL",
-        "M3_TACTICAL_POSITIONAL",
-        "M4_STRATEGIC_POSITIONAL",
-    }
     paper_modes = {
         key for key, value in cfg.mode_stances.items() if value.value == "PAPER"
     }
-    checks.append(
-        ("four_modes", paper_modes == expected_modes, ",".join(sorted(paper_modes)))
-    )
+    if m2_only:
+        checks.append(
+            ("m2_only", paper_modes == {"M2_DIRECTIONAL"}, ",".join(sorted(paper_modes)))
+        )
+    else:
+        expected_modes = {
+            "M1_CAS",
+            "M2_DIRECTIONAL",
+            "M3_TACTICAL_POSITIONAL",
+            "M4_STRATEGIC_POSITIONAL",
+        }
+        checks.append(
+            ("four_modes", paper_modes == expected_modes, ",".join(sorted(paper_modes)))
+        )
 
     service_supervisor = supervisor or SystemdServiceSupervisor()
     for unit in PAPER_RUNTIME_UNITS:

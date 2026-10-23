@@ -281,7 +281,7 @@ class TestBuildM2CarryGateInput:
         assert inputs.thesis_still_valid is True
         assert inputs.overnight_max_loss == intent.estimated_max_loss
 
-    def test_thesis_invalid_for_misaligned_put(self) -> None:
+    def test_thesis_derives_from_option_leg_not_family_id(self) -> None:
         intent = _intent(family=FamilyId.long_put)
         position = _position(intent)
         inputs = build_m2_carry_gate_input(
@@ -297,7 +297,7 @@ class TestBuildM2CarryGateInput:
             recovery_healthy=True,
             remaining_dte=5,
         )
-        assert inputs.thesis_still_valid is False
+        assert inputs.thesis_still_valid is True
 
 
 class TestAssessM2Thesis:
@@ -353,5 +353,6 @@ class TestLegacyPathIsolation:
 
 def test_carry_gate_config_loads() -> None:
     config = load_carry_gate_config()
+    assert config.m2_eod_mode.value == "carry_gate"
     assert config.min_remaining_dte >= 0
     assert config.overnight_loss_budget_fraction > 0

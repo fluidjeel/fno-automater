@@ -193,17 +193,10 @@ class DiscoveryConfig(VersionedModel):
 
     @model_validator(mode="after")
     def validate_required_modes(self) -> Self:
-        required = {
-            ModeId.M1_CAS.value,
-            ModeId.M2_DIRECTIONAL.value,
-            ModeId.M3_TACTICAL_POSITIONAL.value,
-            ModeId.M4_STRATEGIC_POSITIONAL.value,
-        }
-        missing = required - set(self.modes.keys())
-        if missing:
-            raise ValueError(
-                f"missing required modes in discovery config: {sorted(missing)}"
-            )
+        if ModeId.M2_DIRECTIONAL.value not in self.modes:
+            raise ValueError("discovery config must include M2_DIRECTIONAL")
+        if not self.modes:
+            raise ValueError("discovery config must define at least one mode")
         return self
 
 

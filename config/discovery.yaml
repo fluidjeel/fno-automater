@@ -1,33 +1,18 @@
 schema_version: "1"
 profile_version: "discovery-v1"
 books:
-  starting_equity_per_mode: "700000"     # each mode independent
-  compounding: DAILY_REALIZED_NET        # equity fixed at session start
-  drawdown_alert_fraction: "0.20"        # Telegram only, never blocks
-max_lots_per_trade: 2                    # DISCOVERY soft cap per structure; resizes, never rejects
+  starting_equity_per_mode: "700000"
+  compounding: DAILY_REALIZED_NET
+  drawdown_alert_fraction: "0.20"
+max_lots_per_trade: 2
 family_stances:
-  long_straddle: PAPER
-  long_strangle: PAPER
+  long_straddle: SUSPENDED
+  long_strangle: SUSPENDED
 modes:
-  M1_CAS:
-    per_trade_guide: "0.01"
-    open_risk_cap: "0.12"
-    max_new_entries_per_day: 6
-    max_open_positions: 1
   M2_DIRECTIONAL:
     per_trade_guide: "0.02"
     open_risk_cap: "0.12"
     max_new_entries_per_day: 4
-    max_open_positions: 1
-  M3_TACTICAL_POSITIONAL:
-    per_trade_guide: "0.02"
-    open_risk_cap: "0.12"
-    max_new_entries_per_day: 3
-    max_open_positions: 1
-  M4_STRATEGIC_POSITIONAL:
-    per_trade_guide: "0.03"
-    open_risk_cap: "0.12"
-    max_new_entries_per_day: 3
     max_open_positions: 1
 bug_guard_trade_risk_fraction: "0.10"
 strict_quote_max_age_ms: 120000
@@ -62,7 +47,7 @@ soft_reason_codes:
   - DAILY_ENTRY_CAP
   - OPEN_POSITION_CAP
   - CAPITAL_UNAVAILABLE
-selection:            # strict first, fallback only if nothing passes strict
+selection:
   m2_delta:
     strict: ["0.45", "0.65"]
     fallback: ["0.30", "0.70"]
@@ -87,7 +72,7 @@ selection:            # strict first, fallback only if nothing passes strict
   near_strikes_each_side: 5
   following_week_strikes_each_side: 10
 direction:
-  fallback_trend_threshold: "0.30"   # used when strict trend is not UP/DOWN
+  fallback_trend_threshold: "0.30"
   fallback_min_bars: 14
 exits:
   leg_stop_fraction: "0.35"
@@ -97,6 +82,6 @@ exits:
   trail_activate_fraction: "0.30"
   trail_giveback_fraction: "0.50"
   confirm_quotes: 2
-  credit_target_fraction: "0.60"         # multi-leg credit: take profit at 60% of credit
-  credit_stop_max_loss_fraction: "0.90"  # multi-leg credit: stop stays below 90% of max loss
+  credit_target_fraction: "0.60"
+  credit_stop_max_loss_fraction: "0.90"
   rest_batch_size: 50

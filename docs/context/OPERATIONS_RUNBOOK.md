@@ -105,7 +105,9 @@ Repeats for the same fault are suppressed for 15 minutes.
 
 ## Four-mode PAPER routing (2026-09-25)
 
-- Active session config: `config/paper_session.yaml` with `routing_profile: four_mode`.
+- Oracle branch **M2** deploy: `config/paper_session.yaml` with `routing_profile: m2_only`
+  and `config/modes.yaml` containing only `M2_DIRECTIONAL`. Four-mode reference:
+  `config/paper_session_four_mode.yaml`.
 - **DISCOVERY profile:** set `entry_profile: DISCOVERY` in
   `config/paper_session.yaml` (default when absent is `STRICT`). Under DISCOVERY,
   `experiment_prefix` is `EXP-DISC`, straddle/strangle families run `PAPER`, and

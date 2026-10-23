@@ -414,6 +414,18 @@ def evaluate_m1_provider_event(
                 permitted = False
                 if not detail:
                     detail = trigger.detail
+    discovery = (
+        entry_profile is EntryProfile.DISCOVERY and discovery_config is not None
+    )
+    if (
+        discovery
+        and trigger_block is not None
+        and trigger_block
+        in {ReasonCode.DATA_STALE, ReasonCode.SETUP_COOLDOWN, ReasonCode.DATA_GAP}
+    ):
+        strict_would_block = (*strict_would_block, trigger_block)
+        permitted = True
+        trigger_block = None
     if trigger_block is not None and block is None:
         block = trigger_block
     latency_limitation = None
@@ -421,12 +433,13 @@ def evaluate_m1_provider_event(
         latency_limitation = latency_report.detail
     binding = getattr(bound, "binding", None)
     eligible = getattr(binding, "eligible", False) if binding is not None else False
-    execute = (
-        permitted
-        and eligible
-        and explained
-        and isinstance(event, M1ProviderEvent)
-        and not event.disconnected
+    has_provider_event = (
+        isinstance(event, M1ProviderEvent) and not event.disconnected
+    )
+    if discovery and not has_provider_event and permitted and eligible and explained:
+        strict_would_block = (*strict_would_block, ReasonCode.DATA_STALE)
+    execute = permitted and eligible and explained and (
+        has_provider_event or discovery
     )
     return M1EventGateOutcome(
         execute=execute,

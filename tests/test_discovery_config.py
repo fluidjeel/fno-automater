@@ -62,14 +62,8 @@ class TestDiscoveryConfig:
         assert cfg.profile_version == "discovery-v1"
         assert loaded.checksum
         assert cfg.books.starting_equity_per_mode == Decimal("700000")
-        assert cfg.modes[ModeId.M1_CAS.value].per_trade_guide == Decimal("0.01")
+        assert set(cfg.modes.keys()) == {ModeId.M2_DIRECTIONAL.value}
         assert cfg.modes[ModeId.M2_DIRECTIONAL.value].per_trade_guide == Decimal("0.02")
-        assert cfg.modes[
-            ModeId.M3_TACTICAL_POSITIONAL.value
-        ].per_trade_guide == Decimal("0.02")
-        assert cfg.modes[
-            ModeId.M4_STRATEGIC_POSITIONAL.value
-        ].per_trade_guide == Decimal("0.03")
         assert cfg.bug_guard_trade_risk_fraction == Decimal("0.10")
         assert cfg.strict_quote_max_age_ms == 120000
         assert cfg.cas_strict_quote_max_age_ms == 30000
@@ -88,9 +82,9 @@ class TestDiscoveryConfig:
         with pytest.raises(DiscoveryConfigError):
             load_discovery_config(bad_path)
 
-    def test_discovery_config_missing_mode_fails(self, tmp_path: Path) -> None:
+    def test_discovery_config_missing_m2_fails(self, tmp_path: Path) -> None:
         yaml_content = (ROOT / "config" / "discovery.yaml").read_text(encoding="utf-8")
-        bad_yaml = yaml_content.replace("M4_STRATEGIC_POSITIONAL:", "IGNORED_MODE:")
+        bad_yaml = yaml_content.replace("M2_DIRECTIONAL:", "IGNORED_MODE:")
         bad_path = tmp_path / "missing_mode.yaml"
         bad_path.write_text(bad_yaml, encoding="utf-8")
         with pytest.raises(DiscoveryConfigError):

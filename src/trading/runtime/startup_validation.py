@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -161,6 +162,41 @@ def _validate_budget_and_lifecycle(
             )
 
 
+def _validate_m2_only_session(
+    session_config: PaperSessionConfig,
+    modes_config: ModesConfig | None,
+) -> None:
+    """M2-only deployments must not enable other modes or M1 CAS ingress."""
+    if modes_config is None:
+        return
+    configured = set(modes_config.modes.keys())
+    if configured != {ModeId.M2_DIRECTIONAL}:
+        raise StartupValidationError(
+            "m2_only routing requires modes.yaml to contain only M2_DIRECTIONAL; "
+            f"found {sorted(m.value for m in configured)}"
+        )
+    share = modes_config.modes[ModeId.M2_DIRECTIONAL].capital_share
+    if share != Decimal("1"):
+        raise StartupValidationError(
+            f"m2_only requires M2 capital_share 1.0; got {share}"
+        )
+    for key, stance in session_config.mode_stances.items():
+        if key == ModeId.M2_DIRECTIONAL.value:
+            if stance is not ExecutionMode.PAPER:
+                raise StartupValidationError(
+                    "m2_only requires M2_DIRECTIONAL stance PAPER."
+                )
+            continue
+        if stance is not ExecutionMode.SUSPENDED:
+            raise StartupValidationError(
+                f"m2_only requires non-M2 mode {key!r} to be SUSPENDED; got {stance}"
+            )
+    if session_config.cas_event_driven.enabled:
+        raise StartupValidationError(
+            "m2_only requires cas_event_driven.enabled false (M1 disabled)."
+        )
+
+
 def _validate_g3_cas_loop(
     session_config: PaperSessionConfig,
     *,
@@ -268,13 +304,15 @@ def validate_startup_configuration(
         session_config,
         family_stances=merged_family_stances,
     )
-    if (
-        session_config.routing_profile is SessionRoutingProfile.FOUR_MODE
-        and modes_config is None
-    ):
+    if session_config.routing_profile in {
+        SessionRoutingProfile.FOUR_MODE,
+        SessionRoutingProfile.M2_ONLY,
+    } and modes_config is None:
         raise StartupValidationError(
-            "Four-mode routing requires config/modes.yaml to be present."
+            "Multi-mode routing requires config/modes.yaml to be present."
         )
+    if session_config.routing_profile is SessionRoutingProfile.M2_ONLY:
+        _validate_m2_only_session(session_config, modes_config)
     return _validate_g3_cas_loop(
         session_config,
         enforce_g3_shadow=enforce_g3_shadow,

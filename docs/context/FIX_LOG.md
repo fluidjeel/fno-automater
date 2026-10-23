@@ -42,6 +42,30 @@ override prior findings.
 
 ---
 
+## 2026-10-22 (Wednesday) Paper watchdog restarts during long strategy scans
+
+### What was observed
+
+With open positions, `fno-paper-watchdog` / `ensure-paper` restarted
+`fno-paper-session.service` when a four-mode strategy scan blocked the main loop for
+more than **180s** (`watchdog_max_silence_seconds`). Oracle runs
+`protection.ws_enabled: false` (REST-only protection); heartbeat advanced only when
+`ProtectionCoordinator.tick()` ran on the main loop after each scan.
+
+### Fix / status
+
+| Item | Detail |
+| --- | --- |
+| **PR** | [#55](https://github.com/fluidjeel/fno-automater/pull/55) merged → `a0a6b14` |
+| **Code** | `PaperSession` daemon thread `paper-protection` ticks REST protection every `rest_poll_seconds` |
+| **Config note** | `config/paper_session.yaml` comment only |
+| **Oracle** | Deployed on `main` after merge; protection heartbeat stays fresh during long scans |
+
+M2 universe / paper P&L research from the same period:
+`docs/context/M2_PAPER_RESEARCH_NOTES.md`.
+
+---
+
 ## 2026-09-28 (Monday) Discovery paper session
 
 ### A. Paper entries frozen and protection monitor not watching held legs

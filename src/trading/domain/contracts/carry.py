@@ -15,7 +15,7 @@ from trading.domain.contracts.base import (
     UtcDatetime,
     VersionedModel,
 )
-from trading.domain.enums import CarryGateAction, ModeId, ReasonCode
+from trading.domain.enums import CarryGateAction, M2EodMode, ModeId, ReasonCode
 from trading.domain.primitives import Money
 
 __all__ = [
@@ -32,6 +32,7 @@ class M2CarryGateConfig(StrictModel):
     schema_version: NonEmptyStr = "1"
     min_remaining_dte: StrictInt = Field(ge=0)
     overnight_loss_budget_fraction: ExactDecimal
+    m2_eod_mode: M2EodMode = M2EodMode.CARRY_GATE
 
 
 class M2CarryGateInput(StrictModel):

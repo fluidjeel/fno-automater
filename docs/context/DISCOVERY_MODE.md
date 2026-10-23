@@ -152,8 +152,10 @@ values, not code constants.
 - Campaign drawdown freeze and account daily-loss cap.
 - Cross-mode duplicate, overlap and conflict checks.
 - G2 lifecycle-proof stance gates (straddle and strangle move to PAPER).
-- M1 latency and "provider event only" rules. M1 may also fire from the
-  60-second poll, tagged `M1_SOURCE=POLL`.
+- M1 latency and the 500 ms provider-event trigger. Under DISCOVERY a bound
+  M1 strike may enter from the 60-second poll; quote age and microprice edge
+  are recorded as `strict_would_block` instead of blocking. Direction, delta
+  band, and 0-DTE exclusion still apply.
 
 The strict preferred value is always tried first. The fallback is used only
 when nothing passes strict. When it is used, the trade is tagged with the

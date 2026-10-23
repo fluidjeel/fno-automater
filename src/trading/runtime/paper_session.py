@@ -980,7 +980,10 @@ def run_paper_session(
         notifier.send(f"STARTUP WARNING: {warning}")
     shared_feed = _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     if request_builder is None:
-        if session_cfg.routing_profile is SessionRoutingProfile.FOUR_MODE:
+        if session_cfg.routing_profile in {
+            SessionRoutingProfile.FOUR_MODE,
+            SessionRoutingProfile.M2_ONLY,
+        }:
             if modes_config is None:
                 logging.getLogger(__name__).error(
                     "Four-mode routing requires config/modes.yaml"

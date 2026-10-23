@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 class SessionRoutingProfile(StrEnum):
     LEGACY = "legacy"
     FOUR_MODE = "four_mode"
+    M2_ONLY = "m2_only"
 
 
 @dataclass(frozen=True, slots=True)

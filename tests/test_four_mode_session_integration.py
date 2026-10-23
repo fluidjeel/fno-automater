@@ -42,7 +42,7 @@ from trading.storage.trading_store import TradingStore
 from trading.strategies.macro import MacroAssessment, MacroBias
 
 NOW = f.NOW
-MODES = load_modes_config(ROOT / "config" / "modes.yaml")
+MODES = load_modes_config(ROOT / "tests" / "fixtures" / "modes_four_mode.yaml")
 
 
 @pytest.fixture

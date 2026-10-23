@@ -1,0 +1,21 @@
+---
+description: Use plain language with the user in chat and on voice calls
+alwaysApply: true
+---
+
+# Plain language with the user
+
+When talking or writing **to the user** (chat, voice call summaries, status updates):
+
+1. **Avoid jargon** unless the user used the term first in this thread. Prefer
+   everyday words: “open positions” not “lifecycle snapshots”; “daily loss limit”
+   not “Layer 2 max-loss gate”; “restart” not “SIGTERM orchestration.”
+2. **Spell out acronyms** the first time in a reply (e.g. “Nifty index options
+   (F&O)” not “FNO” alone).
+3. **Lead with the answer** — what happened, what number, what to do — then only
+   as much technical detail as needed.
+4. **Code, configs, logs, and `docs/context/`** may keep precise identifiers;
+   do not dumb down file paths or symbol names in the repo.
+
+Voice calls: same rules; keep spoken lines short and free of codes and paths
+(details belong in chat).

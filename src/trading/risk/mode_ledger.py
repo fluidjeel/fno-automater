@@ -253,7 +253,7 @@ class FourModeBook:
                 Money.of(
                     str(
                         discovery_config.books.starting_equity_per_mode
-                        * len(self._modes_config.modes)
+                        * len(discovery_config.modes)
                     ),
                     Currency.INR,
                 )
@@ -286,12 +286,11 @@ class FourModeBook:
         discovery_config: DiscoveryConfig | None = None,
     ) -> dict[ModeId, ModeLedger]:
         ledgers: dict[ModeId, ModeLedger] = {}
-        for mode_id in (
-            ModeId.M1_CAS,
-            ModeId.M2_DIRECTIONAL,
-            ModeId.M3_TACTICAL_POSITIONAL,
-            ModeId.M4_STRATEGIC_POSITIONAL,
-        ):
+        if discovery_config is not None:
+            mode_ids = tuple(ModeId(key) for key in discovery_config.modes)
+        else:
+            mode_ids = tuple(modes_config.modes.keys())
+        for mode_id in mode_ids:
             if discovery_config is not None:
                 alloc = Money.of(
                     str(discovery_config.books.starting_equity_per_mode),
@@ -462,12 +461,7 @@ def _init_mode_balances(
     *,
     discovery_config: DiscoveryConfig | None = None,
 ) -> tuple[dict[ModeId, Money], dict[str, dict[ModeId, Money]]]:
-    mode_ids = (
-        ModeId.M1_CAS,
-        ModeId.M2_DIRECTIONAL,
-        ModeId.M3_TACTICAL_POSITIONAL,
-        ModeId.M4_STRATEGIC_POSITIONAL,
-    )
+    mode_ids = tuple(cfg.modes.keys())
     base_alloc: dict[ModeId, Money] = {}
     balances: dict[str, dict[ModeId, Money]] = {
         "reserved": {},

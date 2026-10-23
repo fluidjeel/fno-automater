@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from trading.domain.contracts.mode_policy import load_modes_config
-from trading.domain.enums import ExecutionMode
+from trading.domain.enums import ExecutionMode, ModeId
 from trading.runtime.cas_event_path import CasEventDrivenConfig
 from trading.runtime.paper_session import (
     PaperSessionConfig,
@@ -246,43 +246,28 @@ class TestStartupValidation:
         ):
             validate_startup_configuration(cfg)
 
-    def test_shipped_paper_session_config_keeps_m1_paper(self) -> None:
+    def test_shipped_paper_session_config_m2_only(self) -> None:
         session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
-        session_cfg = session_cfg.model_copy(
-            update={
-                "mode_stances": {
-                    **session_cfg.mode_stances,
-                    "M1_CAS": ExecutionMode.PAPER,
-                }
-            }
-        )
-        modes_cfg = load_modes_config(ROOT / "config" / "modes.yaml")
-        validated_cfg, warnings = validate_startup_configuration(
-            session_cfg, modes_cfg, enforce_g3_shadow=True
-        )
-        assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
-        assert (
-            validated_cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.PAPER
-        )
-        assert (
-            validated_cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.PAPER
-        )
-        assert len(warnings) == 1
-        assert "measured limitation" in warnings[0]
-
-    def test_shipped_paper_session_config_without_enforce_still_paper(self) -> None:
-        session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
-        session_cfg = session_cfg.model_copy(
-            update={
-                "mode_stances": {
-                    **session_cfg.mode_stances,
-                    "M1_CAS": ExecutionMode.PAPER,
-                }
-            }
-        )
         modes_cfg = load_modes_config(ROOT / "config" / "modes.yaml")
         validated_cfg, warnings = validate_startup_configuration(
             session_cfg, modes_cfg, enforce_g3_shadow=False
         )
-        assert validated_cfg.mode_stances["M1_CAS"] is ExecutionMode.PAPER
-        assert warnings
+        assert validated_cfg.routing_profile.value == "m2_only"
+        assert validated_cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
+        assert validated_cfg.cas_event_driven.enabled is False
+        assert set(modes_cfg.modes.keys()) == {ModeId.M2_DIRECTIONAL}
+        assert not warnings
+
+    def test_m2_only_rejects_m1_paper_stance(self) -> None:
+        session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
+        session_cfg = session_cfg.model_copy(
+            update={
+                "mode_stances": {
+                    **session_cfg.mode_stances,
+                    "M1_CAS": ExecutionMode.PAPER,
+                }
+            }
+        )
+        modes_cfg = load_modes_config(ROOT / "config" / "modes.yaml")
+        with pytest.raises(StartupValidationError, match="m2_only requires non-M2"):
+            validate_startup_configuration(session_cfg, modes_cfg)

@@ -1,26 +1,23 @@
-# Active PAPER session — four-mode producers (deployed Oracle 2026-09-25).
-# Rollback legacy router: cp config/paper_session_legacy.yaml config/paper_session.yaml
+# Active PAPER session — M2-only (branch M2 / Oracle deploy).
+# Rollback four-mode: cp config/paper_session_four_mode.yaml config/paper_session.yaml
 # Rollback DISCOVERY: set entry_profile: STRICT (or remove it) and restart;
 #   positions opened under DISCOVERY keep their frozen exit policy.
 schema_version: "1"
-routing_profile: four_mode
+routing_profile: m2_only
 entry_profile: DISCOVERY
-# Four-mode PAPER entries enabled after audit remediation and Oracle migration,
-# restart, risk-ledger, charge-accounting and regression gates passed. Family
-# overrides below remain authoritative for SHADOW/SUSPENDED strategies.
 new_entries_enabled: true
 poll_interval_seconds: 60
 eod_local: "15:40"
 option_strikes_each_side: 2
 experiment_prefix: "EXP-DISC"
 mode_stances:
-  M1_CAS: PAPER
   M2_DIRECTIONAL: PAPER
-  M3_TACTICAL_POSITIONAL: PAPER
-  M4_STRATEGIC_POSITIONAL: PAPER
+  M1_CAS: SUSPENDED
+  M3_TACTICAL_POSITIONAL: SUSPENDED
+  M4_STRATEGIC_POSITIONAL: SUSPENDED
 family_stances:
-  long_straddle: PAPER
-  long_strangle: PAPER
+  long_straddle: SUSPENDED
+  long_strangle: SUSPENDED
   long_call_calendar: SUSPENDED
   long_put_calendar: SUSPENDED
 commodity_underlying: CRUDEOIL
@@ -39,7 +36,7 @@ positional_review:
       local: "14:30"
   mcx_slots: []
 cas_event_driven:
-  enabled: true
+  enabled: false
   profile: quote_only
   quote_max_age_ms: 500
   max_entry_latency_ms: 2000
@@ -53,13 +50,6 @@ cas_event_driven:
   prefer_delta_min: "0.15"
   prefer_delta_max: "0.40"
   measured_latency_path: data/paper/m1_latency_report.json
-# Interim 2026-09-28: one Fyers data WebSocket per account; fno-data-tick owns it.
-# Protection uses batched REST /quotes (<=20 calls/min) until DISC-A22 shared
-# data-socket hub lands. Do not re-enable without the hub.
-# Session startup takes ~60s before the first protection heartbeat; the
-# minute watchdog restarted it in a loop at the 30s default (2026-09-28).
-# PaperSession runs protection REST ticks on a background thread so long
-# four-mode strategy scans cannot stall the heartbeat (watchdog_max_silence).
 protection:
   ws_enabled: false
   rest_poll_seconds: 3
