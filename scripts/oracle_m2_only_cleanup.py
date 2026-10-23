@@ -12,7 +12,8 @@ from pathlib import Path
 
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.enums import ModeId, TradeState
-from trading.ops.paper_portfolio_reset import reset_paper_portfolio
+from trading.domain.enums import TradeState
+from trading.storage.trading_store import TradingEventType
 
 M2 = ModeId.M2_DIRECTIONAL.value
 NON_M2 = {
@@ -26,6 +27,59 @@ def _mode_of(payload: str) -> str | None:
     rec = PositionLifecycleRecord.model_validate_json(payload)
     mode = rec.mode_id or (rec.position.mode_id if rec.position else None)
     return mode.value if mode is not None else None
+
+
+def _admin_close_opens(store_path: Path, *, dry_run: bool) -> int:
+    """Mark every non-CLOSED lifecycle CLOSED so broker purge can proceed."""
+    conn = sqlite3.connect(store_path)
+    closed = 0
+    try:
+        rows = conn.execute(
+            "select trade_id, state, payload from position_lifecycle"
+        ).fetchall()
+        for trade_id, state, payload in rows:
+            if state == TradeState.CLOSED.value:
+                continue
+            if dry_run:
+                closed += 1
+                continue
+            rec = PositionLifecycleRecord.model_validate_json(payload)
+            now = datetime.now(tz=UTC)
+            position = rec.position.model_copy(
+                update={
+                    "state": TradeState.CLOSED,
+                    "closed_at": now,
+                    "as_of": now,
+                }
+            )
+            updated = rec.model_copy(
+                update={"position": position, "exit_order_ids": (), "as_of": now}
+            )
+            conn.execute(
+                "update position_lifecycle set state = ?, payload = ? where trade_id = ?",
+                (TradeState.CLOSED.value, updated.model_dump_json(), trade_id),
+            )
+            closed += 1
+        if not dry_run:
+            conn.commit()
+    finally:
+        conn.close()
+    return closed
+
+
+def _reset_broker_flat(repo_root: Path, *, dry_run: bool) -> None:
+    path = repo_root / "data/paper/broker_state.json"
+    if not path.is_file() or dry_run:
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["positions"] = []
+    data["orders"] = []
+    if isinstance(data.get("funds"), dict):
+        data["funds"]["margin_used"] = {"amount": "0", "currency": "INR"}
+        data["funds"]["margin_available"] = data["funds"].get(
+            "equity", {"amount": "700000", "currency": "INR"}
+        )
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _purge_sqlite(db_path: Path, *, dry_run: bool) -> tuple[int, int]:
@@ -108,28 +162,26 @@ def main() -> int:
         backup.mkdir(parents=True, exist_ok=True)
         shutil.copy2(store, backup / "trading.sqlite")
 
-    if not args.skip_flatten:
-        result = reset_paper_portfolio(
-            root,
-            dry_run=args.dry_run,
-            backup=False,
-        )
-        print(
-            json.dumps(
-                {
-                    "flatten": result.detail,
-                    "closed": list(result.closed_trade_ids),
-                    "admin_closed": list(result.administratively_closed),
-                },
-                indent=2,
-            )
-        )
+    admin_closed = _admin_close_opens(store, dry_run=args.dry_run)
+    _reset_broker_flat(root, dry_run=args.dry_run)
+    if not args.dry_run:
+        conn = sqlite3.connect(store)
+        try:
+            conn.execute("delete from entry_freeze")
+            conn.execute("delete from mode_entry_freeze")
+            conn.execute("delete from protection_state")
+            conn.execute("delete from session_protection")
+            conn.execute("delete from reservations")
+            conn.commit()
+        finally:
+            conn.close()
 
     dropped, kept = _purge_sqlite(store, dry_run=args.dry_run)
     artifacts = _remove_m1_artifacts(root, dry_run=args.dry_run)
     print(
         json.dumps(
             {
+                "admin_closed_opens": admin_closed,
                 "purged_non_m2_lifecycles": dropped,
                 "kept_m2_lifecycles": kept,
                 "removed_artifacts": artifacts,
