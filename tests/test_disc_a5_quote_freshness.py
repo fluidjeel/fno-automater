@@ -19,7 +19,7 @@ from trading.domain.contracts import (
 )
 from trading.domain.enums import EntryProfile, OptionType, ReasonCode
 from trading.strategies.base import StrategyContext
-from trading.strategies.m4_broad_basket import LongStraddleStrategy
+from trading.strategies.long_option import LongOptionStrategy
 from trading.strategies.macro import MacroAssessment, MacroBias
 from trading.strategies.quote_freshness import quote_freshness_limits
 
@@ -139,7 +139,7 @@ def _ctx(
 class TestDiscA5QuoteFreshness:
     def test_fresh_quote_stale_bar_does_not_data_stale_strict(self) -> None:
         """Quote 20s old with a 4m bar must not reject DATA_STALE under STRICT."""
-        decision = LongStraddleStrategy().evaluate(
+        decision = LongOptionStrategy().evaluate(
             _ctx(
                 quote_age_seconds=20,
                 bar_age_seconds=240,
@@ -154,7 +154,7 @@ class TestDiscA5QuoteFreshness:
 
     def test_fresh_quote_stale_bar_does_not_data_stale_discovery(self) -> None:
         """Quote 20s old with a 4m bar must not reject DATA_STALE under DISCOVERY."""
-        decision = LongStraddleStrategy().evaluate(
+        decision = LongOptionStrategy().evaluate(
             _ctx(
                 quote_age_seconds=20,
                 bar_age_seconds=240,
@@ -168,7 +168,7 @@ class TestDiscA5QuoteFreshness:
         )
 
     def test_three_minute_quote_is_soft_stale_in_discovery(self) -> None:
-        decision = LongStraddleStrategy().evaluate(
+        decision = LongOptionStrategy().evaluate(
             _ctx(
                 quote_age_seconds=180,
                 bar_age_seconds=180,
@@ -183,7 +183,7 @@ class TestDiscA5QuoteFreshness:
         )
 
     def test_three_minute_quote_rejects_under_strict(self) -> None:
-        decision = LongStraddleStrategy().evaluate(
+        decision = LongOptionStrategy().evaluate(
             _ctx(
                 quote_age_seconds=180,
                 bar_age_seconds=180,
@@ -195,7 +195,7 @@ class TestDiscA5QuoteFreshness:
 
     @pytest.mark.parametrize("profile", [EntryProfile.STRICT, EntryProfile.DISCOVERY])
     def test_six_minute_quote_hard_rejects(self, profile: EntryProfile) -> None:
-        decision = LongStraddleStrategy().evaluate(
+        decision = LongOptionStrategy().evaluate(
             _ctx(
                 quote_age_seconds=360,
                 bar_age_seconds=360,

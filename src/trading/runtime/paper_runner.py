@@ -26,7 +26,7 @@ from trading.config.evaluation import FillModelConfig
 from trading.config.loader import LoadedConfig
 from trading.config.risk_policy import LoadedRiskPolicy, MissingMonitorResolution
 from trading.config.schema import Environment
-from trading.data.cas_features import with_cas_feature_set
+from trading.data.depth_microstructure_features import with_cas_feature_set
 from trading.domain.clock import Clock
 from trading.domain.contracts import (
     EntryFreezeRecord,

@@ -39,13 +39,15 @@ from trading.domain.enums import (
     SystemState,
 )
 from trading.domain.primitives import Currency, Money, Percent, Price, TickSize
-from trading.strategies.cas_microstructure import (
+from trading.data.depth_microstructure_features import (
+    CAS_FEATURE_SET_VERSION,
     FEATURE_AUCTION_IMBALANCE,
     FEATURE_MICROPRICE_EDGE_BPS,
     FEATURE_QUOTE_INSTABILITY,
-    FEATURE_SET_VERSION,
     FEATURE_TRADE_FLOW_IMBALANCE,
 )
+
+FEATURE_SET_VERSION = CAS_FEATURE_SET_VERSION
 from trading.strategies.macro import MacroAssessment, MacroBias
 
 __all__ = [

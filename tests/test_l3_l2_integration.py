@@ -58,25 +58,13 @@ from trading.risk.gateway import (
 )
 from trading.risk.sizing import is_commodity_future
 from trading.strategies import (
-    CasMicrostructureStrategy,
     CommodityFuturesStrategy,
-    DebitSpreadStrategy,
     LongOptionStrategy,
-    MultiLegOptionsStrategy,
     Strategy,
     StrategyContext,
 )
-from trading.strategies.cas_microstructure import (
-    FEATURE_AUCTION_IMBALANCE,
-    FEATURE_MICROPRICE_EDGE_BPS,
-    FEATURE_QUOTE_INSTABILITY,
-    FEATURE_SET_VERSION,
-    FEATURE_TRADE_FLOW_IMBALANCE,
-)
 
 NOW_CTX = NOW + timedelta(seconds=60)
-# 2026-09-14 is a Monday; 09:45 UTC is 15:15 IST, inside the CAS window.
-CAS_NOW = datetime(2026, 9, 14, 9, 45, tzinfo=UTC)
 
 _OPTION_SPEC = InstrumentSpec(
     trading_symbol="NSE:NIFTY26SEP24000CE",
@@ -176,15 +164,6 @@ def _future(instant: datetime = NOW_CTX) -> FeatureSnapshot:
     )
 
 
-def _cas_features(sign: str) -> dict[str, Decimal]:
-    return {
-        FEATURE_AUCTION_IMBALANCE: Decimal(f"{sign}0.40"),
-        FEATURE_TRADE_FLOW_IMBALANCE: Decimal(f"{sign}0.30"),
-        FEATURE_MICROPRICE_EDGE_BPS: Decimal(f"{sign}5.00"),
-        FEATURE_QUOTE_INSTABILITY: Decimal("0.10"),
-    }
-
-
 def _commodity_underlying(last: str, close: str) -> FeatureSnapshot:
     return _underlying(
         last,
@@ -237,30 +216,6 @@ def _cases() -> list[_Case]:
             "LONG_OPTION",
         ),
         _Case(
-            "debit_spread_bullish",
-            DebitSpreadStrategy,
-            StrategyContext(
-                bullish,
-                (_option(OptionType.CALL, "24000"), _option(OptionType.CALL, "24100")),
-                portfolio_view(),
-                NOW_CTX,
-            ),
-            _OPTION_SPEC,
-            "DEBIT_SPREAD",
-        ),
-        _Case(
-            "debit_spread_bearish",
-            DebitSpreadStrategy,
-            StrategyContext(
-                bearish,
-                (_option(OptionType.PUT, "24000"), _option(OptionType.PUT, "23900")),
-                portfolio_view(),
-                NOW_CTX,
-            ),
-            _OPTION_SPEC,
-            "DEBIT_SPREAD",
-        ),
-        _Case(
             "commodity_future_long",
             CommodityFuturesStrategy,
             StrategyContext(
@@ -283,66 +238,6 @@ def _cases() -> list[_Case]:
             ),
             _FUTURE_SPEC,
             "COMMODITY_FUTURE",
-        ),
-        _Case(
-            "cas_bullish",
-            CasMicrostructureStrategy,
-            StrategyContext(
-                _underlying(
-                    "24100",
-                    "24000",
-                    features=_cas_features(""),
-                    instant=CAS_NOW,
-                    feature_set_version=FEATURE_SET_VERSION,
-                ),
-                (_option(OptionType.CALL, "24000", CAS_NOW),),
-                portfolio_view(),
-                CAS_NOW,
-            ),
-            _OPTION_SPEC,
-            "LONG_OPTION",
-        ),
-        _Case(
-            "cas_bearish",
-            CasMicrostructureStrategy,
-            StrategyContext(
-                _underlying(
-                    "23900",
-                    "24000",
-                    features=_cas_features("-"),
-                    instant=CAS_NOW,
-                    feature_set_version=FEATURE_SET_VERSION,
-                ),
-                (_option(OptionType.PUT, "24000", CAS_NOW),),
-                portfolio_view(),
-                CAS_NOW,
-            ),
-            _OPTION_SPEC,
-            "LONG_OPTION",
-        ),
-        _Case(
-            "credit_spread_bull_put",
-            MultiLegOptionsStrategy,
-            StrategyContext(
-                bullish,
-                (_option(OptionType.PUT, "23900"), _option(OptionType.PUT, "24000")),
-                portfolio_view(),
-                NOW_CTX,
-            ),
-            _OPTION_SPEC,
-            "CREDIT_SPREAD",
-        ),
-        _Case(
-            "credit_spread_bear_call",
-            MultiLegOptionsStrategy,
-            StrategyContext(
-                bearish,
-                (_option(OptionType.CALL, "24000"), _option(OptionType.CALL, "24100")),
-                portfolio_view(),
-                NOW_CTX,
-            ),
-            _OPTION_SPEC,
-            "CREDIT_SPREAD",
         ),
     ]
 

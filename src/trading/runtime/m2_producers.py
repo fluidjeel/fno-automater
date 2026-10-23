@@ -1,4 +1,4 @@
-"""Build PaperStrategyRequest rows from four-mode family producers."""
+"""Build PaperStrategyRequest rows from M2 directional producers only."""
 
 from __future__ import annotations
 
@@ -12,18 +12,7 @@ from trading.domain.contracts import FeatureSnapshot, InstrumentSpec, MarketStat
 from trading.domain.contracts.mode_policy import ModesConfig
 from trading.domain.enums import EntryProfile, ExecutionMode, FamilyId, ModeId
 from trading.domain.family_gates import effective_family_stances
-from trading.identification import (
-    bind_credit_spread,
-    bind_debit_spread,
-    bind_iron_condor,
-    bind_long_call_butterfly,
-    bind_long_put_butterfly,
-    bind_long_straddle,
-    bind_long_strangle,
-    bind_m1_cas_option,
-    bind_m2_long_option,
-    bind_short_iron_butterfly,
-)
+from trading.identification import bind_m2_long_option
 from trading.identification.binders import BoundCandidates
 from trading.identification.config import IdentificationPolicy
 from trading.identification.p1_features import ObservedP1Features
@@ -40,22 +29,14 @@ from trading.runtime.session_routing import (
 from trading.strategies.macro import MacroAssessment
 
 __all__ = [
-    "FAMILY_PRODUCER_REGISTRY",
-    "build_four_mode_requests",
+    "M2_FAMILY_PRODUCER_REGISTRY",
+    "build_m2_requests",
     "iter_recordable_family_slots",
+    "produce_family_requests",
     "producer_spec_for",
 ]
 
-# (mode, family) -> (strategy_id, binder). Calendars intentionally omitted.
-FAMILY_PRODUCER_REGISTRY: dict[tuple[ModeId, FamilyId], tuple[str, object]] = {
-    (ModeId.M1_CAS, FamilyId.long_call): (
-        "cas_microstructure",
-        bind_m1_cas_option,
-    ),
-    (ModeId.M1_CAS, FamilyId.long_put): (
-        "cas_microstructure",
-        bind_m1_cas_option,
-    ),
+M2_FAMILY_PRODUCER_REGISTRY: dict[tuple[ModeId, FamilyId], tuple[str, object]] = {
     (ModeId.M2_DIRECTIONAL, FamilyId.long_call): (
         "positional_long_option",
         bind_m2_long_option,
@@ -63,62 +44,6 @@ FAMILY_PRODUCER_REGISTRY: dict[tuple[ModeId, FamilyId], tuple[str, object]] = {
     (ModeId.M2_DIRECTIONAL, FamilyId.long_put): (
         "positional_long_option",
         bind_m2_long_option,
-    ),
-    (ModeId.M3_TACTICAL_POSITIONAL, FamilyId.bull_call_debit): (
-        "debit_spread",
-        bind_debit_spread,
-    ),
-    (ModeId.M3_TACTICAL_POSITIONAL, FamilyId.bear_put_debit): (
-        "debit_spread",
-        bind_debit_spread,
-    ),
-    (ModeId.M3_TACTICAL_POSITIONAL, FamilyId.bull_put_credit): (
-        "bull_put_credit",
-        bind_credit_spread,
-    ),
-    (ModeId.M3_TACTICAL_POSITIONAL, FamilyId.bear_call_credit): (
-        "bear_call_credit",
-        bind_credit_spread,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.bull_call_debit): (
-        "debit_spread",
-        bind_debit_spread,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.bear_put_debit): (
-        "debit_spread",
-        bind_debit_spread,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.bull_put_credit): (
-        "bull_put_credit",
-        bind_credit_spread,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.bear_call_credit): (
-        "bear_call_credit",
-        bind_credit_spread,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.short_iron_condor_defined): (
-        "iron_condor",
-        bind_iron_condor,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.short_iron_butterfly_defined): (
-        FamilyId.short_iron_butterfly_defined.value,
-        bind_short_iron_butterfly,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.long_call_butterfly): (
-        FamilyId.long_call_butterfly.value,
-        bind_long_call_butterfly,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.long_put_butterfly): (
-        FamilyId.long_put_butterfly.value,
-        bind_long_put_butterfly,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.long_straddle): (
-        FamilyId.long_straddle.value,
-        bind_long_straddle,
-    ),
-    (ModeId.M4_STRATEGIC_POSITIONAL, FamilyId.long_strangle): (
-        FamilyId.long_strangle.value,
-        bind_long_strangle,
     ),
 }
 
@@ -131,7 +56,7 @@ def iter_recordable_family_slots(
     entry_profile: EntryProfile = EntryProfile.STRICT,
     discovery_config: DiscoveryConfig | None = None,
 ) -> tuple[tuple[ModeId, FamilyId], ...]:
-    """Expand routable (mode, family) pairs that have a registered producer."""
+    """Expand routable (mode, family) pairs that have a registered M2 producer."""
     merged_family_stances = effective_family_stances(
         family_stances,
         entry_profile=entry_profile,
@@ -155,7 +80,7 @@ def producer_spec_for(
     mode_id: ModeId, family_id: FamilyId
 ) -> FamilyProducerSpec | None:
     """Resolve producer metadata for one mode/family pair."""
-    entry = FAMILY_PRODUCER_REGISTRY.get((mode_id, family_id))
+    entry = M2_FAMILY_PRODUCER_REGISTRY.get((mode_id, family_id))
     if entry is None:
         return None
     strategy_id, binder = entry
@@ -180,7 +105,7 @@ def produce_family_requests(
     discovery_config: DiscoveryConfig | None = None,
     entry_profile: EntryProfile = EntryProfile.STRICT,
 ) -> tuple[ProducedFamilyRequest, ...]:
-    """Evaluate every configured family producer without legacy router gating."""
+    """Evaluate every configured M2 family producer."""
     merged_family_stances = effective_family_stances(
         family_stances,
         entry_profile=entry_profile,
@@ -199,7 +124,7 @@ def produce_family_requests(
             continue
         bound = bind_family(
             spec,
-            _candidates_for_mode(candidates, mode_id=policy_row.mode_id),
+            _candidates_for_m2(candidates),
             market=market,
             policy=policy,
             p1=p1,
@@ -227,7 +152,7 @@ def produce_family_requests(
     return tuple(produced)
 
 
-def build_four_mode_requests(
+def build_m2_requests(
     produced: Sequence[ProducedFamilyRequest],
     *,
     index_underlying: FeatureSnapshot,
@@ -268,26 +193,12 @@ def build_four_mode_requests(
     return tuple(requests)
 
 
-def _candidates_for_mode(
-    candidates: Sequence[FeatureSnapshot], *, mode_id: ModeId
+def _candidates_for_m2(
+    candidates: Sequence[FeatureSnapshot],
 ) -> tuple[FeatureSnapshot, ...]:
-    """Filter the merged chain per mode.
-
-    Following-week rows carry ≥7-DTE expiries when the loaded chain is nearer;
-    M2, M3 and M4 all need them. M1 CAS trades the near chain only. Monthly
-    rows serve M3/M4 monthly DTE binders and must not alter M2 expiry semantics.
-    """
-    if mode_id is ModeId.M1_CAS:
-        return tuple(
-            item
-            for item in candidates
-            if item.features.get("following_week_chain", Decimal(0)) != Decimal(1)
-            and item.features.get("monthly_chain", Decimal(0)) != Decimal(1)
-        )
-    if mode_id is ModeId.M2_DIRECTIONAL:
-        return tuple(
-            item
-            for item in candidates
-            if item.features.get("monthly_chain", Decimal(0)) != Decimal(1)
-        )
-    return tuple(candidates)
+    """Exclude monthly-chain rows; M2 uses near and following-week only."""
+    return tuple(
+        item
+        for item in candidates
+        if item.features.get("monthly_chain", Decimal(0)) != Decimal(1)
+    )

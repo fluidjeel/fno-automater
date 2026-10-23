@@ -16,7 +16,10 @@ import polars as pl
 import pytest
 
 from trading.config import load_config
-from trading.data.cas_features import CAS_FEATURE_KEYS, CAS_FEATURE_SET_VERSION
+from trading.data.depth_microstructure_features import (
+    CAS_FEATURE_KEYS,
+    CAS_FEATURE_SET_VERSION,
+)
 from trading.data.config import (
     QualityConfig,
     SessionConfig,

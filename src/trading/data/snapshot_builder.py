@@ -7,7 +7,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from trading.data.cas_features import cas_snapshot_version, compute_cas_features
+from trading.data.depth_microstructure_features import (
+    cas_snapshot_version,
+    compute_cas_features,
+)
 from trading.data.config import UnderlyingConfig
 from trading.data.events import CanonicalMarketEvent
 from trading.data.prices import positive_decimal as _positive

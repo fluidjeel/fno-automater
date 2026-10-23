@@ -32,7 +32,6 @@ from trading.risk.snapshot_bundle import validate_leg_snapshot_bundle
 from trading.safety.paper_data import PaperDataInputs, assess_paper_data
 from trading.strategies.base import StrategyContext
 from trading.strategies.macro import MacroAssessment, MacroBias
-from trading.strategies.multileg_options import BullPutCreditStrategy
 from trading.strategies.quote_freshness import quote_freshness_limits
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -289,85 +288,3 @@ class TestDiscA15DataInvalidLink:
             market=f.quote(last=f.price("24500"), close=f.price("24500")),
         )
         assert underlying.permits_new_exposure
-
-    def test_multileg_strategy_not_data_invalid_on_bar_open_pattern(self) -> None:
-        times = _bar_open_times()
-        strict_ms, hard_ms = quote_freshness_limits(
-            entry_profile=EntryProfile.DISCOVERY,
-            freshness=ACCOUNT_CONFIG.config.freshness,
-            discovery_config=DISCOVERY,
-        )
-        underlying = f.snapshot(
-            times=times,
-            market=f.quote(last=f.price("24500"), close=f.price("24500")),
-        )
-        leg = f.snapshot(
-            contract=f.option_contract(
-                symbol="NIFTY26SEP24000PE", option_type=OptionType.PUT
-            ),
-            times=times,
-            market=f.quote(
-                bid=f.price("90"), ask=f.price("90.10"), last=f.price("90.05")
-            ),
-            derivatives=DerivativesContext(
-                days_to_expiry=10,
-                open_interest=5000,
-                option_type=OptionType.PUT,
-                underlying_price=f.price("24500"),
-                greeks=Greeks(
-                    model="fixture",
-                    calculation_version="1",
-                    converged=True,
-                    implied_volatility=Decimal("15"),
-                    delta=Decimal("-0.30"),
-                ),
-            ),
-            features={"lot_size": Decimal(75), "top_of_book_observed": Decimal(1)},
-        )
-        wing = f.snapshot(
-            contract=f.option_contract(
-                symbol="NIFTY26SEP23800PE",
-                strike=Decimal("23800"),
-                option_type=OptionType.PUT,
-            ),
-            times=times,
-            market=f.quote(
-                bid=f.price("40"), ask=f.price("40.10"), last=f.price("40.05")
-            ),
-            derivatives=DerivativesContext(
-                days_to_expiry=10,
-                open_interest=5000,
-                option_type=OptionType.PUT,
-                underlying_price=f.price("24500"),
-                greeks=Greeks(
-                    model="fixture",
-                    calculation_version="1",
-                    converged=True,
-                    implied_volatility=Decimal("15"),
-                    delta=Decimal("-0.15"),
-                ),
-            ),
-            features={"lot_size": Decimal(75), "top_of_book_observed": Decimal(1)},
-        )
-        ctx = StrategyContext(
-            underlying=underlying,
-            candidates=(leg, wing),
-            view=f.portfolio_view(),
-            now=NOW,
-            macro=MacroAssessment(
-                regime="NEUTRAL_VOLATILITY",
-                directional_bias=MacroBias.BULLISH,
-                confidence=Decimal("0.8"),
-                fresh_until=NOW + timedelta(hours=1),
-                evidence_ids=("src-1",),
-                model_version="macro-v1",
-            ),
-            entry_profile=EntryProfile.DISCOVERY,
-            strict_quote_max_age_ms=strict_ms,
-            hard_quote_max_age_ms=hard_ms,
-        )
-        decision = BullPutCreditStrategy().evaluate(ctx)
-        assert not any(
-            rejection.reason is ReasonCode.DATA_INVALID
-            for rejection in decision.rejections
-        )

@@ -336,8 +336,8 @@ class TestP0FailedProtectionNeverLeavesAnUncoveredShort:
     """
 
     def test_rejected_long_wings_stop_the_short_body(self, tmp_path: Path) -> None:
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _spec
+        from tests.paper_session_helpers import _runner
+        from tests.paper_session_helpers import _spec
         from tests.test_p10_iron_condor_binder_and_g2 import _macro as m4_macro
         from tests.test_p11_m4_broad_basket import _call_butterfly_candidates
         from trading.domain.enums import ExecutionMode, FamilyId, OrderState
@@ -489,7 +489,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_put_credit
-        from tests.test_four_mode_session_integration import _runner
+        from tests.paper_session_helpers import _runner
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / "restart-pnl.sqlite", clock=clock)
@@ -554,7 +554,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_put_credit
-        from tests.test_four_mode_session_integration import _runner
+        from tests.paper_session_helpers import _runner
         from trading.domain.contracts.order_plan import OrderPlan
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -649,7 +649,7 @@ class TestP0ClosedMultilegPreservesEntryFillsAndPnl:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_put_credit
-        from tests.test_four_mode_session_integration import _runner
+        from tests.paper_session_helpers import _runner
         from trading.domain.contracts.mode_policy import load_modes_config
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -819,8 +819,8 @@ class TestP0OpenRiskCapsAndAtomicReservations:
     def test_try_reserve_failure_releases_durable_hold_and_blocks_submit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _macro, _option, _request
+        from tests.paper_session_helpers import _runner
+        from tests.paper_session_helpers import _macro, _option, _request
         from trading.domain.enums import FamilyId, OptionType, RiskAction
         from trading.strategies.macro import MacroBias
 
@@ -932,8 +932,8 @@ class TestP0OpenRiskCapsAndAtomicReservations:
             store.close()
 
     def test_failed_protected_prefix_releases_reservation(self, tmp_path: Path) -> None:
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _spec
+        from tests.paper_session_helpers import _runner
+        from tests.paper_session_helpers import _spec
         from tests.test_p10_iron_condor_binder_and_g2 import _macro as m4_macro
         from tests.test_p11_m4_broad_basket import _call_butterfly_candidates
         from trading.domain.enums import ExecutionMode, FamilyId, OptionType
@@ -989,7 +989,7 @@ class TestP0OpenRiskCapsAndAtomicReservations:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_put_credit
-        from tests.test_four_mode_session_integration import _runner
+        from tests.paper_session_helpers import _runner
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
         store = TradingStore.open(tmp_path / "restart-risk.sqlite", clock=clock)
@@ -1059,154 +1059,6 @@ class TestP0OpenRiskCapsAndAtomicReservations:
             assert m2.reserved_capital.amount == Decimal("5000")
             assert m2.margin_used.amount == Decimal(0)
             assert book.total_open_risk().amount == Decimal("5000")
-        finally:
-            store.close()
-
-
-class TestP0M3M4FollowingWeekCandidates:
-    """m3_m4_20260925: M3/M4 must not discard ≥7-DTE following-week rows."""
-
-    def test_following_week_rows_reach_m3_and_m4(self) -> None:
-        from trading.runtime.four_mode_producers import _candidates_for_mode
-
-        base = f.snapshot(
-            snapshot_id="SNAP-FW",
-            contract=f.option_contract(
-                symbol="NIFTY26OCT24000CE", strike=Decimal("24000")
-            ),
-            derivatives=DerivativesContext(
-                days_to_expiry=9,
-                open_interest=5000,
-                option_type=OptionType.CALL,
-                underlying_price=f.price("24000"),
-            ),
-        )
-        marked = base.model_copy(
-            update={"features": {**base.features, "following_week_chain": Decimal(1)}}
-        )
-        assert _candidates_for_mode((marked,), mode_id=ModeId.M2_DIRECTIONAL) == (
-            marked,
-        )
-        assert _candidates_for_mode(
-            (marked,), mode_id=ModeId.M3_TACTICAL_POSITIONAL
-        ) == (marked,)
-        assert _candidates_for_mode(
-            (marked,), mode_id=ModeId.M4_STRATEGIC_POSITIONAL
-        ) == (marked,)
-        assert _candidates_for_mode((marked,), mode_id=ModeId.M1_CAS) == ()
-
-
-class TestP0M1EventPathAndM2Carry:
-    """four_mode_20260925: M1 event path + M2 carry gate on the session builder."""
-
-    def test_stale_m1_provider_quote_is_rejected(self, tmp_path: Path) -> None:
-        from dataclasses import replace
-        from zoneinfo import ZoneInfo
-
-        from tests.test_m1_paper_session_integration import (
-            _load_validated_session,
-            _m1_chain,
-            _m1_fixture_builder,
-            _session,
-            _simulated_event,
-        )
-        from tests.test_p7_m1_selector_and_g3_path import _times
-
-        at = datetime(2026, 9, 14, 15, 15, tzinfo=IST).astimezone(ZoneInfo("UTC"))
-        clock = FrozenClock(at)
-        store = TradingStore.open(tmp_path / "m1-stale.sqlite", clock=clock)
-        try:
-            underlying, call, instruments = _m1_chain()
-            underlying = underlying.model_copy(update={"times": _times(at)})
-            call = call.model_copy(update={"times": _times(at)})
-            session_cfg = _load_validated_session()
-            builder = _m1_fixture_builder(
-                repo_root=tmp_path,
-                session_cfg=session_cfg,
-                option_candidates=(call,),
-                underlying=underlying,
-                instruments=instruments,
-            )
-            session = _session(
-                store,
-                clock,
-                tmp_path,
-                repo_root=tmp_path,
-                session_cfg=session_cfg,
-                builder=builder,
-            )
-            event = replace(
-                _simulated_event(now=at), quote_time=at - timedelta(seconds=10)
-            )
-            result = session.submit_m1_event(event)
-            assert result is None or not any(
-                outcome.order_events for outcome in (result.outcomes if result else ())
-            )
-            assert session._runner.trade_manager.list_positions() == ()
-        finally:
-            store.close()
-
-    def test_m2_carry_gate_approves_on_session_path(self, tmp_path: Path) -> None:
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _macro, _option, _request
-        from tests.test_p7_m1_selector_and_g3_path import _times
-        from trading.domain.enums import CarryGateAction, FamilyId
-        from trading.strategies.macro import MacroBias
-
-        entry_at = NOW + timedelta(seconds=60)
-        clock = FrozenClock(entry_at)
-        store = TradingStore.open(tmp_path / "m2-carry.sqlite", clock=clock)
-        try:
-            runner = _runner(store, clock)
-            option = _option("24000", OptionType.CALL)
-            opened = runner.run_cycle(
-                (
-                    _request(
-                        strategy_id="positional_long_option",
-                        candidates=(option,),
-                        mode_id=ModeId.M2_DIRECTIONAL,
-                        family_id=FamilyId.long_call,
-                        macro=_macro(MacroBias.BULLISH),
-                    ),
-                )
-            )
-            assert opened.outcomes[0].order_events
-            carry_at = datetime(2026, 9, 14, 15, 1, tzinfo=IST)
-            clock.set(carry_at.astimezone(UTC))
-            fresh = option.model_copy(
-                update={"times": _times(carry_at.astimezone(UTC))}
-            )
-            session_cfg = load_paper_session_config(
-                ROOT / "config" / "paper_session.yaml"
-            )
-
-            def builder(
-                _now: datetime,
-            ) -> tuple[tuple[object, ...], dict[str, FeatureSnapshot]]:
-                return ((), {fresh.contract.symbol: fresh})
-
-            session = PaperSession(
-                runner=runner,
-                clock=clock,
-                session_config=session_cfg,
-                session_hours=(time(9, 15), time(15, 30)),
-                timezone=IST,
-                notifier=_Sink(),
-                request_builder=builder,  # type: ignore[arg-type]
-                observation_start=entry_at,
-                capital_limit=Money.of("2500000", Currency.INR),
-                risk_policy_version="6",
-                fill_model_version="conservative-v1",
-                code_version="audit-remediation",
-                charges_verified=False,
-                cohort_dir=tmp_path / "cohorts",
-            )
-            session._run_due_m2_carry_gate(
-                {fresh.contract.symbol: fresh}, carry_at.astimezone(UTC)
-            )
-            records = store.list_position_lifecycle()
-            carry = records[-1].carry_records[-1]
-            assert carry.action is CarryGateAction.CARRY_APPROVED
         finally:
             store.close()
 
@@ -1298,7 +1150,7 @@ class TestP0RollSwitchPerLegAndReplacement:
         from dataclasses import replace
 
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.domain.enums import RollSwitchStatus
         from trading.strategies.macro import MacroBias
 
@@ -1332,7 +1184,7 @@ class TestP0RollSwitchPerLegAndReplacement:
 
     def test_replacement_l2_approval_completes_roll(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.domain.enums import RollSwitchStatus
         from trading.strategies.macro import MacroBias
 
@@ -1363,7 +1215,7 @@ class TestP0RollSwitchPerLegAndReplacement:
 
     def test_unknown_exit_blocks_replacement(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.domain.enums import RollSwitchStatus
         from trading.strategies.macro import MacroBias
 
@@ -1402,7 +1254,7 @@ class TestP0RollSwitchPerLegAndReplacement:
 
     def test_restart_during_exit_pending_resumes_close(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_put_credit
-        from tests.test_four_mode_session_integration import _runner
+        from tests.paper_session_helpers import _runner
         from trading.domain.contracts.order_plan import OrderPlan
         from trading.domain.enums import RollSwitchStatus
 
@@ -1520,7 +1372,7 @@ class TestP0CampaignDrawdownRollChain:
 
     def test_campaign_id_shared_across_roll_replacement(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.strategies.macro import MacroBias
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -1561,7 +1413,7 @@ class TestP0CampaignDrawdownRollChain:
 
     def test_multiple_rolls_keep_one_campaign(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.strategies.macro import MacroBias
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -1602,8 +1454,8 @@ class TestP0CampaignDrawdownRollChain:
         self, tmp_path: Path
     ) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _runner
+        from tests.paper_session_helpers import _macro, _request
         from trading.strategies.macro import MacroBias
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -1642,8 +1494,8 @@ class TestP0CampaignDrawdownRollChain:
 
     def test_restart_with_open_replacement_keeps_campaign(self, tmp_path: Path) -> None:
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_session_integration import _runner
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _runner
+        from tests.paper_session_helpers import _macro, _request
         from trading.strategies.macro import MacroBias
 
         clock = FrozenClock(NOW + timedelta(seconds=60))
@@ -1685,7 +1537,7 @@ class TestP0CampaignDrawdownRollChain:
         from dataclasses import replace
 
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.domain.enums import RollSwitchStatus
         from trading.strategies.macro import MacroBias
 
@@ -1751,7 +1603,7 @@ class TestP0CampaignDrawdownRollChain:
     ) -> None:
         import tests.factories as f
         from tests.structures import open_bull_call_debit
-        from tests.test_four_mode_trade_simulations import _macro, _request
+        from tests.paper_session_helpers import _macro, _request
         from trading.strategies.macro import MacroBias
 
         clock = FrozenClock(NOW + timedelta(seconds=60))

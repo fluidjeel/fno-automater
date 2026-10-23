@@ -14,7 +14,7 @@ from trading.data.config import (
     UnderlyingConfig,
     load_data_pipeline_config,
 )
-from trading.data.cas_features import select_prior_depth
+from trading.data.depth_microstructure_features import select_prior_depth
 from trading.data.cycle import build_cycle_snapshot
 from trading.data.events import CanonicalMarketEvent, RawMarketCapture
 from trading.data.fyers.client import FyersApiError, FyersMarketFeed

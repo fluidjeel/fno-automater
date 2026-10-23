@@ -41,10 +41,8 @@ from trading.risk.reservation import CapitalReservationService
 from trading.storage.trading_store import TradingStore
 
 ROOT = Path(__file__).resolve().parent.parent
-DISCOVERY_CFG = load_discovery_config(
-    ROOT / "tests" / "fixtures" / "discovery_four_mode.yaml"
-).config
-FOUR_MODE_MODES = load_modes_config(ROOT / "tests" / "fixtures" / "modes_four_mode.yaml")
+DISCOVERY_CFG = load_discovery_config(ROOT / "config" / "discovery.yaml").config
+M2_MODES = load_modes_config(ROOT / "config" / "modes.yaml")
 RISK_POLICY = load_risk_policy(ROOT / "config" / "risk.yaml")
 ACCOUNT_CONFIG = load_config(ROOT / "config" / "base.yaml")
 BROKER_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "broker"
@@ -73,7 +71,7 @@ def _discovery_gateway(
 ) -> RiskGateway:
     book = mode_book or FourModeBook(
         discovery_config=DISCOVERY_CFG,
-        modes_config=FOUR_MODE_MODES,
+        modes_config=M2_MODES,
     )
     return RiskGateway(
         account_config=ACCOUNT_CONFIG,
@@ -84,7 +82,7 @@ def _discovery_gateway(
         margin_preview=broker,
         clock=clock,
         id_factory=id_factory,
-        modes_config=FOUR_MODE_MODES,
+        modes_config=M2_MODES,
         mode_book=book,
     )
 
@@ -291,7 +289,7 @@ class TestDiscoveryGateway:
     ) -> None:
         book = FourModeBook(
             discovery_config=DISCOVERY_CFG,
-            modes_config=FOUR_MODE_MODES,
+            modes_config=M2_MODES,
         )
         m4 = book.get_ledger(ModeId.M4_STRATEGIC_POSITIONAL)
         book._ledgers[ModeId.M4_STRATEGIC_POSITIONAL] = m4.model_copy(
@@ -323,7 +321,7 @@ class TestDiscoveryGateway:
         """DISCOVERY may exceed the 12% guide; STRICT reservation caps stay enforced."""
         book = FourModeBook(
             discovery_config=DISCOVERY_CFG,
-            modes_config=FOUR_MODE_MODES,
+            modes_config=M2_MODES,
         )
         gateway = _discovery_gateway(store, broker, clock, id_factory, mode_book=book)
         legs = _straddle_leg_snapshots()
@@ -392,8 +390,8 @@ class TestDiscoveryGateway:
             margin_preview=broker,
             clock=clock,
             id_factory=id_factory,
-            modes_config=FOUR_MODE_MODES,
-            mode_book=FourModeBook(modes_config=FOUR_MODE_MODES),
+            modes_config=M2_MODES,
+            mode_book=FourModeBook(modes_config=M2_MODES),
         )
         legs = _straddle_leg_snapshots()
         intent = _straddle_intent(snapshot_id=legs["call"].snapshot_id)

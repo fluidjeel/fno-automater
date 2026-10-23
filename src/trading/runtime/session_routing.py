@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 
 class SessionRoutingProfile(StrEnum):
     LEGACY = "legacy"
-    FOUR_MODE = "four_mode"
     M2_ONLY = "m2_only"
 
 
@@ -126,14 +125,11 @@ def bind_family(
         "policy": policy,
         "p1": p1,
     }
-    if spec.mode_id in {ModeId.M1_CAS, ModeId.M2_DIRECTIONAL}:
-        kwargs["master_symbols"] = master_symbols
     if spec.mode_id is ModeId.M2_DIRECTIONAL:
+        kwargs["master_symbols"] = master_symbols
         kwargs["allow_fallback_expiry"] = True
         kwargs["discovery_config"] = discovery_config
         kwargs["entry_profile"] = entry_profile
-    if spec.mode_id is ModeId.M1_CAS:
-        return spec.binder(candidates, **kwargs)
     if spec.family_id in {FamilyId.bull_put_credit, FamilyId.bear_call_credit}:
         return spec.binder(
             candidates,

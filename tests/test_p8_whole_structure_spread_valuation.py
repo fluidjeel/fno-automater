@@ -58,7 +58,6 @@ from trading.domain.enums import (
 )
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, TickSize
-from trading.strategies import CasMicrostructureStrategy
 from trading.trade.exits import (
     ExitEngine,
     ExitKind,
@@ -637,31 +636,6 @@ class TestLegacyOpenTradesPreserved:
         )
         pos = manager.apply_order_event(event_1)
         assert pos.exit_policy.scope is ExitScope.STRATEGY_PNL
-
-
-class TestM1ConfigurableTargetPayoffShape:
-    """§2.13: M1 targets are config and do not force a winner smaller than payoff shape."""
-
-    def test_m1_cas_configurable_target_leaves_room_for_runner(self) -> None:
-        """CasMicrostructureStrategy accepts configurable target ticks."""
-        default_strat = CasMicrostructureStrategy()
-        assert default_strat.target_ticks == 30
-
-        # Custom configurable target supporting runners / asymmetric payoff
-        runner_strat = CasMicrostructureStrategy(
-            stop_ticks=20,
-            target_ticks=80,
-            trailing_activation_ticks=30,
-            trailing_distance_ticks=15,
-        )
-        assert runner_strat.stop_ticks == 20
-        assert runner_strat.target_ticks == 80
-        assert runner_strat.trailing_activation_ticks == 30
-        assert runner_strat.trailing_distance_ticks == 15
-
-        # Verifies 4:1 reward-to-risk ratio is configured without clamping
-        ratio = runner_strat.target_ticks / runner_strat.stop_ticks
-        assert ratio == Decimal("4.0")
 
 
 class TestGapExitsAndPolledLoopLimitation:

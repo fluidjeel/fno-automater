@@ -8,7 +8,6 @@ import pytest
 
 from trading.domain.contracts.mode_policy import load_modes_config
 from trading.domain.enums import ExecutionMode, ModeId
-from trading.runtime.cas_event_path import CasEventDrivenConfig
 from trading.runtime.paper_session import (
     PaperSessionConfig,
     load_paper_session_config,
@@ -27,20 +26,12 @@ def _sample_config(**overrides: object) -> PaperSessionConfig:
         "eod_local": "15:40",
         "option_strikes_each_side": 2,
         "experiment_prefix": "EXP-TEST",
-        "strategy_ids": (
-            "positional_long_option",
-            "debit_spread",
-            "defined_risk_multileg",
-            "cas_microstructure",
-            "commodity_futures_trend",
-        ),
+        "strategy_ids": ("positional_long_option", "commodity_futures_trend"),
         "strategy_stances": {
             "positional_long_option": ExecutionMode.PAPER,
-            "debit_spread": ExecutionMode.PAPER,
-            "defined_risk_multileg": ExecutionMode.SHADOW,
-            "cas_microstructure": ExecutionMode.SHADOW,
             "commodity_futures_trend": ExecutionMode.SHADOW,
         },
+        "routing_profile": "legacy",
         "commodity_underlying": "CRUDEOIL",
         "commodity_exchange": "MCX",
         "commodity_segment": "MCX_COM",
@@ -60,76 +51,6 @@ class TestStartupValidation:
         cfg = _sample_config()
         validated_cfg, warnings = validate_startup_configuration(cfg)
         assert validated_cfg == cfg
-        assert warnings == []
-
-    def test_g3_slow_poll_warns_without_demoting_cas(self) -> None:
-        cfg = _sample_config(
-            poll_interval_seconds=60,
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "cas_microstructure": ExecutionMode.PAPER,
-            },
-            cas_event_driven=CasEventDrivenConfig(enabled=True),
-        )
-        validated_cfg, warnings = validate_startup_configuration(
-            cfg, enforce_g3_shadow=False
-        )
-        assert (
-            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-        )
-        assert len(warnings) == 1
-        assert "measured limitation" in warnings[0]
-
-    def test_g3_m1_cas_key_keeps_paper_on_slow_poll(self) -> None:
-        cfg = _sample_config(
-            poll_interval_seconds=60,
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "M1_CAS": ExecutionMode.PAPER,
-            },
-        )
-        validated_cfg, warnings = validate_startup_configuration(
-            cfg, enforce_g3_shadow=False
-        )
-        assert validated_cfg.strategy_stances["M1_CAS"] is ExecutionMode.PAPER
-        assert warnings
-
-    def test_g3_enforce_flag_does_not_demote_cas(self) -> None:
-        cfg = _sample_config(
-            poll_interval_seconds=60,
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "cas_microstructure": ExecutionMode.PAPER,
-            },
-            cas_event_driven=CasEventDrivenConfig(enabled=True),
-        )
-        validated_cfg, warnings = validate_startup_configuration(
-            cfg, enforce_g3_shadow=True
-        )
-        assert (
-            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-        )
-        assert (
-            validated_cfg.strategy_stances["positional_long_option"]
-            is ExecutionMode.PAPER
-        )
-        assert len(warnings) == 1
-        assert "measured limitation" in warnings[0]
-
-    def test_g3_fast_poll_does_not_warn_cas(self) -> None:
-        cfg = _sample_config(
-            poll_interval_seconds=10,
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "cas_microstructure": ExecutionMode.PAPER,
-            },
-        )
-        validated_cfg, warnings = validate_startup_configuration(
-            cfg, enforce_g3_shadow=True
-        )
-        assert (
-            validated_cfg.strategy_stances["cas_microstructure"] is ExecutionMode.PAPER
-        )
         assert warnings == []
 
     def test_g1_min_lot_exceeds_budget_long_straddle(self) -> None:
@@ -166,45 +87,6 @@ class TestStartupValidation:
         )
         validated_cfg, warnings = validate_startup_configuration(cfg)
         assert validated_cfg.strategy_stances["long_straddle"] is ExecutionMode.SHADOW
-        assert warnings == []
-
-    def test_g2_unproven_family_defined_risk_multileg(self) -> None:
-        cfg = _sample_config(
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "defined_risk_multileg": ExecutionMode.PAPER,
-            },
-        )
-        with pytest.raises(
-            StartupValidationError, match=r"Gate G2 violation.*defined_risk_multileg"
-        ):
-            validate_startup_configuration(cfg)
-
-    def test_g2_unproven_family_iron_condor(self) -> None:
-        cfg = _sample_config(
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "iron_condor": ExecutionMode.PAPER,
-            },
-        )
-        with pytest.raises(
-            StartupValidationError, match=r"Gate G2 violation.*iron_condor"
-        ):
-            validate_startup_configuration(cfg)
-
-    def test_g2_unproven_families_allowed_in_shadow(self) -> None:
-        cfg = _sample_config(
-            strategy_stances={
-                "positional_long_option": ExecutionMode.PAPER,
-                "defined_risk_multileg": ExecutionMode.SHADOW,
-                "iron_condor": ExecutionMode.SHADOW,
-            },
-        )
-        validated_cfg, warnings = validate_startup_configuration(cfg)
-        assert (
-            validated_cfg.strategy_stances["defined_risk_multileg"]
-            is ExecutionMode.SHADOW
-        )
         assert warnings == []
 
     def test_commodity_underlying_paper_rejected(self) -> None:
@@ -254,11 +136,10 @@ class TestStartupValidation:
         )
         assert validated_cfg.routing_profile.value == "m2_only"
         assert validated_cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
-        assert validated_cfg.cas_event_driven.enabled is False
         assert set(modes_cfg.modes.keys()) == {ModeId.M2_DIRECTIONAL}
         assert not warnings
 
-    def test_m2_only_rejects_m1_paper_stance(self) -> None:
+    def test_m2_only_rejects_extra_paper_mode(self) -> None:
         session_cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
         session_cfg = session_cfg.model_copy(
             update={
@@ -269,5 +150,5 @@ class TestStartupValidation:
             }
         )
         modes_cfg = load_modes_config(ROOT / "config" / "modes.yaml")
-        with pytest.raises(StartupValidationError, match="m2_only requires non-M2"):
+        with pytest.raises(StartupValidationError, match="m2_only requires exactly"):
             validate_startup_configuration(session_cfg, modes_cfg)

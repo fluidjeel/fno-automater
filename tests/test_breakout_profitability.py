@@ -54,7 +54,7 @@ def test_deterministic_strategy_evaluations() -> None:
     for case in cases_pos:
         out = evaluate_deterministic(case)
         assert out.entered is True
-        assert out.strategy_id == "debit_spread"
+        assert out.strategy_id == "positional_long_option"
 
     for case in cases_dir:
         out = evaluate_deterministic(case)
@@ -64,7 +64,7 @@ def test_deterministic_strategy_evaluations() -> None:
     for case in cases_cas:
         out = evaluate_deterministic(case)
         assert out.entered is True
-        assert out.strategy_id == "cas_microstructure"
+        assert out.strategy_id == "positional_long_option"
 
 
 def test_agentic_layer_trap_defense() -> None:

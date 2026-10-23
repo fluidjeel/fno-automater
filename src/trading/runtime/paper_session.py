@@ -68,15 +68,11 @@ from trading.domain.enums import (
 from trading.domain.ids import SequentialIdFactory
 from trading.domain.primitives import Currency, Money, Price, TickSize
 from trading.identification import (
-    allowed_families_for,
     apply_discovery_direction_fallback,
-    bind_debit_spread,
-    bind_long_option,
     build_market_state,
     load_identification_policy,
     observe_p1_features,
     publish_macro_assessment,
-    route_nifty_options,
     top_book_size,
 )
 from trading.identification.calendar import get_calendar_port
@@ -96,30 +92,17 @@ from trading.runtime.candidates import (
     build_option_candidates,
     front_month_future,
 )
-from trading.runtime.cas_event_path import (
-    ORACLE_MEASURED,
-    CasEventDrivenConfig,
-    M1ProviderEvent,
-    active_m1_window,
-    evaluate_m1_provider_event,
-    measure_cas_entry_latency,
-    record_episode_attempt,
-)
 from trading.runtime.cohort import experiment_id_for, persist_cohorts
 from trading.runtime.discovery_data_feed_alert import DataFeedAlertTracker
 from trading.runtime.discovery_drawdown_alert import DrawdownAlertTracker
 from trading.runtime.event_risk import collect_event_risk
-from trading.runtime.four_mode_producers import (
-    build_four_mode_requests,
+from trading.runtime.m2_producers import (
+    build_m2_requests,
     iter_recordable_family_slots,
     produce_family_requests,
 )
 from trading.runtime.fyers_ws_monitor import FyersWsQuoteMonitor
 from trading.runtime.isolation import assert_paper_isolation
-from trading.runtime.m1_poll_ingress import (
-    feed_m1_poll_provider_event,
-    m1_poll_watch_symbols,
-)
 from trading.runtime.m2_chain import following_week_epoch, monthly_window_epoch
 from trading.runtime.notify import (
     format_eod_report,
@@ -149,7 +132,6 @@ from trading.trade.sentinel import StopSentinel
 
 __all__ = [
     "PaperSessionConfig",
-    "cas_paper_execute",
     "load_paper_session_config",
     "run_paper_session",
 ]
@@ -209,7 +191,6 @@ class PaperSessionConfig(BaseModel):
         default_factory=PositionalReviewConfig
     )
     protection: ProtectionConfig = Field(default_factory=ProtectionConfig)
-    cas_event_driven: CasEventDrivenConfig = Field(default_factory=CasEventDrivenConfig)
     # P0 audit remediation: block new PAPER exposure while exits/recovery stay on.
     new_entries_enabled: bool = True
 
@@ -232,21 +213,6 @@ def load_paper_session_config(path: Path) -> PaperSessionConfig:
         raise ValueError("paper session config must be a mapping")
     payload.pop("schema_version", None)
     return PaperSessionConfig.model_validate(payload)
-
-
-def cas_paper_execute(
-    *,
-    stance: ExecutionMode,
-    allowed: frozenset[str],
-    candidates: Sequence[FeatureSnapshot],
-) -> tuple[bool, ExecutionMode]:
-    """PAPER-submit CAS only when stance, allow-table, and one option agree."""
-    execute = (
-        stance is ExecutionMode.PAPER
-        and "cas_microstructure" in allowed
-        and len(candidates) == 1
-    )
-    return execute, ExecutionMode.PAPER if execute else ExecutionMode.SHADOW
 
 
 class PaperSession:
@@ -314,7 +280,6 @@ class PaperSession:
         self._cycle_count = 0
         self._eod_sent = False
         self._sentinel = StopSentinel(on_exit=self._on_sentinel_exit)
-        self._m1_ingress: object | None = None
         self._latest_market_state: MarketState | None = None
         self._drawdown_alerts = DrawdownAlertTracker()
         self._data_feed_alerts = DataFeedAlertTracker()
@@ -331,34 +296,6 @@ class PaperSession:
     def runner(self) -> PaperRunner:
         """Underlying paper runner (exits, recovery, risk)."""
         return self._runner
-
-    def attach_m1_ingress(self, ingress: object) -> None:
-        """Register the production M1 provider-event ingress."""
-        self._m1_ingress = ingress
-
-    def on_provider_quote(
-        self,
-        symbol: str,
-        quote: MarketQuote,
-        *,
-        receive_time: datetime | None = None,
-        quote_time: datetime | None = None,
-        disconnected: bool = False,
-    ) -> PaperCycleResult | None:
-        """Production entry point: provider quote → ``submit_m1_event``."""
-        from trading.runtime.m1_event_ingress import M1EventIngress
-
-        if self._m1_ingress is None:
-            self._m1_ingress = M1EventIngress(session=self, now_utc=self._clock.now_utc)
-        if not isinstance(self._m1_ingress, M1EventIngress):
-            return None
-        result = self._m1_ingress.on_quote(
-            symbol,
-            quote,
-            receive_time=receive_time,
-            disconnected=disconnected,
-        )
-        return result if isinstance(result, PaperCycleResult) else None
 
     @property
     def sentinel(self) -> StopSentinel:
@@ -405,17 +342,6 @@ class PaperSession:
             self._notifier.send(format_lifecycle_alert(alert)[:_NOTIFY_MAX])
         self.sync_sentinel()
         if self._protection is not None:
-
-            def m1_handler(
-                symbol: str, quote: MarketQuote, receive_time: datetime
-            ) -> object | None:
-                return self.on_provider_quote(
-                    symbol,
-                    quote,
-                    receive_time=receive_time,
-                )
-
-            self._protection.set_m1_quote_handler(m1_handler)
             self._protection.refresh_subscriptions()
             self._protection.start()
             self._start_protection_scheduler()
@@ -517,9 +443,6 @@ class PaperSession:
 
     def tick(self) -> PaperCycleResult | None:
         """One L1→L3→L2 cycle plus exits. Returns None when the builder is empty."""
-        holder = getattr(self._builder, "m1_holder", None)
-        if isinstance(holder, dict) and not holder.get("keep"):
-            holder["event"] = None
         now = self._clock.now_utc()
         try:
             requests, snapshots = self._builder(now)
@@ -557,19 +480,6 @@ class PaperSession:
                 )
                 for text in format_post_trade(outcome, experiment_id=experiment_id):
                     self._notifier.send(text[:_NOTIFY_MAX])
-        if snapshots and isinstance(self._latest_market_state, MarketState):
-            watch = m1_poll_watch_symbols(
-                snapshots,
-                self._latest_market_state,
-                config=self._config.cas_event_driven,
-            )
-            self._runner.set_m1_monitor_symbols(watch)
-            feed_m1_poll_provider_event(
-                self,
-                snapshots,
-                self._latest_market_state,
-                now=now,
-            )
         if snapshots:
             self._runner.manage_exits(snapshots)
         self._record_portfolio_risk(snapshots)
@@ -649,46 +559,9 @@ class PaperSession:
                 as_of=now,
                 detail=detail,
                 experiment_id=self._config.experiment_prefix,
-                family_slots=tuple(
-                    (mode_id, "FOLLOWING_WEEK_CHAIN")
-                    for mode_id in (
-                        ModeId.M2_DIRECTIONAL,
-                        ModeId.M3_TACTICAL_POSITIONAL,
-                        ModeId.M4_STRATEGIC_POSITIONAL,
-                    )
-                ),
+                family_slots=((ModeId.M2_DIRECTIONAL, "FOLLOWING_WEEK_CHAIN"),),
             )
         feed_errors.clear()
-
-    def submit_m1_event(self, event: M1ProviderEvent) -> PaperCycleResult | None:
-        """Run only M1 through the session builder from one provider event.
-
-        The 60-second poll clears any pending event and does not submit M1.
-        """
-        holder = getattr(self._builder, "m1_holder", None)
-        if not isinstance(holder, dict):
-            return None
-        holder["keep"] = True
-        holder["event"] = event
-        try:
-            now = self._clock.now_utc()
-            try:
-                requests, snapshots = self._builder(now)
-            except _BUILDER_FEED_ERRORS as exc:
-                self._handle_builder_feed_error(exc, now=now)
-                return None
-            m1 = tuple(
-                item
-                for item in self._entry_requests(requests)
-                if item.forced_mode_id is ModeId.M1_CAS
-            )
-            result = self._runner.run_cycle(m1) if m1 else None
-            if snapshots:
-                self._runner.manage_exits(snapshots)
-            return result
-        finally:
-            holder["event"] = None
-            holder["keep"] = False
 
     def _write_session_heartbeat(
         self,
@@ -980,42 +853,29 @@ def run_paper_session(
         notifier.send(f"STARTUP WARNING: {warning}")
     shared_feed = _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     if request_builder is None:
-        if session_cfg.routing_profile in {
-            SessionRoutingProfile.FOUR_MODE,
-            SessionRoutingProfile.M2_ONLY,
-        }:
-            if modes_config is None:
-                logging.getLogger(__name__).error(
-                    "Four-mode routing requires config/modes.yaml"
-                )
-                return 1
-            request_builder = _four_mode_request_builder(
-                repo_root,
-                clock=clock,
-                session_cfg=session_cfg,
-                modes_config=modes_config,
-                pipeline_cfg=pipeline_cfg,
-                settings=settings,
-                paper_data=paper_data,
-                mode_book=mode_book,
-                discovery_config=discovery_cfg,
-                discovery_fingerprint=discovery_fingerprint,
-                feed=shared_feed,
-                instrument_registry=instrument_registry,
+        if session_cfg.routing_profile is not SessionRoutingProfile.M2_ONLY:
+            logging.getLogger(__name__).error(
+                "Only m2_only routing is supported; got %s",
+                session_cfg.routing_profile.value,
             )
-        else:
-            request_builder = _live_request_builder(
-                repo_root,
-                clock=clock,
-                session_cfg=session_cfg,
-                pipeline_cfg=pipeline_cfg,
-                settings=settings,
-                broker=broker,
-                paper_data=paper_data,
-                discovery_config=discovery_cfg,
-                discovery_fingerprint=discovery_fingerprint,
-                feed=shared_feed,
-            )
+            return 1
+        if modes_config is None:
+            logging.getLogger(__name__).error("M2 routing requires config/modes.yaml")
+            return 1
+        request_builder = _m2_request_builder(
+            repo_root,
+            clock=clock,
+            session_cfg=session_cfg,
+            modes_config=modes_config,
+            pipeline_cfg=pipeline_cfg,
+            settings=settings,
+            paper_data=paper_data,
+            mode_book=mode_book,
+            discovery_config=discovery_cfg,
+            discovery_fingerprint=discovery_fingerprint,
+            feed=shared_feed,
+            instrument_registry=instrument_registry,
+        )
     protection: ProtectionCoordinator | None = None
     if session_cfg.protection.enabled:
         rest_monitor = RestQuoteMonitor(
@@ -1240,259 +1100,6 @@ def _protection_rest_fetch(
     return fetch
 
 
-def _live_request_builder(
-    repo_root: Path,
-    *,
-    clock: Clock,
-    session_cfg: PaperSessionConfig,
-    pipeline_cfg: DataPipelineConfig,
-    settings: FyersSettings,
-    broker: PaperBroker,
-    paper_data: PaperDataRequirements | None = None,
-    discovery_config: DiscoveryConfig | None = None,
-    discovery_fingerprint: str | None = None,
-    feed: ResilientFyersMarketFeed | None = None,
-) -> Callable[
-    [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
-]:
-    resolved_feed = feed or _build_paper_fyers_feed(settings, clock, pipeline_cfg)
-    pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
-    catalog = InstrumentSpecStore(
-        repo_root / pipeline_cfg.storage.root / pipeline_cfg.reference.instrument_subdir
-    )
-    news_config = load_news_config(repo_root / "config" / "news.yaml")
-    identification = load_identification_policy(
-        repo_root / "config" / "identification.yaml"
-    )
-    snapshot_store = SnapshotStore(
-        repo_root / pipeline_cfg.storage.root / pipeline_cfg.storage.snapshot_subdir
-    )
-    collector = NewsCollector(news_config)
-    zone = ZoneInfo(pipeline_cfg.session.timezone)
-    feed = resolved_feed
-    last_winner_at: datetime | None = None
-    last_winner_regime: str | None = None
-
-    def build(
-        now: datetime,
-    ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
-        nonlocal last_winner_at, last_winner_regime
-        event_risk = collect_event_risk(collector, news_config, as_of=now)
-        snapshots: dict[str, FeatureSnapshot] = {}
-        requests: list[PaperStrategyRequest] = []
-        instruments: dict[str, InstrumentSpec] = {}
-        index_underlying: FeatureSnapshot | None = None
-        option_candidates: tuple[FeatureSnapshot, ...] = ()
-        bar_event: CanonicalMarketEvent | None = None
-        macro: MacroAssessment | None = None
-        for underlying_cfg in pipeline_cfg.underlyings:
-            if underlying_cfg.instrument_kind is InstrumentKind.FUTURE:
-                continue
-            if underlying_cfg.symbol == identification.vix_symbol:
-                continue
-            result = pipeline.run_once(underlying_cfg, now=now)
-            if result.snapshot is None:
-                continue
-            index_underlying = result.snapshot
-            macro = publish_macro_assessment(result.macro_news_factor)
-            snapshots[index_underlying.contract.symbol] = index_underlying
-            chain = next(
-                (
-                    event
-                    for event in result.events
-                    if event.event_type == "OPTION_CHAIN_SNAPSHOT"
-                ),
-                None,
-            )
-            if chain is None:
-                continue
-            bar_event = next(
-                (
-                    event
-                    for event in result.events
-                    if event.event_type == "BAR_SNAPSHOT"
-                    and event.payload.get("resolution") == "5"
-                ),
-                None,
-            )
-            option_candidates, option_specs = build_option_candidates(
-                chain,
-                catalog,
-                underlying=index_underlying,
-                as_of=now,
-                zone=zone,
-                strikes_each_side=session_cfg.option_strikes_each_side,
-            )
-            if option_specs:
-                quote_capture = feed.fetch_quotes(tuple(sorted(option_specs)))
-                observed_quotes = _quotes_from_capture(quote_capture, option_specs)
-                option_candidates, option_specs = build_option_candidates(
-                    chain,
-                    catalog,
-                    underlying=index_underlying,
-                    as_of=now,
-                    zone=zone,
-                    strikes_each_side=session_cfg.option_strikes_each_side,
-                    quotes=observed_quotes,
-                )
-            if paper_data is not None:
-                option_candidates = _with_option_depth(
-                    option_candidates, feed, paper_data
-                )
-            instruments.update(option_specs)
-            for candidate in option_candidates:
-                snapshots[candidate.contract.symbol] = candidate
-        future_spec = front_month_future(
-            catalog,
-            underlying=session_cfg.commodity_underlying,
-            exchange=Exchange[session_cfg.commodity_exchange],
-            as_of=now,
-            zone=zone,
-        )
-        future_candidates: tuple[FeatureSnapshot, ...] = ()
-        if future_spec is not None and index_underlying is not None:
-            capture = feed.fetch_quotes((future_spec.trading_symbol,))
-            future_quote = _quote_from_capture(capture, future_spec)
-            if future_quote is not None:
-                future_snap = build_future_snapshot(
-                    future_spec,
-                    quote=future_quote,
-                    as_of=now,
-                    zone=zone,
-                    quality=index_underlying.quality,
-                    lineage=index_underlying.lineage,
-                    times=index_underlying.times,
-                    extra_features=index_underlying.features,
-                    feature_set_version="commodity_futures_v1",
-                )
-                future_candidates = (future_snap,)
-                instruments[future_spec.trading_symbol] = future_spec
-                snapshots[future_snap.contract.symbol] = future_snap
-        if index_underlying is None:
-            return (), snapshots
-        vix_history = _vix_history(
-            snapshot_store,
-            symbol=identification.vix_symbol,
-            now=now,
-        )
-        market_state = build_market_state(
-            bar_event,
-            underlying=index_underlying,
-            option_candidates=option_candidates,
-            event_risk=event_risk,
-            macro=macro,
-            as_of=now,
-            policy=identification,
-            vix_history=vix_history,
-        )
-        p1 = (
-            None
-            if paper_data is None
-            else observe_p1_features(
-                option_candidates, requirements=paper_data, market=market_state
-            )
-        )
-        long_binding = bind_long_option(
-            option_candidates, market=market_state, policy=identification, p1=p1
-        )
-        debit_binding = bind_debit_spread(
-            option_candidates, market=market_state, policy=identification, p1=p1
-        )
-        regime_changed = last_winner_regime not in {None, market_state.trend.value}
-        cooldown_active = (
-            last_winner_at is not None
-            and not regime_changed
-            and now
-            < last_winner_at + timedelta(minutes=identification.router.cooldown_minutes)
-        )
-        correlated = any(
-            position.contract.underlying == index_underlying.contract.underlying
-            for position in broker.get_positions()
-        )
-        allowed = allowed_families_for(
-            market_state, identification, p1=p1, paper_data=paper_data
-        )
-        route, opportunities = route_nifty_options(
-            market_state,
-            long_option=long_binding,
-            debit_spread=debit_binding,
-            policy=identification,
-            existing_correlated_exposure=correlated,
-            cooldown_active=cooldown_active,
-            allowed_families=allowed,
-            p1=p1,
-            entry_profile=session_cfg.entry_profile,
-            discovery_config=discovery_config,
-        )
-        if route.paper_winner is not None:
-            last_winner_at = now
-            last_winner_regime = market_state.trend.value
-        by_strategy = {item.strategy_id: item for item in opportunities}
-        for strategy_id in session_cfg.strategy_ids:
-            configured_stance = session_cfg.strategy_stances.get(
-                strategy_id, ExecutionMode.SUSPENDED
-            )
-            if configured_stance is ExecutionMode.SUSPENDED:
-                continue
-            if strategy_id in {"positional_long_option", "debit_spread"}:
-                opportunity = by_strategy.get(strategy_id)
-                binding = (
-                    long_binding
-                    if strategy_id == "positional_long_option"
-                    else debit_binding
-                )
-                candidates = (
-                    binding.candidates
-                    if opportunity is None
-                    else opportunity.bound.candidates
-                )
-                is_eligible = binding.binding.eligible and strategy_id in allowed
-                execute = configured_stance is ExecutionMode.PAPER and is_eligible
-                setup = None if opportunity is None else opportunity.setup_features
-                mode = ExecutionMode.PAPER if execute else ExecutionMode.SHADOW
-            elif strategy_id == "commodity_futures_trend":
-                candidates = future_candidates
-                execute = False
-                setup = None
-                mode = ExecutionMode.SHADOW
-            elif strategy_id == "cas_microstructure":
-                candidates = long_binding.candidates
-                execute, mode = cas_paper_execute(
-                    stance=configured_stance,
-                    allowed=allowed,
-                    candidates=candidates,
-                )
-                setup = long_binding.setup_features if execute else None
-            else:
-                candidates = ()
-                execute = False
-                setup = None
-                mode = ExecutionMode.SHADOW
-            requests.append(
-                PaperStrategyRequest(
-                    strategy_id=strategy_id,
-                    underlying=index_underlying,
-                    candidates=candidates,
-                    instruments=instruments,
-                    event_risk_state=event_risk,
-                    experiment_id=experiment_id_for(
-                        session_cfg.experiment_prefix,
-                        strategy_id,
-                        now,
-                        discovery_fingerprint=discovery_fingerprint,
-                    ),
-                    execution_mode=mode,
-                    macro=macro,
-                    execute=execute,
-                    setup_features=setup,
-                    route_decision=route,
-                )
-            )
-        return tuple(requests), snapshots
-
-    return build
-
-
 def _option_master_segment(segments: Sequence[str]) -> str:
     for segment in segments:
         if segment == "NSE_FO":
@@ -1524,7 +1131,7 @@ def _instrument_registry_for_session(
     return registry
 
 
-def _four_mode_request_builder(
+def _m2_request_builder(
     repo_root: Path,
     *,
     clock: Clock,
@@ -1541,7 +1148,7 @@ def _four_mode_request_builder(
 ) -> Callable[
     [datetime], tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]
 ]:
-    """Four-mode producers: independent family bindings, no legacy one-winner router."""
+    """M2 producers: near/following-week chain bindings for directional long options."""
     resolved_feed = feed or _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     pipeline = build_pipeline(repo_root, feed=resolved_feed, clock=clock)
     catalog = InstrumentSpecStore(
@@ -1560,13 +1167,6 @@ def _four_mode_request_builder(
     collector = NewsCollector(news_config)
     zone = ZoneInfo(pipeline_cfg.session.timezone)
     feed = resolved_feed
-    cas_latency_samples: list[int] = []
-    cas_quote_ages: list[int] = []
-    cas_execution_latencies: list[int] = []
-    cas_exit_gaps: list[int] = []
-    cas_attempts_today = 0
-    cas_session_date: date | None = None
-    m1_holder: dict[str, object] = {"event": None, "keep": False}
     feed_errors: list[str] = []
     monthly_chain_cache: _MonthlyChainCache | None = None
     following_week_cache: _FollowingWeekChainCache | None = None
@@ -1574,12 +1174,7 @@ def _four_mode_request_builder(
     def build(
         now: datetime,
     ) -> tuple[tuple[PaperStrategyRequest, ...], dict[str, FeatureSnapshot]]:
-        nonlocal cas_attempts_today, cas_session_date, monthly_chain_cache
-        nonlocal following_week_cache
-        session_day = now.astimezone(_IST).date()
-        if cas_session_date != session_day:
-            cas_session_date = session_day
-            cas_attempts_today = 0
+        nonlocal monthly_chain_cache, following_week_cache
         near_strikes = session_cfg.option_strikes_each_side
         following_strikes = _FOLLOWING_WEEK_STRIKES
         monthly_strikes = _FOLLOWING_WEEK_STRIKES
@@ -1743,135 +1338,8 @@ def _four_mode_request_builder(
             discovery_config=discovery_config,
             entry_profile=session_cfg.entry_profile,
         )
-        event = m1_holder.get("event")
-        window = active_m1_window(now, session_cfg.cas_event_driven)
-        in_window = window is not None
-        quote_ages = tuple(cas_quote_ages)
-        execution_latencies = tuple(cas_execution_latencies)
-        exit_gaps = tuple(cas_exit_gaps)
-        provenance = "unlabelled"
-        if isinstance(event, M1ProviderEvent) and event.provenance == ORACLE_MEASURED:
-            provenance = ORACLE_MEASURED
-        latency_report = measure_cas_entry_latency(
-            tuple(cas_latency_samples),
-            config=session_cfg.cas_event_driven,
-            provenance=provenance,
-            quote_ages_ms=quote_ages,
-            execution_latencies_ms=execution_latencies,
-            exit_monitor_gaps_ms=exit_gaps,
-        )
-        adjusted: list[ProducedFamilyRequest] = []
-        for item in produced:
-            if item.spec.mode_id is not ModeId.M1_CAS:
-                adjusted.append(item)
-                continue
-            m1_stance = session_cfg.mode_stances.get(
-                ModeId.M1_CAS.value, ExecutionMode.SHADOW
-            )
-            if mode_book is not None:
-                m1_cap = mode_book.get_ledger(ModeId.M1_CAS).allocated_capital.amount
-            elif discovery_config is not None:
-                m1_cap = discovery_config.books.starting_equity_per_mode
-            else:
-                m1_cap = modes_config.modes[ModeId.M1_CAS].capital_share * Decimal(
-                    "700000"
-                )
-            gate = evaluate_m1_provider_event(
-                item=item,
-                event=event if isinstance(event, M1ProviderEvent) else None,
-                option_candidates=option_candidates,
-                config=session_cfg.cas_event_driven,
-                stance=m1_stance,
-                attempts_today=cas_attempts_today,
-                in_window=in_window,
-                latency_report=latency_report,
-                session_date=session_day.isoformat(),
-                episode_ledger=repo_root / "data" / "paper" / "m1_episodes.json",
-                mode_capital=m1_cap,
-                entry_profile=session_cfg.entry_profile,
-                discovery_config=discovery_config,
-            )
-            if gate.latency_limitation:
-                logging.getLogger(__name__).warning(
-                    "M1 latency limitation (PAPER continues): %s",
-                    gate.latency_limitation,
-                )
-            episode_id = ""
-            if isinstance(event, M1ProviderEvent):
-                episode_id = event.episode_id or item.spec.family_id.value
-            execute = gate.execute
-            mode = gate.execution_mode
-            if execute and isinstance(event, M1ProviderEvent):
-                cas_attempts_today += 1
-                record_episode_attempt(
-                    repo_root / "data" / "paper" / "m1_episodes.json",
-                    session_date=session_day.isoformat(),
-                    episode_id=episode_id,
-                )
-                if event.provenance == ORACLE_MEASURED and event.event_time is not None:
-                    cas_latency_samples.append(
-                        max(
-                            0,
-                            int(
-                                (event.decided_at - event.receive_time).total_seconds()
-                                * 1000
-                            ),
-                        )
-                    )
-                    if event.quote_time is not None and event.submitted_at is not None:
-                        cas_quote_ages.append(
-                            max(
-                                0,
-                                int(
-                                    (
-                                        event.submitted_at - event.quote_time
-                                    ).total_seconds()
-                                    * 1000
-                                ),
-                            )
-                        )
-                    if (
-                        event.execution_completed_at is not None
-                        and event.submitted_at is not None
-                    ):
-                        cas_execution_latencies.append(
-                            max(
-                                0,
-                                int(
-                                    (
-                                        event.execution_completed_at
-                                        - event.submitted_at
-                                    ).total_seconds()
-                                    * 1000
-                                ),
-                            )
-                        )
-                    if (
-                        event.exit_quote_at is not None
-                        and event.previous_exit_quote_at is not None
-                    ):
-                        cas_exit_gaps.append(
-                            max(
-                                0,
-                                int(
-                                    (
-                                        event.exit_quote_at
-                                        - event.previous_exit_quote_at
-                                    ).total_seconds()
-                                    * 1000
-                                ),
-                            )
-                        )
-            adjusted.append(
-                item.__class__(
-                    spec=item.spec,
-                    bound=item.bound,
-                    execute=execute,
-                    execution_mode=mode if execute else ExecutionMode.SHADOW,
-                )
-            )
-        requests = build_four_mode_requests(
-            adjusted,
+        requests = build_m2_requests(
+            produced,
             index_underlying=index_underlying,
             instruments=instruments,
             event_risk=event_risk,
@@ -1881,10 +1349,9 @@ def _four_mode_request_builder(
             discovery_fingerprint=discovery_fingerprint,
         )
         build.latest_market_state = market_state  # type: ignore[attr-defined]
-        build.latest_produced = tuple(adjusted)  # type: ignore[attr-defined]
+        build.latest_produced = produced  # type: ignore[attr-defined]
         return requests, snapshots
 
-    build.m1_holder = m1_holder  # type: ignore[attr-defined]
     build.feed_errors = feed_errors  # type: ignore[attr-defined]
     build.latest_market_state = None  # type: ignore[attr-defined]
     return build

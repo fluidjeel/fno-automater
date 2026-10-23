@@ -44,7 +44,7 @@ _SCALE = Decimal("0.0001")
 
 
 def compute_cas_features(events: Sequence[CanonicalMarketEvent]) -> dict[str, Decimal]:
-    """Compute declared CAS keys from timestamped depth and tick events."""
+    """Compute declared depth microstructure keys from timestamped depth and tick events."""
     depths = [event for event in events if event.event_type == "DEPTH_SNAPSHOT"]
     ticks = [event for event in events if event.event_type == "TICK"]
     if not depths:
@@ -228,7 +228,7 @@ def merge_cas_features_into_snapshot(
     snapshot: FeatureSnapshot,
     events: Sequence[CanonicalMarketEvent],
 ) -> FeatureSnapshot:
-    """Merge computed CAS keys from depth history into an underlying snapshot."""
+    """Merge computed depth microstructure keys from depth history into an underlying snapshot."""
     cas = compute_cas_features(events)
     if not cas:
         return snapshot

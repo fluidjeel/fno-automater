@@ -32,7 +32,6 @@ from trading.runtime.notify import format_eod_report, format_post_trade
 from trading.runtime.paper_runner import PaperRunner, PaperStrategyOutcome
 from trading.runtime.paper_session import (
     PaperSession,
-    cas_paper_execute,
     load_paper_session_config,
 )
 from trading.storage.trading_store import TradingStore
@@ -245,50 +244,13 @@ class TestTelegramAndCohort:
         assert any("EOD" in item for item in sink.messages)
 
 
-class TestCasPaperStance:
+class TestShippedPaperSessionConfig:
     def test_shipped_session_is_m2_only(self) -> None:
         cfg = load_paper_session_config(ROOT / "config" / "paper_session.yaml")
         assert cfg.routing_profile.value == "m2_only"
         assert cfg.mode_stances["M2_DIRECTIONAL"] is ExecutionMode.PAPER
-        assert cfg.mode_stances["M1_CAS"] is ExecutionMode.SUSPENDED
-        assert cfg.mode_stances["M3_TACTICAL_POSITIONAL"] is ExecutionMode.SUSPENDED
-        assert cfg.mode_stances["M4_STRATEGIC_POSITIONAL"] is ExecutionMode.SUSPENDED
-        assert cfg.cas_event_driven.enabled is False
         paper_modes = {
             k for k, v in cfg.mode_stances.items() if v is ExecutionMode.PAPER
         }
         assert paper_modes == {"M2_DIRECTIONAL"}
 
-    def test_cas_execute_fails_closed_without_depth_allow_or_candidate(self) -> None:
-        """Invariant 6: missing depth/candidate keeps CAS in SHADOW."""
-        option = _request().candidates
-        execute, mode = cas_paper_execute(
-            stance=ExecutionMode.PAPER,
-            allowed=frozenset({"positional_long_option"}),
-            candidates=option,
-        )
-        assert execute is False
-        assert mode is ExecutionMode.SHADOW
-        execute, mode = cas_paper_execute(
-            stance=ExecutionMode.PAPER,
-            allowed=frozenset({"cas_microstructure"}),
-            candidates=(),
-        )
-        assert execute is False
-        assert mode is ExecutionMode.SHADOW
-
-    def test_cas_execute_when_paper_stance_allowed_and_bound(self) -> None:
-        execute, mode = cas_paper_execute(
-            stance=ExecutionMode.PAPER,
-            allowed=frozenset({"cas_microstructure"}),
-            candidates=_request().candidates,
-        )
-        assert execute is True
-        assert mode is ExecutionMode.PAPER
-        execute, mode = cas_paper_execute(
-            stance=ExecutionMode.SHADOW,
-            allowed=frozenset({"cas_microstructure"}),
-            candidates=_request().candidates,
-        )
-        assert execute is False
-        assert mode is ExecutionMode.SHADOW

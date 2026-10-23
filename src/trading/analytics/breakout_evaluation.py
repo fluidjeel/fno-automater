@@ -25,8 +25,6 @@ from trading.data.sample_breakouts import (
 )
 from trading.domain.enums import AgentAction, ConfidenceBucket
 from trading.strategies.base import Strategy, StrategyContext
-from trading.strategies.cas_microstructure import CasMicrostructureStrategy
-from trading.strategies.debit_spread import DebitSpreadStrategy
 from trading.strategies.long_option import LongOptionStrategy
 
 __all__ = [
@@ -174,12 +172,8 @@ class BreakoutStudyReport:
         }
 
 
-def _select_strategy(scenario_kind: BreakoutScenarioKind) -> Strategy:
-    if scenario_kind is BreakoutScenarioKind.POSITIONAL:
-        return DebitSpreadStrategy()
-    if scenario_kind is BreakoutScenarioKind.DIRECTIONAL:
-        return LongOptionStrategy()
-    return CasMicrostructureStrategy()
+def _select_strategy(_scenario_kind: BreakoutScenarioKind) -> Strategy:
+    return LongOptionStrategy()
 
 
 def evaluate_deterministic(case: BreakoutMarketCase) -> DeterministicOutcome:

@@ -1,4 +1,4 @@
-"""Startup configuration validation (Phase P1 / spec §4, §10.1, G1-G3)."""
+"""Startup configuration validation (Phase P1 / spec §4, §10.1, G1-G2)."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ from trading.domain.family_gates import (
     G2_UNPROVEN_FAMILIES,
     effective_family_stances,
 )
-from trading.runtime.cas_event_path import measured_report_passes
 from trading.runtime.session_routing import SessionRoutingProfile
 
 if TYPE_CHECKING:
@@ -37,20 +36,13 @@ class StartupValidationError(ValueError):
     """Raised when paper session startup configuration violates system gates."""
 
 
-_MIN_CAS_POLL_INTERVAL_SECONDS = 60
-
 KNOWN_STRATEGIES_AND_FAMILIES: frozenset[str] = frozenset(
     {f.value for f in FamilyId}
     | {m.value for m in ModeId}
     | {
         "positional_long_option",
-        "debit_spread",
-        "credit_spread",
-        "defined_risk_multileg",
-        "cas_microstructure",
         "commodity_futures_trend",
         "commodity_underlying",
-        "iron_condor",
     }
 )
 
@@ -166,7 +158,7 @@ def _validate_m2_only_session(
     session_config: PaperSessionConfig,
     modes_config: ModesConfig | None,
 ) -> None:
-    """M2-only deployments must not enable other modes or M1 CAS ingress."""
+    """M2-only deployments must run a single PAPER mode with full capital share."""
     if modes_config is None:
         return
     configured = set(modes_config.modes.keys())
@@ -180,57 +172,15 @@ def _validate_m2_only_session(
         raise StartupValidationError(
             f"m2_only requires M2 capital_share 1.0; got {share}"
         )
-    for key, stance in session_config.mode_stances.items():
-        if key == ModeId.M2_DIRECTIONAL.value:
-            if stance is not ExecutionMode.PAPER:
-                raise StartupValidationError(
-                    "m2_only requires M2_DIRECTIONAL stance PAPER."
-                )
-            continue
-        if stance is not ExecutionMode.SUSPENDED:
-            raise StartupValidationError(
-                f"m2_only requires non-M2 mode {key!r} to be SUSPENDED; got {stance}"
-            )
-    if session_config.cas_event_driven.enabled:
+    paper_modes = {
+        key
+        for key, stance in session_config.mode_stances.items()
+        if stance is ExecutionMode.PAPER
+    }
+    if paper_modes != {ModeId.M2_DIRECTIONAL.value}:
         raise StartupValidationError(
-            "m2_only requires cas_event_driven.enabled false (M1 disabled)."
+            f"m2_only requires exactly M2_DIRECTIONAL PAPER; got {paper_modes!r}"
         )
-
-
-def _validate_g3_cas_loop(
-    session_config: PaperSessionConfig,
-    *,
-    enforce_g3_shadow: bool,
-) -> tuple[PaperSessionConfig, list[str]]:
-    """Record M1 latency limitations for PAPER. Stances are not demoted here."""
-    _ = enforce_g3_shadow
-    warnings: list[str] = []
-    cas_event_enabled = session_config.cas_event_driven.enabled
-    report_ok = measured_report_passes(session_config.cas_event_driven)
-    is_slow_loop = (
-        session_config.poll_interval_seconds >= _MIN_CAS_POLL_INTERVAL_SECONDS
-    )
-    for cas_key in ("cas_microstructure", "M1_CAS"):
-        is_paper = (
-            session_config.strategy_stances.get(cas_key) is ExecutionMode.PAPER
-            or session_config.mode_stances.get(cas_key) is ExecutionMode.PAPER
-        )
-        if not is_paper or not is_slow_loop:
-            continue
-        if not cas_event_enabled:
-            warnings.append(
-                f"M1 ({cas_key}) PAPER on a {session_config.poll_interval_seconds}s "
-                "poll: cas_event_driven is disabled, so the poll does not submit "
-                "M1; use submit_m1_event for entries."
-            )
-            continue
-        if not report_ok:
-            warnings.append(
-                f"M1 ({cas_key}) PAPER: oracle-measured latency report is missing "
-                "or above the predeclared thresholds. PAPER continues; latency "
-                "is a measured limitation, not a promotion gate."
-            )
-    return session_config, warnings
 
 
 def _validate_discovery_profile(
@@ -278,7 +228,8 @@ def validate_startup_configuration(
     broker: object | None = None,
     discovery_path: Path | None = None,
 ) -> tuple[PaperSessionConfig, list[str]]:
-    """Validate session configuration against Gates G1, G2, G3, DISCOVERY rules."""
+    """Validate session configuration against Gates G1, G2, and DISCOVERY rules."""
+    _ = enforce_g3_shadow
     loaded_discovery = _validate_discovery_profile(
         session_config,
         environment=environment,
@@ -304,16 +255,13 @@ def validate_startup_configuration(
         session_config,
         family_stances=merged_family_stances,
     )
-    if session_config.routing_profile in {
-        SessionRoutingProfile.FOUR_MODE,
-        SessionRoutingProfile.M2_ONLY,
-    } and modes_config is None:
+    if (
+        session_config.routing_profile is SessionRoutingProfile.M2_ONLY
+        and modes_config is None
+    ):
         raise StartupValidationError(
-            "Multi-mode routing requires config/modes.yaml to be present."
+            "M2 routing requires config/modes.yaml to be present."
         )
     if session_config.routing_profile is SessionRoutingProfile.M2_ONLY:
         _validate_m2_only_session(session_config, modes_config)
-    return _validate_g3_cas_loop(
-        session_config,
-        enforce_g3_shadow=enforce_g3_shadow,
-    )
+    return session_config, []
