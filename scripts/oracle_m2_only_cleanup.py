@@ -12,15 +12,8 @@ from pathlib import Path
 
 from trading.domain.contracts.lifecycle import PositionLifecycleRecord
 from trading.domain.enums import ModeId, TradeState
-from trading.domain.enums import TradeState
-from trading.storage.trading_store import TradingEventType
 
 M2 = ModeId.M2_DIRECTIONAL.value
-NON_M2 = {
-    ModeId.M1_CAS.value,
-    ModeId.M3_TACTICAL_POSITIONAL.value,
-    ModeId.M4_STRATEGIC_POSITIONAL.value,
-}
 
 
 def _mode_of(payload: str) -> str | None:
