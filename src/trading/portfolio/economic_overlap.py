@@ -32,12 +32,13 @@ def m4_open_position_cap(
     discovery_config: DiscoveryConfig | None = None,
 ) -> int:
     """Resolve the portfolio M4 open-position cap from validated configuration."""
-    if discovery_config is not None:
-        return discovery_config.modes[
-            ModeId.M4_STRATEGIC_POSITIONAL.value
-        ].max_open_positions
+    m4_key = ModeId.M4_STRATEGIC_POSITIONAL.value
+    if discovery_config is not None and m4_key in discovery_config.modes:
+        return discovery_config.modes[m4_key].max_open_positions
     if risk_policy is not None:
         return risk_policy.max_m4_open_positions
+    if discovery_config is not None:
+        return 0
     raise ValueError("risk_policy or discovery_config is required for M4 cap")
 
 
