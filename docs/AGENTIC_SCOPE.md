@@ -26,3 +26,9 @@ uv run trading platter agent
 ```bash
 sudo ./deploy/install.sh
 ```
+
+## Removed in agentic cleanup
+
+- Ops orchestrator (old supervisor that started simulated trading)
+- Simulated session runner, watchdog, Telegram trade copy module
+- `config/paper_session.yaml`

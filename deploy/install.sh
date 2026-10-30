@@ -37,12 +37,9 @@ systemctl enable --now fno-platter-agent.timer
 systemctl enable --now fno-telemetry-retention.timer
 systemctl enable --now fno-telemetry-weekly.timer
 
-# Legacy paper / old supervisor — stay off after agentic cutover
-systemctl disable --now fno-paper-session.timer fno-paper-session.service 2>/dev/null || true
-systemctl disable --now fno-paper-watchdog.timer 2>/dev/null || true
-systemctl disable --now fno-automated.service 2>/dev/null || true
-systemctl disable --now fno-data-pipeline.timer 2>/dev/null || true
-systemctl disable --now fno-m2-veto.timer 2>/dev/null || true
-systemctl mask fno-paper-session.service 2>/dev/null || true
+# Simulated intraday session stays off on agentic installs.
+for legacy in fno-paper-session.timer fno-paper-session.service fno-automated.service fno-data-pipeline.timer; do
+  sudo systemctl disable --now "$legacy" 2>/dev/null || true
+done
 
 echo "Agentic install complete under ${REPO_ROOT}"

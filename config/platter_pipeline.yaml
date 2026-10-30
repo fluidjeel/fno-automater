@@ -47,5 +47,5 @@ telemetry:
 
 shadow_mode:
   enabled: false
-  gate_authority: legacy
-  log_path: data/paper/platter_shadow.jsonl
+  gate_authority: platter
+  log_path: data/telemetry/shadow_compare.jsonl
