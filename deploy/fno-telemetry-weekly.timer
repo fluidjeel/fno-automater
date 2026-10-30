@@ -1,0 +1,10 @@
+[Unit]
+Description=FNO telemetry weekly rollup timer
+
+# 10:30 UTC Saturday = 16:00 IST Saturday (weekly rollup).
+[Timer]
+OnCalendar=Sat *-*-* 10:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

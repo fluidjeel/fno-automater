@@ -1,0 +1,11 @@
+[Unit]
+Description=FNO telemetry weekly rollup
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+ExecStart=/home/ubuntu/.local/bin/uv run trading platter telemetry weekly
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

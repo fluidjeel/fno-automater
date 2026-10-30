@@ -78,6 +78,7 @@ from trading.identification import (
 from trading.identification.calendar import get_calendar_port
 from trading.news.config import load_news_config
 from trading.news.sources import NewsCollector
+from trading.portfolio.fill_ledger import index_order_events
 from trading.portfolio.risk_journal import (
     PortfolioRiskJournal,
     build_portfolio_risk_record,
@@ -478,7 +479,12 @@ class PaperSession:
                     ),
                     requests[0].experiment_id,
                 )
-                for text in format_post_trade(outcome, experiment_id=experiment_id):
+                orders = index_order_events(self._runner.store)
+                for text in format_post_trade(
+                    outcome,
+                    experiment_id=experiment_id,
+                    orders_by_id=orders,
+                ):
                     self._notifier.send(text[:_NOTIFY_MAX])
         if snapshots:
             self._runner.manage_exits(snapshots)
@@ -687,6 +693,8 @@ class PaperSession:
             self._results,
             open_trade_count=open_count,
             charges_verified=self._charges_verified,
+            session_date=now.astimezone(self._zone).date(),
+            store=self._runner.store,
         )
         self._notifier.send(text[:_NOTIFY_MAX])
         persist_cohorts(
@@ -850,7 +858,7 @@ def run_paper_session(
             settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
         )
     for warning in startup_warnings:
-        notifier.send(f"STARTUP WARNING: {warning}")
+        notifier.send(f"Startup note: {warning}")
     shared_feed = _build_paper_fyers_feed(settings, clock, pipeline_cfg)
     if request_builder is None:
         if session_cfg.routing_profile is not SessionRoutingProfile.M2_ONLY:

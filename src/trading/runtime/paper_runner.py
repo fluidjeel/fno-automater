@@ -156,7 +156,6 @@ from trading.trade import (
     assert_stop_not_wider,
     monitor_leg,
 )
-from trading.trade.intent_family import validate_intent_family_alignment
 from trading.trade.carry_gate import (
     build_m2_carry_gate_input,
     evaluate_m2_carry_gate,
@@ -164,6 +163,8 @@ from trading.trade.carry_gate import (
     resolve_carry_market,
 )
 from trading.trade.exits import ExitEvaluation, ExitKind, strategy_unrealized_pnl
+from trading.trade.intent_family import validate_intent_family_alignment
+from trading.trade.m2_veto import admit_m2_entry
 from trading.trade.review import ReviewEngine, ReviewEvaluation, structure_exit_quantity
 from trading.trade.roll_switch import (
     begin_roll_switch_transition,
@@ -683,6 +684,10 @@ class PaperRunner:
             event_id=cycle_id,
             recorded_at=as_of,
         )
+
+    @property
+    def store(self) -> TradingStore:
+        return self._services.store
 
     @property
     def broker(self) -> PaperBroker:
@@ -3053,6 +3058,28 @@ class PaperRunner:
                 continue
             kept_intents.append(intent)
         intents = tuple(kept_intents)
+        if intents and any(
+            intent.mode_id is ModeId.M2_DIRECTIONAL for intent in intents
+        ):
+            admission = admit_m2_entry(self._clock.now_utc())
+            if admission.blocks_new_entry:
+                rejection_reasons = (*rejection_reasons, ReasonCode.M2_ENTRY_VETO)
+                rejection_details = (*rejection_details, admission.detail)
+                early = _outcome_from_request(
+                    request,
+                    strategy_id=request.strategy_id,
+                    snapshot_id=request.underlying.snapshot_id,
+                    intents=(),
+                    rejection_reasons=rejection_reasons,
+                    decisions=(),
+                    order_events=(),
+                    strategy_version=getattr(strategy, "strategy_version", "unknown"),
+                    executed=request.execute,
+                    rejection_details=rejection_details,
+                    strict_would_block=decision.strict_would_block,
+                    record_stage=DiscoveryStage.STRATEGY,
+                )
+                return _StrategyEvalRecord(request=request, early_outcome=early)
         strict_would_block = decision.strict_would_block
         if decision.intents and not intents:
             early = _outcome_from_request(
@@ -3684,7 +3711,9 @@ def _m2_intent_for_submission(intent: TradeIntent) -> TradeIntent:
         return intent
     return intent.model_copy(
         update={
-            "exit_template": intent.exit_template.model_copy(update={"time_exit": None}),
+            "exit_template": intent.exit_template.model_copy(
+                update={"time_exit": None}
+            ),
         }
     )
 

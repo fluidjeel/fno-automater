@@ -17,6 +17,7 @@ from trading.data.fyers.auth import (
     _is_sebi_refresh_disabled,
     _token_expiry,
     _token_is_fresh,
+    ensure_access_token,
     extract_auth_code,
     refresh_access_token,
     run_refresh,
@@ -235,3 +236,19 @@ class TestTokenFreshness:
         past = int((datetime.now(UTC) - timedelta(days=1)).timestamp())
         settings.save_cached_token(tmp_path, self._jwt(past))
         assert _token_is_fresh(settings, tmp_path) is False
+
+    def test_stale_token_is_refreshed_without_a_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        settings = _settings_with_pin(monkeypatch)
+        past = int((datetime.now(UTC) - timedelta(hours=2)).timestamp())
+        settings.save_cached_token(tmp_path, self._jwt(past))
+        settings.save_refresh_token(tmp_path, "refresh-123")
+        monkeypatch.setattr(
+            FyersSettings,
+            "from_repo_root",
+            classmethod(lambda cls, root: settings),
+        )
+        monkeypatch.setattr(auth_mod, "refresh_access_token", lambda *a, **k: "renewed")
+        assert ensure_access_token(tmp_path) == "refreshed"
+        assert (tmp_path / ".fyers_token").read_text() == "renewed"

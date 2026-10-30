@@ -79,6 +79,33 @@ sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/paper-watchdog.service 
 cp deploy/paper-watchdog.timer /etc/systemd/system/fno-paper-watchdog.timer
 systemctl enable --now fno-paper-watchdog.timer
 
+# Platter revamp pipeline (paper data + agent + telemetry)
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/platter-minute.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-platter-minute.service
+cp deploy/platter-minute.timer /etc/systemd/system/fno-platter-minute.timer
+
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/platter-agent.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-platter-agent.service
+cp deploy/platter-agent.timer /etc/systemd/system/fno-platter-agent.timer
+
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/fno-telemetry-retention.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-telemetry-retention.service
+cp deploy/fno-telemetry-retention.timer /etc/systemd/system/fno-telemetry-retention.timer
+
+sed "s|/home/ubuntu/fno-automated|${REPO_ROOT}|g" deploy/fno-telemetry-weekly.service \
+  | sed "s|EnvironmentFile=.*|EnvironmentFile=-${REPO_ROOT}/.env|" \
+  > /etc/systemd/system/fno-telemetry-weekly.service
+cp deploy/fno-telemetry-weekly.timer /etc/systemd/system/fno-telemetry-weekly.timer
+
+systemctl daemon-reload
+systemctl enable --now fno-platter-minute.timer
+systemctl enable --now fno-platter-agent.timer
+systemctl enable --now fno-telemetry-retention.timer
+systemctl enable --now fno-telemetry-weekly.timer
+
 echo "Installed."
 echo "Data pipeline timer:     systemctl status fno-data-pipeline.timer"
 echo "Token refresh timer:     systemctl status fno-fyers-refresh.timer"
@@ -90,3 +117,7 @@ echo "Paper session:           systemctl status fno-paper-session.service"
 echo "Paper session timer:     systemctl status fno-paper-session.timer"
 echo "Post-open check timer:   systemctl status fno-paper-post-open-check.timer"
 echo "Paper watchdog timer:    systemctl status fno-paper-watchdog.timer"
+echo "Platter minute timer:    systemctl status fno-platter-minute.timer"
+echo "Platter agent timer:     systemctl status fno-platter-agent.timer"
+echo "Telemetry retention:     systemctl status fno-telemetry-retention.timer"
+echo "Telemetry weekly timer:  systemctl status fno-telemetry-weekly.timer"

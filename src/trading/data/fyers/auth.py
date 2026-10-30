@@ -24,6 +24,7 @@ from trading.data.settings import FyersSettings
 from trading.domain.clock import WallClock
 
 __all__ = [
+    "ensure_access_token",
     "exchange_auth_code",
     "extract_auth_code",
     "get_auth_url",
@@ -233,6 +234,25 @@ def run_interactive_auth(
     return 0
 
 
+def ensure_access_token(repo_root: Path) -> str:
+    """Renew a stale access token from the stored refresh token. No prompt."""
+    try:
+        settings = FyersSettings.from_repo_root(repo_root)
+    except Exception as exc:
+        return f"failed: {exc}"
+    if _token_is_fresh(settings, repo_root):
+        return "fresh"
+    refresh_token = settings.load_refresh_token(repo_root)
+    if not refresh_token:
+        return "failed: no refresh token cached"
+    try:
+        access_token = refresh_access_token(settings, refresh_token=refresh_token)
+    except Exception as exc:
+        return f"failed: {exc}"
+    settings.save_cached_token(repo_root, access_token)
+    return "refreshed"
+
+
 def run_refresh(repo_root: Path) -> int:
     """Refresh the access token from the stored refresh token (no browser)."""
     try:
@@ -355,6 +375,15 @@ def run_telegram_auth(
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
+    renewal = ensure_access_token(repo_root)
+    if renewal == "fresh":
+        print("Access token is still valid; no login prompt needed.")
+        return 0
+    if renewal == "refreshed":
+        print("Fyers access token refreshed before the session.")
+        return 0
+    print(f"Silent token refresh did not renew the token ({renewal}).")
+
     if not telegram_configured(
         settings.a2a_telegram_bot_token, settings.a2a_telegram_chat_id
     ):
@@ -363,10 +392,6 @@ def run_telegram_auth(
             file=sys.stderr,
         )
         return 1
-
-    if _token_is_fresh(settings, repo_root):
-        print("Access token is still valid; no login prompt needed.")
-        return 0
 
     token = settings.a2a_telegram_bot_token
     # A reply to an earlier prompt may still be pending; honor it first.

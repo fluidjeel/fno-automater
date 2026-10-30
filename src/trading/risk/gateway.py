@@ -108,6 +108,7 @@ from trading.safety.paper_data import (
     assess_paper_data,
     strict_would_block_p0,
 )
+from trading.trade.m2_veto import admit_m2_entry, lots_after_veto
 
 __all__ = ["RiskGateway", "RiskGatewayRequest"]
 
@@ -633,6 +634,26 @@ class RiskGateway:
                     recalculated_max_loss=cap_sizing.recalculated_max_loss,
                     margin_per_lot=margin_per_lot,
                 )
+            if mode_id is ModeId.M2_DIRECTIONAL:
+                admission = admit_m2_entry(now)
+                veto_lots = lots_after_veto(sizing.approved_lots, admission)
+                if veto_lots <= 0:
+                    return self._reject(
+                        intent,
+                        portfolio,
+                        reason_codes=(ReasonCode.M2_ENTRY_VETO,),
+                        decided_at=now,
+                        audit=audit,
+                    )
+                if veto_lots != sizing.approved_lots:
+                    sizing = _rescale_sizing_outcome(
+                        sizing,
+                        approved_lots=veto_lots,
+                        recalculated_max_loss=(
+                            sizing.cost_per_lot * veto_lots
+                        ).quantized(Rounding.CEILING),
+                        margin_per_lot=margin_per_lot,
+                    )
             broker_margin_available = portfolio.exposure.margin_available
             if request.cycle_margin_reserved is not None:
                 broker_margin_available = (

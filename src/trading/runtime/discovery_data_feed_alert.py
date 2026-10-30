@@ -43,7 +43,7 @@ class DataFeedAlertTracker:
         """Reset the streak and send one recovery alert after a prior failure alert."""
         recovered = self._failure_alert_sent
         if recovered:
-            notify("DATA feed recovered: builder succeeded after consecutive failures.")
+            notify("Market data is flowing again after earlier errors.")
         self._consecutive = 0
         self._failure_alert_sent = False
         return recovered
@@ -54,8 +54,5 @@ def _failure_alert_text(exc: BaseException) -> str:
         isinstance(exc, FyersApiError)
         and fyers_http_status(exc) == HTTPStatus.UNAUTHORIZED
     ):
-        return "Fyers token expired — refresh token"
-    return (
-        "PAPER data feed error: builder failed 3 consecutive cycles "
-        f"({type(exc).__name__}: {exc})"
-    )
+        return "Fyers login expired — use the Telegram login link to sign in again."
+    return "Market data failed three times in a row; new trades are paused until it recovers."

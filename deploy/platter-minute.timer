@@ -1,0 +1,10 @@
+[Unit]
+Description=FNO platter minute backbone timer
+
+# 03:00–10:00 UTC ≈ 08:30–15:30 IST, every minute (Mon–Fri).
+[Timer]
+OnCalendar=Mon..Fri *-*-* 03..10:00/1
+Persistent=true
+
+[Install]
+WantedBy=timers.target

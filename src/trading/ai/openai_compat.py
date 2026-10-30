@@ -13,9 +13,32 @@ from trading.ai.ports import LlmTimeoutError, LlmToolCall, LlmTurn
 
 __all__ = [
     "OpenAICompatLlm",
+    "chat_completion_body",
     "openai_tool_specs",
     "parse_openai_chat_completion",
 ]
+
+
+def chat_completion_body(
+    settings: LlmSettings,
+    messages: list[dict[str, Any]],
+    *,
+    json_object: bool = False,
+    model: str | None = None,
+    thinking: str | None = None,
+) -> dict[str, Any]:
+    """Build one chat-completion body. ``thinking`` is sent only when set."""
+    body: dict[str, Any] = {
+        "model": model if model else settings.llm_model,
+        "messages": _to_openai_messages(messages),
+        "temperature": settings.llm_temperature,
+        "seed": settings.llm_seed,
+    }
+    if thinking:
+        body["thinking"] = {"type": thinking}
+    if json_object:
+        body["response_format"] = {"type": "json_object"}
+    return body
 
 
 def openai_tool_specs(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -207,3 +230,41 @@ class OpenAICompatLlm:
             raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
         self.last_raw_response = payload
         return parse_openai_chat_completion(payload)
+
+    def complete_text(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        json_object: bool = False,
+        model: str | None = None,
+        thinking: str | None = None,
+    ) -> str:
+        """One chat completion that returns message text and does not call tools."""
+        url = self._settings.llm_base_url.rstrip("/") + "/chat/completions"
+        body = chat_completion_body(
+            self._settings,
+            messages,
+            json_object=json_object,
+            model=model,
+            thinking=thinking,
+        )
+        self.last_request_body = body
+        headers = {
+            "Authorization": f"Bearer {self._settings.deepseek_api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            with httpx.Client(timeout=self._timeout_seconds) as client:
+                response = client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            raise LlmTimeoutError("LLM HTTP call timed out") from exc
+        try:
+            payload: dict[str, Any] = response.json()
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"non-JSON LLM response ({response.status_code})") from exc
+        if response.status_code >= HTTPStatus.BAD_REQUEST:
+            detail = payload.get("error", payload)
+            raise ValueError(f"LLM HTTP {response.status_code}: {detail}")
+        self.last_raw_response = payload
+        turn = parse_openai_chat_completion(payload)
+        return turn.text

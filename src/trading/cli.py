@@ -198,6 +198,122 @@ def _cmd_data_stream(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_m2_veto(_args: argparse.Namespace) -> int:
+    """Write one five-minute M2 entry verdict. Does not place orders."""
+    from trading.ai.m2_veto_cycle import run_m2_veto_cycle
+
+    verdict = run_m2_veto_cycle(repo_root=_repo_root())
+    if verdict is None:
+        print("m2 veto: outside session or disabled")
+        return 0
+    print(
+        f"m2 veto: {verdict.action.value} until {verdict.valid_until.isoformat()} "
+        f"{verdict.reasons[0]}"
+    )
+    return 0
+
+
+def _cmd_platter_minute(_args: argparse.Namespace) -> int:
+    """Run one minute backbone cycle and matching feature row."""
+    from trading.data.platter_pipeline.orchestrate import run_minute_and_features
+    from trading.domain.clock import WallClock
+
+    root = _repo_root()
+    result = run_minute_and_features(root, clock=WallClock())
+    if result is None:
+        print("platter minute: failed")
+        return 1
+    minute_path, feature_path = result
+    print(f"platter minute: wrote {minute_path}")
+    print(f"platter features: wrote {feature_path}")
+    return 0
+
+
+def _cmd_platter_features(_args: argparse.Namespace) -> int:
+    """Compute features for the latest minute bundle."""
+    import json
+
+    from trading.data.features.compute import compute_feature_row, persist_feature_row
+    from trading.data.minute_backbone.models import MinuteBundle
+    from trading.data.platter_pipeline.config import load_platter_pipeline_config
+    from trading.domain.clock import WallClock
+
+    root = _repo_root()
+    minute_root = root / "data" / "platter" / "minute"
+    if not minute_root.is_dir():
+        print("platter features: no minute data")
+        return 1
+    latest = max(minute_root.rglob("minute_*.json"), key=lambda p: p.stat().st_mtime)
+    bundle = MinuteBundle.model_validate(json.loads(latest.read_text(encoding="utf-8")))
+    config = load_platter_pipeline_config(root / "config" / "platter_pipeline.yaml")
+    row = compute_feature_row(root, bundle, config=config)
+    path = persist_feature_row(root, row)
+    print(f"platter features: wrote {path}")
+    return 0
+
+
+def _cmd_platter_agent(args: argparse.Namespace) -> int:
+    """Run platter agent cycle (verdict + telemetry)."""
+    from trading.ai.platter_agent.cycle import run_platter_agent_cycle
+    from trading.domain.clock import WallClock
+
+    root = _repo_root()
+    llm_override: bool | None = None
+    if getattr(args, "no_llm", False):
+        llm_override = False
+    elif getattr(args, "use_llm", False):
+        llm_override = True
+    path = run_platter_agent_cycle(
+        root,
+        clock=WallClock(),
+        llm_enabled=llm_override,
+    )
+    if path is None:
+        print("platter agent: no platter written")
+        return 1
+    print(f"platter agent: wrote {path}")
+    return 0
+
+
+def _cmd_platter_tick_daemon(_args: argparse.Namespace) -> int:
+    """Run websocket tick multiplex until interrupted."""
+    import threading
+
+    from trading.data.tick_consumer.ws_multiplex import run_tick_multiplex_daemon
+
+    stop = threading.Event()
+    try:
+        run_tick_multiplex_daemon(_repo_root(), symbol="NSE:NIFTY50-INDEX", stop=stop)
+    except KeyboardInterrupt:
+        stop.set()
+    return 0
+
+
+def _cmd_platter_telemetry_retention(_args: argparse.Namespace) -> int:
+    from trading.analytics.platter_telemetry import run_retention_job
+
+    freed = run_retention_job(_repo_root())
+    print(f"platter telemetry retention: freed ~{freed} bytes")
+    return 0
+
+
+def _cmd_platter_telemetry_weekly(_args: argparse.Namespace) -> int:
+    from trading.analytics.platter_telemetry import run_weekly_rollup
+
+    path = run_weekly_rollup(_repo_root())
+    print(f"platter telemetry weekly: wrote {path}")
+    return 0
+
+
+def _cmd_platter_shadow_backtest(args: argparse.Namespace) -> int:
+    from trading.analytics.platter_shadow.backtest import run_rubric_backtest
+
+    out = Path(args.output)
+    count = run_rubric_backtest(_repo_root(), output_csv=out)
+    print(f"platter shadow backtest: {count} marks -> {out}")
+    return 0
+
+
 def _fyers_feed(root: Path) -> FyersMarketFeed:
     config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
     settings = FyersSettings.from_repo_root_with_cache(root)
@@ -2248,6 +2364,47 @@ def main(argv: list[str] | None = None) -> int:
     dashboard_serve.add_argument("--refresh-seconds", type=int, default=5)
     dashboard_serve.add_argument("--no-browser", action="store_true")
     dashboard_serve.set_defaults(func=_cmd_dashboard)
+
+    m2_veto = sub.add_parser(
+        "m2-veto",
+        help="write the five-minute M2 entry veto (does not place orders)",
+    )
+    m2_veto.set_defaults(func=_cmd_m2_veto)
+
+    platter = sub.add_parser("platter", help="platter revamp pipeline")
+    platter_sub = platter.add_subparsers(dest="platter_cmd", required=True)
+    platter_minute = platter_sub.add_parser("minute", help="one minute backbone cycle")
+    platter_minute.set_defaults(func=_cmd_platter_minute)
+    platter_features = platter_sub.add_parser("features", help="features from latest minute")
+    platter_features.set_defaults(func=_cmd_platter_features)
+    platter_agent = platter_sub.add_parser("agent", help="platter agent + verdict + telemetry")
+    platter_agent.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="disable LLM for this run (overrides env and config)",
+    )
+    platter_agent.add_argument(
+        "--llm",
+        action="store_true",
+        dest="use_llm",
+        help="force LLM on for this run (overrides env and config)",
+    )
+    platter_agent.set_defaults(func=_cmd_platter_agent)
+    platter_tick = platter_sub.add_parser("tick-daemon", help="websocket tick store daemon")
+    platter_tick.set_defaults(func=_cmd_platter_tick_daemon)
+    tele = platter_sub.add_parser("telemetry", help="telemetry maintenance")
+    tele_sub = tele.add_subparsers(dest="tele_cmd", required=True)
+    tele_ret = tele_sub.add_parser("retention", help="rotate old partitions")
+    tele_ret.set_defaults(func=_cmd_platter_telemetry_retention)
+    tele_week = tele_sub.add_parser("weekly", help="weekly analytics rollup")
+    tele_week.set_defaults(func=_cmd_platter_telemetry_weekly)
+    shadow = platter_sub.add_parser("shadow-backtest", help="rubric replay CSV")
+    shadow.add_argument(
+        "--output",
+        default="data/telemetry/shadow_backtest.csv",
+        help="output CSV path",
+    )
+    shadow.set_defaults(func=_cmd_platter_shadow_backtest)
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)

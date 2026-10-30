@@ -1,0 +1,10 @@
+[Unit]
+Description=FNO telemetry retention daily
+
+# 20:30 UTC = 02:00 IST next calendar day (daily retention).
+[Timer]
+OnCalendar=*-*-* 20:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

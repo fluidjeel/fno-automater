@@ -1,0 +1,18 @@
+# Five-minute M2 entry veto. The model writes a verdict. The entry path only reads it.
+# A missing or expired verdict blocks a new M2 entry. Exits are not touched.
+schema_version: "1"
+enabled: true
+valid_for_seconds: 300
+size_down_fraction: "0.5"
+verdict_path: data/paper/m2_veto_verdict.json
+log_path: data/paper/m2_veto_log.jsonl
+session_open_ist: "09:15"
+session_close_ist: "15:30"
+nifty_symbol: "NSE:NIFTY50-INDEX"
+vix_symbol: "NSE:INDIAVIX-INDEX"
+bar_resolution: "5"
+completed_bars: 6
+quote_max_age_seconds: 60
+# Explicit model for this check. Do not inherit the retired LLM_MODEL default.
+model_id: deepseek-flash
+thinking: disabled

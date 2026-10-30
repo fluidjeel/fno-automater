@@ -1,9 +1,9 @@
 [Unit]
-Description=Start FNO PAPER session before NSE open (IST)
+Description=Start FNO PAPER session at NSE cash open (IST)
 
-# 08:58 IST = 03:28 UTC, before PRE_MARKET and the 09:15 open.
+# 09:15 IST = 03:45 UTC (NSE cash open).
 [Timer]
-OnCalendar=Mon..Fri *-*-* 03:28:00
+OnCalendar=Mon..Fri *-*-* 03:45:00
 Unit=fno-paper-session.service
 Persistent=true
 

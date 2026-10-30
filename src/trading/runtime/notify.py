@@ -1,20 +1,34 @@
-"""Advisory Telegram copy for the paper session. No promotion language."""
+"""Telegram copy for the paper session — plain language, no trading jargon."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from datetime import date, datetime
+from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from trading.domain.contracts.lifecycle import PositionReviewRecord
 from trading.domain.contracts.order import OrderEvent
-from trading.domain.enums import OrderState, RiskAction
+from trading.domain.enums import OrderState, RiskAction, Side
+from trading.domain.primitives import Currency
+from trading.portfolio.fill_ledger import (
+    index_order_events,
+    is_chargeable_fill,
+    trade_fill_cash_flow,
+)
 from trading.runtime.paper_runner import (
     LifecycleAlert,
     PaperCycleResult,
     PaperStrategyOutcome,
 )
+from trading.storage.trading_store import TradingStore
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 __all__ = [
     "format_eod_report",
+    "format_eod_report_for_session",
     "format_lifecycle_alert",
     "format_post_trade",
     "format_review_decision",
@@ -25,20 +39,22 @@ def format_post_trade(
     outcome: PaperStrategyOutcome,
     *,
     experiment_id: str,
+    orders_by_id: dict[str, OrderEvent] | None = None,
 ) -> tuple[str, ...]:
-    """One advisory line per fill or post-intent reject."""
+    """One short line per entry or exit fill."""
+    del experiment_id
     messages: list[str] = []
     for event in outcome.order_events:
-        messages.append(_order_line(outcome.strategy_id, experiment_id, event))
+        if event.state is not OrderState.FILLED:
+            continue
+        line = _fill_line(event, orders_by_id=orders_by_id)
+        if line:
+            messages.append(line)
     if not outcome.order_events:
         for decision in outcome.decisions:
             if decision.action is RiskAction.REJECT:
-                codes = decision.reason_codes
-                reason = ",".join(code.value for code in codes) or "REJECT"
-                messages.append(
-                    f"PAPER reject {outcome.strategy_id} {reason} "
-                    f"experiment={experiment_id}"
-                )
+                messages.append("No new trade this cycle (blocked by rules).")
+                break
     return tuple(messages)
 
 
@@ -47,91 +63,126 @@ def format_eod_report(
     *,
     open_trade_count: int,
     charges_verified: bool,
+    session_date: date | None = None,
+    store: TradingStore | None = None,
 ) -> str:
-    """Session summary. Net expectancy stays unknown until charges are verified."""
-    by_strategy: dict[str, list[int]] = {}
-    for result in results:
-        for outcome in result.outcomes:
-            counts = by_strategy.setdefault(outcome.strategy_id, [0, 0, 0])
-            counts[0] += len(outcome.intents)
-            counts[1] += sum(
-                1 for event in outcome.order_events if event.state is OrderState.FILLED
-            )
-            counts[2] += _reject_count(outcome)
-    lines = ["PAPER EOD (advisory, not a promotion record)"]
-    for strategy_id, (signals, fills, rejects) in sorted(by_strategy.items()):
-        lines.append(
-            f"{strategy_id}: signals={signals} fills={fills} rejects={rejects}"
+    """Simple end-of-day summary."""
+    del results, charges_verified
+    if store is not None and session_date is not None:
+        return format_eod_report_for_session(store, session_date, open_trade_count)
+    if open_trade_count:
+        return (
+            f"Day done: {open_trade_count} trade(s) still open; "
+            "summary will follow when they close."
         )
-    lines.append(f"open_positions={open_trade_count}")
-    if charges_verified:
-        lines.append("charges_per_lot is verified; net P&L may be scored.")
-    else:
-        lines.append("net expectancy is unknown: charges_per_lot.verified_at is unset.")
-    return "\n".join(lines)
+    return "Day done: no trades today."
+
+
+def format_eod_report_for_session(
+    store: TradingStore,
+    session_date: date,
+    open_trade_count: int,
+) -> str:
+    """Totals from filled orders on the session date."""
+    orders = index_order_events(store)
+    by_trade: dict[str, list[OrderEvent]] = {}
+    for event in orders.values():
+        if not is_chargeable_fill(event):
+            continue
+        if event.received_at.astimezone(_IST).date() != session_date:
+            continue
+        by_trade.setdefault(event.identity.trade_id, []).append(event)
+    closed = wins = losses = 0
+    net = Decimal("0")
+    for trade_id, fills in by_trade.items():
+        if len(fills) < 2:
+            continue
+        closed += 1
+        cash = trade_fill_cash_flow(trade_id, orders, Currency.INR).amount
+        net += cash
+        if cash > 0:
+            wins += 1
+        elif cash < 0:
+            losses += 1
+    pnl_words = _rupee_line(net)
+    open_note = f" {open_trade_count} still open." if open_trade_count else ""
+    return (
+        f"Day done: {closed} trades, {wins} wins, {losses} losses, "
+        f"net {pnl_words}.{open_note}"
+    )
 
 
 def format_lifecycle_alert(alert: LifecycleAlert) -> str:
-    """Advisory recovery alert. Not a promotion or flatten instruction."""
-    return (
-        f"PAPER recovery {alert.reason_code.value} trade={alert.trade_id} "
-        f"{alert.detail}"
-    )
+    """Plain recovery notice."""
+    return f"Check open trade {alert.trade_id}: {alert.detail}"
 
 
 def format_review_decision(review: PositionReviewRecord) -> str:
-    """Advisory positional-review line. Not a broker-stop claim or promotion."""
-    stop = (
-        f" software_stop={review.tightened_stop_price.value}"
-        if review.tightened_stop_price is not None
-        else ""
-    )
-    qty = (
-        f" qty={review.exit_quantity_contracts}"
-        if review.exit_quantity_contracts is not None
-        else ""
-    )
-    submitted = " submitted" if review.submitted else " not-submitted"
-    missed = (
-        f" missed_slots={[item.value for item in review.missed_slot_ids]}"
-        if review.missed_slot_ids
-        else ""
-    )
-    next_slot = (
-        f" next_slot={review.next_slot_id.value}"
-        if review.next_slot_id is not None
-        else ""
-    )
-    execution = (
-        f" execution={review.execution_status.value}"
-        if review.execution_status is not None
-        else ""
-    )
-    return (
-        f"PAPER review {review.slot_id.value} {review.action.value} "
-        f"trade={review.trade_id} {review.reason_code.value} "
-        f"{review.detail}{stop}{qty}{submitted}{missed}{next_slot}{execution} "
-        f"(software-only protection; not broker-resident)"
-    )
+    """Plain review line."""
+    return f"Trade review: {review.action.value} on {review.trade_id}."
 
 
-def _order_line(strategy_id: str, experiment_id: str, event: OrderEvent) -> str:
-    symbol = event.command.contract.symbol
-    side = event.command.side.value
-    if event.state is OrderState.FILLED:
-        price = event.average_fill_price
-        detail = f"fill {price.value if price is not None else '?'}"
-    else:
-        detail = f"{event.state.value} {event.reason_code or event.reason_detail}"
-    return f"PAPER {detail} {strategy_id} {symbol} {side} experiment={experiment_id}"
+def _fill_line(
+    event: OrderEvent,
+    *,
+    orders_by_id: dict[str, OrderEvent] | None,
+) -> str:
+    price = event.average_fill_price
+    if price is None:
+        return ""
+    price_str = str(price.value.quantize(Decimal("0.01"))).removesuffix(".00")
+    human = _human_symbol(event.command.contract.symbol)
+    trade_id = event.identity.trade_id
+    if orders_by_id is None:
+        verb = "Bought" if event.command.side is Side.BUY else "Sold"
+        return f"{verb} {human} at {price_str}"
+    fills = sorted(
+        (
+            item
+            for item in orders_by_id.values()
+            if item.identity.trade_id == trade_id and is_chargeable_fill(item)
+        ),
+        key=lambda item: item.received_at,
+    )
+    if len(fills) >= 2 and fills[-1].event_id == event.event_id:
+        entry = fills[0]
+        exit_ev = fills[-1]
+        entry_px = entry.average_fill_price
+        exit_px = exit_ev.average_fill_price
+        if entry_px is None or exit_px is None:
+            return f"Closed {human} at {price_str}"
+        entry_str = str(entry_px.value.quantize(Decimal("0.01")))
+        exit_str = str(exit_px.value.quantize(Decimal("0.01")))
+        cash = trade_fill_cash_flow(trade_id, orders_by_id, Currency.INR).amount
+        entry_verb = "Bought" if entry.command.side is Side.BUY else "Sold"
+        exit_verb = "Sold" if exit_ev.command.side is Side.SELL else "Bought"
+        return (
+            f"Closed {human}: {entry_verb.lower()} at {entry_str}, "
+            f"{exit_verb.lower()} at {exit_str}, {_rupee_line(cash)}"
+        )
+    if len(fills) == 1 or fills[0].event_id == event.event_id:
+        verb = "Bought" if event.command.side is Side.BUY else "Sold"
+        return f"{verb} {human} at {price_str}"
+    return ""
 
 
-def _reject_count(outcome: PaperStrategyOutcome) -> int:
-    rejects = sum(
-        1 for event in outcome.order_events if event.state is OrderState.REJECTED
-    )
-    rejects += sum(
-        1 for decision in outcome.decisions if decision.action is RiskAction.REJECT
-    )
-    rejects += len(outcome.rejection_reasons)
-    return rejects
+def _human_symbol(symbol: str) -> str:
+    """Turn a contract code into 'Nifty 24500 call' when possible."""
+    text = symbol.upper()
+    strike_match = re.search(r"(\d{5})(CE|PE)\b", text)
+    if strike_match:
+        strike = strike_match.group(1)
+        opt = "call" if strike_match.group(2) == "CE" else "put"
+        return f"Nifty {strike} {opt}"
+    if "NIFTY" in text:
+        return "Nifty"
+    return symbol.split(":")[-1].replace("-", " ").strip() or symbol
+
+
+def _rupee_line(amount: Decimal) -> str:
+    rounded = amount.quantize(Decimal("0.01"))
+    if rounded > 0:
+        return f"profit ₹{rounded}"
+    if rounded < 0:
+        return f"loss ₹{abs(rounded)}"
+    return "flat ₹0"

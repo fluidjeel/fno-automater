@@ -170,7 +170,7 @@ class TestTelegramAndCohort:
             + report
         )
         assert "promote" not in combined.lower()
-        assert "unset" in report.lower() or "unknown" in report.lower()
+        assert "day done" in report.lower()
 
     def test_session_tick_notifies_and_eod_writes_cohort(
         self, store: TradingStore, clock: FrozenClock, tmp_path: Path
@@ -208,6 +208,7 @@ class TestTelegramAndCohort:
         session._send_eod(clock.now_utc())
         assert sink.messages
         assert all("promote" not in item.lower() for item in sink.messages)
+        assert any("Day done" in item for item in sink.messages)
         files = list((tmp_path / "cohorts").glob("*.json"))
         assert files
         payload = files[0].read_text(encoding="utf-8")
@@ -241,7 +242,7 @@ class TestTelegramAndCohort:
         )
         assert session.run(once=True) == 0
         assert slept == []
-        assert any("EOD" in item for item in sink.messages)
+        assert any("Day done" in item for item in sink.messages)
 
 
 class TestShippedPaperSessionConfig:

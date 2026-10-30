@@ -151,4 +151,5 @@ _TEMPLATES: dict[
     ReasonCode.DEPTH_INSUFFICIENT: _generic,
     ReasonCode.SPREAD_TOO_WIDE: _generic,
     ReasonCode.DIRECTION_UNRESOLVED: _direction_neutral,
+    ReasonCode.M2_ENTRY_VETO: _blocked,
 }

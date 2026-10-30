@@ -1,0 +1,11 @@
+[Unit]
+Description=FNO telemetry retention
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+ExecStart=/home/ubuntu/.local/bin/uv run trading platter telemetry retention
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
