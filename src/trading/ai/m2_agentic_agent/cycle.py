@@ -34,7 +34,7 @@ def run_m2_agentic_agent_cycle(
     """Build platter if needed, score agent, write verdict and telemetry."""
     config = load_m2_agentic_pipeline_config(repo_root / "config" / "m2_agentic_pipeline.yaml")
     use_llm = resolve_llm_enabled(config, cli_override=llm_enabled)
-    veto_config = load_m2_veto_config()
+    veto_config = load_m2_veto_config(repo_root / "config" / "m2_veto.yaml")
     now = clock.now_utc()
     mark = m2_agentic_mark_ist or now
     loaded = latest_feature_row(repo_root, mark)
@@ -50,7 +50,7 @@ def run_m2_agentic_agent_cycle(
             source="m2-agentic-agent-v1",
             decision_id=decision_id,
         )
-        write_verdict(verdict, veto_config)
+        write_verdict(verdict, veto_config, repo_root=repo_root)
         return None
     feature_row, feature_path = loaded
     bundle_loaded = load_minute_bundle_for_mark(repo_root, mark)
@@ -124,5 +124,5 @@ def run_m2_agentic_agent_cycle(
         m2_agentic_id=str(platter["m2_agentic_id"]),
         decision_id=decision_id,
     )
-    write_verdict(verdict, veto_config)
+    write_verdict(verdict, veto_config, repo_root=repo_root)
     return m2_agentic_decision_path

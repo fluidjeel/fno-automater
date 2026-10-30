@@ -92,9 +92,13 @@ def compute_feature_row(
             / 3.0
         )
         vol = pl.col("volume").cast(pl.Float64)
-        num = (typical * vol).sum()
-        den = vol.sum()
-        if den and den > 0:
+        stats = bars.select(
+            ((typical * vol).sum()).alias("num"),
+            vol.sum().alias("den"),
+        )
+        den = stats["den"][0]
+        num = stats["num"][0]
+        if den is not None and den > 0:
             session_vwap = str(Decimal(str(num / den)))
         top = bars.sort("volume", descending=True).head(1)
         if top.height:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from datetime import datetime, time, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from enum import StrEnum
@@ -223,16 +224,23 @@ def parse_model_verdict(
     )
 
 
-def verdict_file(config: M2VetoConfig) -> Any:
-    """Resolve the verdict path from the repo root."""
+def _default_repo_root() -> Any:
+    env = os.environ.get("TRADING_REPO_ROOT")
+    if env:
+        return importlib.import_module("pathlib").Path(env).resolve()
+    return importlib.import_module("pathlib").Path(__file__).resolve().parents[3]
+
+
+def verdict_file(config: M2VetoConfig, *, repo_root: Any | None = None) -> Any:
+    """Resolve the verdict path under the repo root."""
     path_cls = importlib.import_module("pathlib").Path
-    root = path_cls(__file__).resolve().parents[3]
+    root = path_cls(repo_root) if repo_root is not None else _default_repo_root()
     return root / config.verdict_path
 
 
-def read_verdict(config: M2VetoConfig) -> M2VetoVerdict | None:
+def read_verdict(config: M2VetoConfig, *, repo_root: Any | None = None) -> M2VetoVerdict | None:
     """Return the saved verdict, or None when the file is missing or unreadable."""
-    path = verdict_file(config)
+    path = verdict_file(config, repo_root=repo_root)
     if not path.is_file():
         return None
     json_mod = importlib.import_module("json")
@@ -246,17 +254,23 @@ def read_verdict(config: M2VetoConfig) -> M2VetoVerdict | None:
         return None
 
 
-def write_verdict(verdict: M2VetoVerdict, config: M2VetoConfig) -> None:
+def write_verdict(
+    verdict: M2VetoVerdict,
+    config: M2VetoConfig,
+    *,
+    repo_root: Any | None = None,
+) -> None:
     """Atomically replace the verdict file and append one log line."""
     path_cls = importlib.import_module("pathlib").Path
     json_mod = importlib.import_module("json")
-    path = verdict_file(config)
+    root = path_cls(repo_root) if repo_root is not None else _default_repo_root()
+    path = root / config.verdict_path
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = verdict.model_dump(mode="json")
     temporary = path.with_suffix(".json.tmp")
     temporary.write_text(json_mod.dumps(payload), encoding="utf-8")
     temporary.replace(path)
-    log_path = path_cls(__file__).resolve().parents[3] / config.log_path
+    log_path = root / config.log_path
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(json_mod.dumps(payload) + "\n")

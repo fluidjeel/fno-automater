@@ -19,6 +19,7 @@ from trading.data.m2_agentic_pipeline.config import (
     load_m2_agentic_pipeline_config,
 )
 from trading.data.m2_agentic_pipeline.depth_hint import publish_depth_hint
+from trading.data.ports import MarketFeedPort
 from trading.data.settings import FyersSettings
 from trading.domain.clock import Clock
 
@@ -82,20 +83,24 @@ def run_minute_backbone_once(
     *,
     clock: Clock,
     m2_agentic_config: M2AgenticPipelineConfig | None = None,
+    market_feed: MarketFeedPort | None = None,
 ) -> Path | None:
     """Fetch chain and depth once, merge, persist minute JSON."""
     pipeline = load_data_pipeline_config(repo_root / "config" / "data_pipeline.yaml")
     platter = m2_agentic_config or load_m2_agentic_pipeline_config(
         repo_root / "config" / "m2_agentic_pipeline.yaml"
     )
-    settings = FyersSettings.from_repo_root_with_cache(repo_root)
-    feed = FyersMarketFeed(
-        settings,
-        clock,
-        strike_count=platter.symbols.chain_strike_count,
-        chain_greeks=pipeline.fyers.chain_greeks,
-        history_oi_flag=pipeline.fyers.history_oi_flag,
-    )
+    if market_feed is not None:
+        feed = market_feed
+    else:
+        settings = FyersSettings.from_repo_root_with_cache(repo_root)
+        feed = FyersMarketFeed(
+            settings,
+            clock,
+            strike_count=platter.symbols.chain_strike_count,
+            chain_greeks=pipeline.fyers.chain_greeks,
+            history_oi_flag=pipeline.fyers.history_oi_flag,
+        )
     now = clock.now_utc()
     minute_start = now.astimezone(_IST).replace(second=0, microsecond=0)
     session_date = minute_start.date().isoformat()

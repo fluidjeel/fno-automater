@@ -12,6 +12,7 @@ from trading.data.features.delta_state import load_delta_state
 from trading.data.minute_backbone.models import MinuteBundle
 from trading.data.minute_backbone.scheduler import run_minute_backbone_once
 from trading.data.m2_agentic_pipeline.config import load_m2_agentic_pipeline_config
+from trading.data.ports import MarketFeedPort
 from trading.domain.clock import Clock
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -19,9 +20,16 @@ _IST = ZoneInfo("Asia/Kolkata")
 __all__ = ["run_minute_and_features"]
 
 
-def run_minute_and_features(repo_root: Path, *, clock: Clock) -> tuple[Path, Path] | None:
+def run_minute_and_features(
+    repo_root: Path,
+    *,
+    clock: Clock,
+    market_feed: MarketFeedPort | None = None,
+) -> tuple[Path, Path] | None:
     """Run REST minute snapshot then feature row for the same minute."""
-    minute_path = run_minute_backbone_once(repo_root, clock=clock)
+    minute_path = run_minute_backbone_once(
+        repo_root, clock=clock, market_feed=market_feed
+    )
     if minute_path is None:
         return None
     bundle = MinuteBundle.model_validate(

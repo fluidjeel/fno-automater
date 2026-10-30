@@ -60,6 +60,7 @@ class DepthSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["1"] = "1"
+    snapshot_id: str
     symbol: str
     as_of_utc: datetime
     bid_price_1: str
