@@ -138,7 +138,7 @@ Repeats for the same fault are suppressed for 15 minutes.
 - M2 flattens at 15:20 IST unless the carry gate records `CARRY_APPROVED`.
   Carry keeps the position in M2.
 - Pre-open checks on Oracle:
-  `systemctl is-active fno-automated.service fno-data-tick.service`;
+  `systemctl is-active fno-automated.service fno-m2-agentic-tick.service`;
   `uv run pytest tests/test_four_mode_session_integration.py tests/test_cas_event_path.py -q`;
   entry freeze query on `data/paper/trading.sqlite` (no row or `entries_blocked=0`).
 - A session with only abstentions is not an observed fill. Each abstention needs

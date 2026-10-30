@@ -1,0 +1,13 @@
+[Unit]
+Description=FNO M2 agentic minute backbone and features (once)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading m2-agentic minute
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

@@ -103,7 +103,7 @@ def minute_bundle_path(repo_root: Path, session_date: str, hhmm: str) -> Path:
     return (
         repo_root
         / "data"
-        / "platter"
+        / "m2_agentic"
         / "minute"
         / session_date
         / f"minute_{hhmm}.json"

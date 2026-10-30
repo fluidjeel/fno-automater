@@ -76,7 +76,7 @@ class M2VetoVerdict(StrictModel):
     valid_until: datetime
     source: NonEmptyStr
     direction: NonEmptyStr | None = None
-    platter_id: NonEmptyStr | None = None
+    m2_agentic_id: NonEmptyStr | None = None
     decision_id: NonEmptyStr | None = None
 
     @field_validator("as_of", "valid_until")

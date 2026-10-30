@@ -2,11 +2,11 @@
 
 Follow [INDEX.md writing rules](./INDEX.md).
 
-**Shadow mode** runs the new platter agent **in parallel** with the old five-minute veto. Paper entries still follow **one** authority until you flip a config flag.
+**Shadow mode** runs the new M2 agentic agent **in parallel** with the old five-minute veto. Paper entries still follow **one** authority until you flip a config flag.
 
 Code folder: `src/trading/analytics/platter_shadow/`
 
-Optional — not required for revamp “done” if platter agent is already the gate.
+Optional — not required for revamp “done” if M2 agentic agent is already the gate.
 
 ---
 
@@ -15,16 +15,16 @@ Optional — not required for revamp “done” if platter agent is already the 
 | Piece | Controls entries? | Role in shadow |
 | --- | --- | --- |
 | Old `m2_veto_cycle` | Yes, if `gate_authority: legacy` | May still write verdict file |
-| New platter agent | Yes, if `gate_authority: platter` | Computes direction + verdict |
+| New M2 agentic agent | Yes, if `gate_authority: m2_agentic` | Computes direction + verdict |
 | `admit_m2_entry` | Reads **one** verdict file | Unchanged until promotion |
 
-Config snippet in `config/platter_pipeline.yaml`:
+Config snippet in `config/m2_agentic_pipeline.yaml`:
 
 ```yaml
 shadow_mode:
   enabled: true
-  gate_authority: legacy   # legacy or platter
-  log_path: data/paper/platter_shadow.jsonl
+  gate_authority: legacy   # legacy or M2 agentic
+  log_path: data/paper/m2_agentic_shadow.jsonl
 ```
 
 ---
@@ -36,16 +36,16 @@ When both paths run at the same five-minute mark:
 | Field | Type |
 | --- | --- |
 | `schema_version` | `"1"` |
-| `platter_mark_ist` | datetime |
-| `platter_id` | string |
+| `m2_agentic_mark_ist` | datetime |
+| `m2_agentic_id` | string |
 | `legacy.action` | APPROVE, VETO, or SIZE_DOWN |
 | `legacy.direction` | optional |
-| `platter.action` | APPROVE or VETO (paper) |
-| `platter.direction` | LONG, SHORT, NEUTRAL |
+| `m2_agentic.action` | APPROVE or VETO (paper) |
+| `m2_agentic.direction` | LONG, SHORT, NEUTRAL |
 | `mechanical.setup_direction` | UP, DOWN, NONE |
 | `score_total` | decimal string |
 | `fail_closed` | bool |
-| `divergence` | true if legacy and platter actions differ |
+| `divergence` | true if legacy and M2 agentic actions differ |
 
 ---
 
@@ -56,12 +56,12 @@ Script: `analytics/platter_shadow/report.py`
 | Metric | Meaning |
 | --- | --- |
 | `divergence_rate` | percent of marks where actions differ |
-| `platter_veto_rate` | percent platter said VETO |
+| `m2_agentic_veto_rate` | percent M2 agentic said VETO |
 | `legacy_veto_rate` | percent legacy said VETO |
-| `false_veto_proxy` | platter VETO but next 30m move matched mechanical direction |
-| `missed_veto_proxy` | platter APPROVE but next 30m move went against mechanical |
+| `false_veto_proxy` | M2 agentic VETO but next 30m move matched mechanical direction |
+| `missed_veto_proxy` | M2 agentic APPROVE but next 30m move went against mechanical |
 
-Forward returns use platter spot price and later platters same session only.
+Forward returns use platter spot price and later decision packets same session only.
 
 ---
 
@@ -71,13 +71,13 @@ Defaults in config:
 
 - At least **10** session days of shadow logs.
 - Document `divergence_rate`; no automatic flip.
-- Human sets `gate_authority: platter` and restarts paper.
+- Human sets `gate_authority: m2_agentic` and restarts paper.
 
 ---
 
 ## Backtest replay (no LLM required for first pass)
 
-**Reads:** saved platters under `data/platter/platters/`.
+**Reads:** saved decision packets under `data/m2_agentic/decision_packets/`.
 
 **Runs:** rubric only → direction → gate map.
 
@@ -87,5 +87,5 @@ Defaults in config:
 
 ## Done when
 
-- Shadow log lines appear when `shadow_mode.enabled` and platter agent runs.
-- Entry gate unchanged until `gate_authority` is platter.
+- Shadow log lines appear when `shadow_mode.enabled` and M2 agentic agent runs.
+- Entry gate unchanged until `gate_authority` is m2_agentic.

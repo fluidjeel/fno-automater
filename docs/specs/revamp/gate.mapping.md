@@ -10,7 +10,7 @@ Code module: `src/trading/trade/m2_veto.py` (extend existing; logic must stay de
 
 ## Mode flag
 
-`config/platter_pipeline.yaml` → `paper_mode.free_trade: true` (default **true** for paper).
+`config/m2_agentic_pipeline.yaml` → `paper_mode.free_trade: true` (default **true** for paper).
 
 When true, this document applies. Stricter live-money rules come in a later spec.
 
@@ -18,7 +18,7 @@ When true, this document applies. Stricter live-money rules come in a later spec
 
 ## Inputs when the agent writes the verdict
 
-- The platter (or hard-rail flags only)
+- The decision packet (or hard-rail flags only)
 - Agent `direction`: LONG, SHORT, or NEUTRAL
 
 ---
@@ -27,9 +27,9 @@ When true, this document applies. Stricter live-money rules come in a later spec
 
 | Condition | `action` | `size_fraction` |
 | --- | --- | --- |
-| Stale spot quote (`platter.fail_closed` or `hard_rails.stale_data_veto`) | VETO | `"0"` |
+| Stale spot quote (`decision_packet.fail_closed` or `hard_rails.stale_data_veto`) | VETO | `"0"` |
 | Event blackout (`events.blackout_active` or `hard_rails.event_blackout_veto`) | VETO | `"0"` |
-| Missing platter or agent crash | VETO | `"0"` |
+| Missing decision packet or agent crash | VETO | `"0"` |
 | **Everything else** | APPROVE | `"1"` |
 
 Paper v1 does **not** use SIZE_DOWN. The field may exist for future live mode; paper always full size on APPROVE.
@@ -38,7 +38,7 @@ Paper v1 does **not** use SIZE_DOWN. The field may exist for future live mode; p
 
 ## Agent vs mechanical direction (log only)
 
-Compare agent direction to `mechanical.setup_direction` from the platter. Store in telemetry:
+Compare agent direction to `mechanical.setup_direction` from the decision packet. Store in telemetry:
 
 | Field | Values |
 | --- | --- |

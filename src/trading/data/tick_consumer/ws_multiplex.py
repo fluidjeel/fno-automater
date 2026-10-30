@@ -1,4 +1,4 @@
-"""Single websocket multiplex for platter ticks."""
+"""Single websocket multiplex for M2 agentic ticks."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 from trading.data.config import load_data_pipeline_config
 from trading.data.features.delta_state import load_delta_state, save_delta_state
 from trading.data.fyers.ws import FyersTickStream
-from trading.data.platter_pipeline.depth_hint import read_depth_hint
-from trading.data.platter_pipeline.session import ist_session_date
+from trading.data.m2_agentic_pipeline.depth_hint import read_depth_hint
+from trading.data.m2_agentic_pipeline.session import ist_session_date
 from trading.data.settings import FyersSettings
 from trading.data.storage.parquet_store import JsonlEventStore
 from trading.data.tick_consumer.bars_1m import BarAggregator

@@ -1,4 +1,4 @@
-"""Tick stream pipeline for platter revamp."""
+"""Tick stream pipeline for M2 agentic revamp."""
 
 from trading.data.tick_consumer.bars_1m import BarAggregator, minute_start_ist
 from trading.data.tick_consumer.delta import DeltaTracker, apply_signed_tick

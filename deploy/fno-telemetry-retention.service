@@ -4,7 +4,7 @@ Description=FNO telemetry retention
 [Service]
 Type=oneshot
 WorkingDirectory=/home/ubuntu/fno-automated
-ExecStart=/home/ubuntu/.local/bin/uv run trading platter telemetry retention
+ExecStart=/home/ubuntu/.local/bin/uv run trading m2-agentic telemetry retention
 User=ubuntu
 
 [Install]

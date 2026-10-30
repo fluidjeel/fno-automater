@@ -4,7 +4,7 @@ Description=FNO telemetry weekly rollup
 [Service]
 Type=oneshot
 WorkingDirectory=/home/ubuntu/fno-automated
-ExecStart=/home/ubuntu/.local/bin/uv run trading platter telemetry weekly
+ExecStart=/home/ubuntu/.local/bin/uv run trading m2-agentic telemetry weekly
 User=ubuntu
 
 [Install]

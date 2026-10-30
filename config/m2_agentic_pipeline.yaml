@@ -1,0 +1,51 @@
+schema_version: "1"
+calculation_version: "m2-agentic-v1"
+
+schedule:
+  minute_backbone_ist: "09:00-15:35"
+  m2_agentic_grid_ist: "09:15-15:30 step 5m"
+  agent_lag_seconds_max: 15
+
+symbols:
+  nifty_index: "NSE:NIFTY50-INDEX"
+  vix_index: "NSE:INDIAVIX-INDEX"
+  chain_strike_count: 25
+
+thresholds:
+  large_print_contracts: 65
+  absorption_min_aggressive_volume: 1000
+  absorption_max_progress_ticks: 2
+  opening_range_minutes: [15, 30]
+
+rubric_weights:
+  structure: "0.25"
+  flow: "0.20"
+  depth: "0.15"
+  vol: "0.15"
+  options: "0.15"
+  events: "0.10"
+
+rubric_direction_cutoff: "1.0"
+
+options:
+  gex_formula_version: "v1-dealer-short-gamma"
+  lot_size: 65
+
+agent:
+  llm_enabled: true
+  model_id: deepseek-flash
+  thinking: disabled
+
+paper_mode:
+  free_trade: true
+
+telemetry:
+  retention_days: 45
+  compact_ticks_after_days: 14
+  keep_weekly_rollups_days: 365
+  min_free_gb: 5
+
+shadow_mode:
+  enabled: false
+  gate_authority: m2_agentic
+  log_path: data/telemetry/shadow_compare.jsonl

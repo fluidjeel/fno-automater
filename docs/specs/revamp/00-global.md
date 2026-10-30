@@ -37,7 +37,7 @@ Stricter live-money blocking will be a **future spec version**, not v1.
 
 ## Five-minute decision times (IST)
 
-Platter build and agent run at:
+M2 agentic build and agent run at:
 
 `09:15, 09:20, 09:25, …, 15:25, 15:30` — **76 times** per session.
 
@@ -45,7 +45,7 @@ Platter build and agent run at:
 
 ## When data is “too old” (hard block)
 
-The platter records freshness for many feeds. **Only one freshness rule blocks new trades in paper:**
+The decision packet records freshness for many feeds. **Only one freshness rule blocks new trades in paper:**
 
 | Check | Limit | If failed |
 | --- | --- | --- |
@@ -53,13 +53,13 @@ The platter records freshness for many feeds. **Only one freshness rule blocks n
 
 Chain, depth, tick, or bar staleness **does not** set `fail_closed` in paper. Those fields are still stored for weekly review.
 
-Missing platter at agent run → **VETO**.
+Missing decision packet at agent run → **VETO**.
 
 ---
 
 ## Event blackout (second hard block)
 
-If `events.blackout_active` is true on the platter → **VETO** new entries, regardless of agent direction. Log `event_blackout_veto` in telemetry.
+If `events.blackout_active` is true on the decision packet → **VETO** new entries, regardless of agent direction. Log `event_blackout_veto` in telemetry.
 
 ---
 
@@ -91,11 +91,11 @@ If `events.blackout_active` is true on the platter → **VETO** new entries, reg
 
 | What | Path pattern |
 | --- | --- |
-| Raw ticks | `data/platter/ticks/{session_date}/ticks.parquet` |
-| One-minute bars | `data/platter/bars_1m/{session_date}/bars.parquet` |
-| Once-per-minute bundle | `data/platter/minute/{session_date}/minute_{HHMM}.json` |
-| Computed features | `data/platter/features/{session_date}/features_{HHMM}.json` |
-| Five-minute platter JSON | `data/platter/platters/{session_date}/platter_{HHMMSS}.json` |
+| Raw ticks | `data/m2_agentic/ticks/{session_date}/ticks.parquet` |
+| One-minute bars | `data/m2_agentic/bars_1m/{session_date}/bars.parquet` |
+| Once-per-minute bundle | `data/m2_agentic/minute/{session_date}/minute_{HHMM}.json` |
+| Computed features | `data/m2_agentic/features/{session_date}/features_{HHMM}.json` |
+| Five-minute decision packet JSON | `data/m2_agentic/decision_packets/{session_date}/m2_agentic_{HHMMSS}.json` |
 | Live gate verdict (small file) | `data/paper/m2_veto_verdict.json` |
 | Gate history line log | `data/paper/m2_veto_log.jsonl` |
 | **Decision telemetry** | `data/telemetry/agent_decisions/{session_date}/decisions.jsonl` |

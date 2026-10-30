@@ -19,12 +19,12 @@ One record per five-minute agent run (including VETO without calling the LLM).
 | `schema_version` | `"1"` | yes |
 | `decision_id` | string (uuid) | yes |
 | `session_date` | date string IST | yes |
-| `platter_mark_ist` | datetime | yes |
-| `platter_id` | string | yes |
+| `m2_agentic_mark_ist` | datetime | yes |
+| `m2_agentic_id` | string | yes |
 | `as_of_utc` | datetime | yes |
 | `environment` | `"PAPER"` | yes |
-| `platter_snapshot_path` | string | yes — path to full platter JSON |
-| `platter_snapshot_inline` | object | optional; skip if platter > 512KB |
+| `m2_agentic_snapshot_path` | string | yes — path to full decision packet JSON |
+| `m2_agentic_snapshot_inline` | object | optional; skip if packet > 512KB |
 | `agent_output` | object | yes |
 | `gate_output` | object | yes |
 | `hard_rails` | object | yes |
@@ -56,7 +56,7 @@ One record per five-minute agent run (including VETO without calling the LLM).
 | --- | --- |
 | `stale_data_veto` | bool |
 | `event_blackout_veto` | bool |
-| `missing_platter` | bool |
+| `missing_decision_packet` | bool |
 
 ### `outcome` (filled later)
 
@@ -78,18 +78,18 @@ After the session, a job adds trade results:
 
 | What | Path |
 | --- | --- |
-| Platter JSON (canonical) | `data/platter/platters/{session_date}/platter_{HHMMSS}.json` |
+| Decision packet JSON (canonical) | `data/m2_agentic/decision_packets/{session_date}/m2_agentic_{HHMMSS}.json` |
 | Decision log (one line per run) | `data/telemetry/agent_decisions/{session_date}/decisions.jsonl` |
 | Optional full copy per id | `data/telemetry/agent_decisions/{session_date}/{decision_id}.json` |
 | Weekly summary | `data/telemetry/weekly/agent_week_{YYYY-Www}.json` |
 
-**Write order:** platter file must exist, then append one JSONL line.
+**Write order:** decision packet file must exist, then append one JSONL line.
 
 ---
 
 ## Retention and rotation (automatic)
 
-Settings in `config/platter_pipeline.yaml` under `telemetry`:
+Settings in `config/m2_agentic_pipeline.yaml` under `telemetry`:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -102,7 +102,7 @@ Settings in `config/platter_pipeline.yaml` under `telemetry`:
 
 1. Remove tick folders older than retention.
 2. Remove decision folders older than retention (after weekly export if needed).
-3. Remove minute/feature folders past retention; keep platters at least `retention_days`.
+3. Remove minute/feature folders past retention; keep decision packets at least `retention_days`.
 4. Append bytes freed to `data/telemetry/retention.log`.
 
 Job must be safe to run twice (idempotent).
@@ -121,9 +121,9 @@ Job must be safe to run twice (idempotent).
 | --- | --- |
 | `summary` | counts by direction; veto counts by reason |
 | `decisions` | list with id, time, direction, action, top reason, outcome fields |
-| `replay_index` | map decision_id → platter path for replay CLI |
+| `replay_index` | map decision_id → decision packet path for replay CLI |
 
-**CLI (spec only):** `trading analytics agent-replay --week 2026-W44 --decision-id …` prints platter + agent output + outcome.
+**CLI (spec only):** `trading analytics agent-replay --week 2026-W44 --decision-id …` prints decision packet + agent output + outcome.
 
 ---
 
@@ -137,4 +137,4 @@ Job must be safe to run twice (idempotent).
 
 ## Shadow mode
 
-If shadow logging is on, it may point at the same platter paths; **telemetry is the main archive** for weekly review.
+If shadow logging is on, it may point at the same decision packet paths; **telemetry is the main archive** for weekly review.

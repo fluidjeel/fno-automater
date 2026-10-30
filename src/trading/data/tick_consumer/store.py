@@ -1,4 +1,4 @@
-"""Persist ticks and one-minute bars under data/platter/."""
+"""Persist ticks and one-minute bars under data/m2_agentic/."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from trading.data.platter_pipeline.io import atomic_parquet_append
+from trading.data.m2_agentic_pipeline.io import atomic_parquet_append
 from trading.data.tick_consumer.models import Bar1m, SignedTick, TickEvent
 
 __all__ = ["TickStore", "tick_parquet_path", "bars_parquet_path"]
@@ -16,7 +16,7 @@ def tick_parquet_path(repo_root: Path, session_date: date) -> Path:
     return (
         repo_root
         / "data"
-        / "platter"
+        / "m2_agentic"
         / "ticks"
         / session_date.isoformat()
         / "ticks.parquet"
@@ -27,7 +27,7 @@ def bars_parquet_path(repo_root: Path, session_date: date) -> Path:
     return (
         repo_root
         / "data"
-        / "platter"
+        / "m2_agentic"
         / "bars_1m"
         / session_date.isoformat()
         / "bars.parquet"
@@ -78,7 +78,7 @@ class TickStore:
         path = (
             self._root
             / "data"
-            / "platter"
+            / "m2_agentic"
             / "ticks"
             / session_date.isoformat()
             / "health.jsonl"

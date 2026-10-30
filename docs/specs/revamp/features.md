@@ -8,9 +8,9 @@ Code folder: `src/trading/data/features/`
 
 **When:** Up to 30 seconds after each minute bundle is saved.
 
-**Reads:** Minute bundle, tick store, one-minute bars, delta state, previous minute’s chain file, prior day levels, `config/platter_pipeline.yaml`.
+**Reads:** Minute bundle, tick store, one-minute bars, delta state, previous minute’s chain file, prior day levels, `config/m2_agentic_pipeline.yaml`.
 
-**Writes:** `FeatureRow` at `data/platter/features/{session_date}/features_{HHMM}.json`.
+**Writes:** `FeatureRow` at `data/m2_agentic/features/{session_date}/features_{HHMM}.json`.
 
 **Quality flag** on each block: `OK | MISSING | STALE | DEGRADED | INVALID` — tells analytics if data was weak; does **not** block paper entries except via spot quote rule in [00-global.md](./00-global.md).
 

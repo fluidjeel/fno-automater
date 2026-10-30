@@ -38,7 +38,7 @@ _UNITS = (
     "fno-automated.service",
     "fno-data-pipeline.timer",
     "fno-data-pipeline.service",
-    "fno-data-tick.service",
+    "fno-m2-agentic-tick.service",
     "fno-fyers-refresh.timer",
     "fno-fyers-refresh.service",
     "fno-paper-session.service",
@@ -711,7 +711,7 @@ def _components(
                 ),
                 _component(
                     "WebSocket ticks",
-                    _service_status(service_map.get("fno-data-tick.service")),
+                    _service_status(service_map.get("fno-m2-agentic-tick.service")),
                     "systemd",
                     files["latest_at"],
                 ),

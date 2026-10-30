@@ -1,4 +1,4 @@
-"""Feature computation for platter pipeline."""
+"""Feature computation for M2 agentic pipeline."""
 
 from trading.data.features.compute import (
     compute_feature_row,

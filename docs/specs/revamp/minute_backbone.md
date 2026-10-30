@@ -68,7 +68,7 @@ If Fyers returns **429** (too many requests): mark bundle `DEGRADED`, keep previ
 
 **Reads:** Latest chain, depth, websocket quote cache, optional REST VIX.
 
-**Writes:** `MinuteBundle` saved to `data/platter/minute/{session_date}/minute_{HHMM}.json`
+**Writes:** `MinuteBundle` saved to `data/m2_agentic/minute/{session_date}/minute_{HHMM}.json`
 
 | Field | Type |
 | --- | --- |

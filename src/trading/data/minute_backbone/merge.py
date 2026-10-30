@@ -13,7 +13,7 @@ from trading.data.minute_backbone.models import (
     MinuteStatus,
     minute_bundle_path,
 )
-from trading.data.platter_pipeline.io import atomic_json_write
+from trading.data.m2_agentic_pipeline.io import atomic_json_write
 
 _IST = ZoneInfo("Asia/Kolkata")
 
@@ -43,7 +43,7 @@ def merge_minute_bundle(
 
 
 def persist_minute_bundle(repo_root: Path, bundle: MinuteBundle) -> Path:
-    """Write bundle atomically under data/platter/minute/."""
+    """Write bundle atomically under data/m2_agentic/minute/."""
     local = bundle.minute_start_ist.astimezone(_IST)
     session_date = local.date().isoformat()
     hhmm = local.strftime("%H%M")

@@ -14,11 +14,11 @@ from trading.data.minute_backbone.chain_snapshot import build_chain_snapshot
 from trading.data.minute_backbone.depth_snapshot import build_depth_snapshot
 from trading.data.minute_backbone.merge import merge_minute_bundle, persist_minute_bundle
 from trading.data.minute_backbone.models import ChainSnapshot, DepthSnapshot, MinuteBundle, MinuteStatus
-from trading.data.platter_pipeline.config import (
-    PlatterPipelineConfig,
-    load_platter_pipeline_config,
+from trading.data.m2_agentic_pipeline.config import (
+    M2AgenticPipelineConfig,
+    load_m2_agentic_pipeline_config,
 )
-from trading.data.platter_pipeline.depth_hint import publish_depth_hint
+from trading.data.m2_agentic_pipeline.depth_hint import publish_depth_hint
 from trading.data.settings import FyersSettings
 from trading.domain.clock import Clock
 
@@ -51,7 +51,7 @@ def _quote_dict(capture, symbol: str, *, source: str) -> dict[str, object]:
 
 
 def _load_previous_bundle(repo_root: Path, session_date: str, before_hhmm: str) -> MinuteBundle | None:
-    base = repo_root / "data" / "platter" / "minute" / session_date
+    base = repo_root / "data" / "m2_agentic" / "minute" / session_date
     if not base.is_dir():
         return None
     candidates = sorted(
@@ -81,12 +81,12 @@ def run_minute_backbone_once(
     repo_root: Path,
     *,
     clock: Clock,
-    platter_config: PlatterPipelineConfig | None = None,
+    m2_agentic_config: M2AgenticPipelineConfig | None = None,
 ) -> Path | None:
     """Fetch chain and depth once, merge, persist minute JSON."""
     pipeline = load_data_pipeline_config(repo_root / "config" / "data_pipeline.yaml")
-    platter = platter_config or load_platter_pipeline_config(
-        repo_root / "config" / "platter_pipeline.yaml"
+    platter = m2_agentic_config or load_m2_agentic_pipeline_config(
+        repo_root / "config" / "m2_agentic_pipeline.yaml"
     )
     settings = FyersSettings.from_repo_root_with_cache(repo_root)
     feed = FyersMarketFeed(

@@ -14,8 +14,8 @@ import polars as pl
 from trading.data.features.delta_state import load_delta_state, save_delta_state
 from trading.data.features.quality import QualityFlag
 from trading.data.minute_backbone.models import MinuteBundle, MinuteStatus
-from trading.data.platter_pipeline.config import PlatterPipelineConfig
-from trading.data.platter_pipeline.io import atomic_json_write
+from trading.data.m2_agentic_pipeline.config import M2AgenticPipelineConfig
+from trading.data.m2_agentic_pipeline.io import atomic_json_write
 from trading.data.tick_consumer.models import DeltaState
 from trading.news.contracts import EventRiskState, EventRiskStatus
 
@@ -28,7 +28,7 @@ def feature_row_path(repo_root: Path, session_date: str, hhmm: str) -> Path:
     return (
         repo_root
         / "data"
-        / "platter"
+        / "m2_agentic"
         / "features"
         / session_date
         / f"features_{hhmm}.json"
@@ -49,7 +49,7 @@ def _bars_frame(repo_root: Path, session_date: str) -> pl.DataFrame | None:
     path = (
         repo_root
         / "data"
-        / "platter"
+        / "m2_agentic"
         / "bars_1m"
         / session_date
         / "bars.parquet"
@@ -63,7 +63,7 @@ def compute_feature_row(
     repo_root: Path,
     bundle: MinuteBundle,
     *,
-    config: PlatterPipelineConfig,
+    config: M2AgenticPipelineConfig,
     delta: DeltaState | None = None,
     mechanical: dict[str, Any] | None = None,
 ) -> dict[str, Any]:

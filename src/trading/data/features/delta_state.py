@@ -6,14 +6,14 @@ import json
 from datetime import date
 from pathlib import Path
 
-from trading.data.platter_pipeline.io import atomic_json_write
+from trading.data.m2_agentic_pipeline.io import atomic_json_write
 from trading.data.tick_consumer.models import DeltaState
 
 __all__ = ["delta_state_path", "load_delta_state", "save_delta_state"]
 
 
 def delta_state_path(repo_root: Path, session_date: str) -> Path:
-    return repo_root / "data" / "platter" / "state" / f"delta_{session_date}.json"
+    return repo_root / "data" / "m2_agentic" / "state" / f"delta_{session_date}.json"
 
 
 def load_delta_state(repo_root: Path, session_date: str) -> DeltaState | None:

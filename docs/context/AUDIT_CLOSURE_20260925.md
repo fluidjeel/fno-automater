@@ -81,7 +81,7 @@ Audit regressions are positive product assertions (no defect-expecting checks).
 | `routing_profile: four_mode` | **PASS** | VM config |
 | SHADOW/SUSPENDED M4 stances | **PASS** | `long_straddle`, `long_strangle` SHADOW; calendars SUSPENDED |
 | `fno-automated.service` restart | **PASS** | `systemctl restart` → `active` |
-| `fno-data-tick.service` | **PASS** | `active` |
+| `fno-m2-agentic-tick.service` | **PASS** | `active` |
 | Legacy `trading.sqlite` in-place migration | **FAIL** | Opening store against pre-900293f DB raises `no such column: idempotency_key`; requires migration runbook before live session |
 | Fresh DB schema (900293f) | **PASS** | New `fill_charges` table creates cleanly |
 | Fyers provider ingress (`data fetch`) | **FAIL** | `FyersApiError 401: Please provide valid token` — refresh `.fyers_token` before market session |

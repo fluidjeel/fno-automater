@@ -2,7 +2,7 @@
 
 Follow [INDEX.md writing rules](./INDEX.md).
 
-The **agent** turns one platter JSON into a **direction** (long, short, or neutral) and a small **verdict file** the entry gate reads. It does **not** place orders.
+The **agent** turns one decision packet JSON into a **direction** (long, short, or neutral) and a small **verdict file** the entry gate reads. It does **not** place orders.
 
 Code folder: `src/trading/ai/platter_agent/`
 
@@ -12,7 +12,7 @@ Code folder: `src/trading/ai/platter_agent/`
 
 One `DecisionPlatter` JSON (schema v1). No broker calls inside the agent.
 
-If there is no platter for the current mark → write **VETO** (block entry), telemetry flag `missing_platter=true`.
+If there is no decision packet for the current mark → write **VETO** (block entry), telemetry flag `missing_decision_packet=true`.
 
 ---
 
@@ -46,7 +46,7 @@ Weights come from config. These cutoffs are **defaults**, not hard law.
 **Paper rules:**
 
 - Missing optional pillars → score 0 for that pillar; **do not** force neutral.
-- If `platter.fail_closed` (stale spot quote only) → skip LLM, direction NEUTRAL, reason mentions stale quote.
+- If `decision_packet.fail_closed` (stale spot quote only) → skip LLM, direction NEUTRAL, reason mentions stale quote.
 
 ---
 
@@ -55,7 +55,7 @@ Weights come from config. These cutoffs are **defaults**, not hard law.
 **LLM** = large language model API call.
 
 - Model: `deepseek-flash`, extended thinking off.
-- In paper, the model may pick long/short/neutral freely from the full platter; the rubric is a hint in the prompt only.
+- In paper, the model may pick long/short/neutral freely from the full decision packet; the rubric is a hint in the prompt only.
 - Bad JSON from the model → NEUTRAL plus reason; gate still **APPROVE** unless a hard rail fires.
 
 ---
@@ -71,8 +71,8 @@ Path stays `data/paper/m2_veto_verdict.json` (same as today’s five-minute chec
 | `direction` | LONG, SHORT, or NEUTRAL |
 | `reasons` | string[] |
 | `as_of`, `valid_until` | datetime |
-| `source` | `"platter-agent-v1"` |
-| `platter_id` | string |
+| `source` | `"m2-agentic-agent-v1"` |
+| `m2_agentic_id` | string |
 | `decision_id` | string (same id as telemetry line) |
 
 How `action` is chosen: [gate.mapping.md](./gate.mapping.md).
@@ -87,7 +87,7 @@ Append one [AgentDecisionRecord](./telemetry.md) line **before** the agent finis
 
 ## Schedule
 
-Every **five minutes** IST at the platter mark, within 15 seconds.
+Every **five minutes** IST at the decision packet mark, within 15 seconds.
 
 Verdict stays valid **300 seconds** unless config changes (`config/m2_veto.yaml`).
 

@@ -2,9 +2,9 @@
 
 Follow [INDEX.md writing rules](./INDEX.md).
 
-**Exits** close or reduce open trades using fixed rules (time, profit target, stop loss, trailing). The agent and platter **must not** change this path.
+**Exits** close or reduce open trades using fixed rules (time, profit target, stop loss, trailing). The agent and decision packet **must not** change this path.
 
-Code: `src/trading/trade/exits.py`, `discovery_exits.py`, `ProtectionCoordinator` — no imports from platter or LLM packages.
+Code: `src/trading/trade/exits.py`, `discovery_exits.py`, `ProtectionCoordinator` — no imports from decision packet or LLM packages.
 
 ---
 
@@ -12,7 +12,7 @@ Code: `src/trading/trade/exits.py`, `discovery_exits.py`, `ProtectionCoordinator
 
 Stops, targets, time exits, and trailing profit rules run on **every price tick** from open **leg** prices and saved **exit policy** state only.
 
-Do **not** read agent direction, platter JSON, or verdict files here.
+Do **not** read agent direction, decision packet JSON, or verdict files here.
 
 ---
 
@@ -61,6 +61,6 @@ If monitor price missing → no exit signal, reason PRICE_UNAVAILABLE — do not
 
 ## Done when
 
-- Exit modules import nothing from `trading.ai.platter_agent`.
+- Exit modules import nothing from `trading.ai.m2_agentic_agent`.
 - Replay of an October 2026 paper trade matches pre-revamp exit times on the same quotes.
 - Deleting the agent verdict file does not change exits.

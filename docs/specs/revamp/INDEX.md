@@ -30,14 +30,14 @@ We collect market data from the broker (Fyers), build a rich snapshot every five
 | 2 | [tick_consumer.md](./tick_consumer.md) | Live price stream → one-minute bars and buy/sell volume |
 | 3 | [minute_backbone.md](./minute_backbone.md) | Once per minute: option chain and order book snapshot |
 | 4 | [features.md](./features.md) | Computed signals (VWAP, gamma exposure, etc.) |
-| 5 | [platter.schema.md](./platter.schema.md) | The single JSON shape for each five-minute snapshot |
-| 6 | [platter_assemble.md](./platter_assemble.md) | Builds that JSON every five minutes |
+| 5 | [m2_agentic.schema.md](./m2_agentic.schema.md) | The single JSON shape for each five-minute snapshot |
+| 6 | [m2_agentic_assemble.md](./m2_agentic_assemble.md) | Builds that JSON every five minutes |
 | 7 | [agent.contract.md](./agent.contract.md) | Agent input/output and schedule |
 | 8 | [gate.mapping.md](./gate.mapping.md) | When a new trade is allowed vs blocked (paper mode) |
 | 9 | [telemetry.md](./telemetry.md) | Save every decision, rotate old data, weekly reports |
 | 10 | [exit.engine.contract.md](./exit.engine.contract.md) | Stops and targets (unchanged; agent does not touch this) |
 | 11 | [shadow.contract.md](./shadow.contract.md) | Optional comparison with the old veto system |
-| 12 | [config.platter_pipeline.md](./config.platter_pipeline.md) | Settings file field meanings |
+| 12 | [config.m2_agentic_pipeline.md](./config.m2_agentic_pipeline.md) | Settings file field meanings |
 
 ---
 
@@ -45,8 +45,8 @@ We collect market data from the broker (Fyers), build a rich snapshot every five
 
 | File | Purpose |
 | --- | --- |
-| `config/platter_pipeline.yaml` | Schedules, weights, retention days, paper mode |
-| [config.platter_pipeline.md](./config.platter_pipeline.md) | Plain explanation of each setting |
+| `config/m2_agentic_pipeline.yaml` | Schedules, weights, retention days, paper mode |
+| [config.m2_agentic_pipeline.md](./config.m2_agentic_pipeline.md) | Plain explanation of each setting |
 | `config/data_pipeline.yaml` | Existing data freshness limits (do not weaken) |
 | `config/m2_veto.yaml` | Verdict file location and model name |
 
@@ -54,7 +54,7 @@ We collect market data from the broker (Fyers), build a rich snapshot every five
 
 ## Done when (acceptance)
 
-1. One full trading day produces ticks, minute files, feature files, platters every five minutes, agent answers, and one telemetry log file for that day.
+1. One full trading day produces ticks, minute files, feature files, decision packets every five minutes, agent answers, and one telemetry log file for that day.
 2. New M2 entries are **allowed** in paper unless the spot quote is too old or event blackout is on.
 3. A weekly summary file is produced with every decision and paths to replay inputs.
 4. A daily cleanup job keeps disk usage stable.

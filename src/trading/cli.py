@@ -38,8 +38,8 @@ def _cmd_auth_telegram(_args: argparse.Namespace) -> int:
     return run_telegram_auth(_repo_root())
 
 
-def _cmd_platter_minute(_args: argparse.Namespace) -> int:
-    from trading.data.platter_pipeline.orchestrate import run_minute_and_features
+def _cmd_m2_agentic_minute(_args: argparse.Namespace) -> int:
+    from trading.data.m2_agentic_pipeline.orchestrate import run_minute_and_features
     from trading.domain.clock import WallClock
 
     root = _repo_root()
@@ -53,27 +53,27 @@ def _cmd_platter_minute(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_platter_features(_args: argparse.Namespace) -> int:
+def _cmd_m2_agentic_features(_args: argparse.Namespace) -> int:
     from trading.data.features.compute import compute_feature_row, persist_feature_row
     from trading.data.minute_backbone.models import MinuteBundle
-    from trading.data.platter_pipeline.config import load_platter_pipeline_config
+    from trading.data.m2_agentic_pipeline.config import load_m2_agentic_pipeline_config
 
     root = _repo_root()
-    minute_root = root / "data" / "platter" / "minute"
+    minute_root = root / "data" / "m2_agentic" / "minute"
     if not minute_root.is_dir():
         print("no minute snapshots yet")
         return 1
     latest = max(minute_root.rglob("minute_*.json"), key=lambda p: p.stat().st_mtime)
     bundle = MinuteBundle.model_validate(json.loads(latest.read_text(encoding="utf-8")))
-    config = load_platter_pipeline_config(root / "config" / "platter_pipeline.yaml")
+    config = load_m2_agentic_pipeline_config(root / "config" / "m2_agentic_pipeline.yaml")
     row = compute_feature_row(root, bundle, config=config)
     path = persist_feature_row(root, row)
     print(f"feature row: {path}")
     return 0
 
 
-def _cmd_platter_agent(args: argparse.Namespace) -> int:
-    from trading.ai.platter_agent.cycle import run_platter_agent_cycle
+def _cmd_m2_agentic_agent(args: argparse.Namespace) -> int:
+    from trading.ai.m2_agentic_agent.cycle import run_m2_agentic_agent_cycle
     from trading.domain.clock import WallClock
 
     root = _repo_root()
@@ -82,7 +82,7 @@ def _cmd_platter_agent(args: argparse.Namespace) -> int:
         llm_override = False
     elif getattr(args, "use_llm", False):
         llm_override = True
-    path = run_platter_agent_cycle(
+    path = run_m2_agentic_agent_cycle(
         root,
         clock=WallClock(),
         llm_enabled=llm_override,
@@ -94,7 +94,7 @@ def _cmd_platter_agent(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_platter_tick_daemon(_args: argparse.Namespace) -> int:
+def _cmd_m2_agentic_tick_daemon(_args: argparse.Namespace) -> int:
     import threading
 
     from trading.data.tick_consumer.ws_multiplex import run_tick_multiplex_daemon
@@ -107,24 +107,24 @@ def _cmd_platter_tick_daemon(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_platter_telemetry_retention(_args: argparse.Namespace) -> int:
-    from trading.analytics.platter_telemetry import run_retention_job
+def _cmd_m2_agentic_telemetry_retention(_args: argparse.Namespace) -> int:
+    from trading.analytics.m2_agentic_telemetry import run_retention_job
 
     freed = run_retention_job(_repo_root())
     print(f"trade log cleanup freed about {freed} bytes")
     return 0
 
 
-def _cmd_platter_telemetry_weekly(_args: argparse.Namespace) -> int:
-    from trading.analytics.platter_telemetry import run_weekly_rollup
+def _cmd_m2_agentic_telemetry_weekly(_args: argparse.Namespace) -> int:
+    from trading.analytics.m2_agentic_telemetry import run_weekly_rollup
 
     path = run_weekly_rollup(_repo_root())
     print(f"weekly summary: {path}")
     return 0
 
 
-def _cmd_platter_shadow_backtest(args: argparse.Namespace) -> int:
-    from trading.analytics.platter_shadow.backtest import run_rubric_backtest
+def _cmd_m2_agentic_shadow_backtest(args: argparse.Namespace) -> int:
+    from trading.analytics.m2_agentic_shadow.backtest import run_rubric_backtest
 
     out = Path(args.output)
     count = run_rubric_backtest(_repo_root(), output_csv=out)
@@ -147,32 +147,32 @@ def main(argv: list[str] | None = None) -> int:
     auth_telegram = auth_sub.add_parser("telegram", help="login via Telegram paste-back")
     auth_telegram.set_defaults(func=_cmd_auth_telegram)
 
-    platter = sub.add_parser("platter", help="live data pipeline and five-minute agent")
-    platter_sub = platter.add_subparsers(dest="platter_cmd", required=True)
-    platter_sub.add_parser("minute", help="REST minute snapshot + features").set_defaults(
-        func=_cmd_platter_minute
+    platter = sub.add_parser("m2-agentic", help="live data pipeline and five-minute agent")
+    m2_agentic_sub = platter.add_subparsers(dest="m2_agentic_cmd", required=True)
+    m2_agentic_sub.add_parser("minute", help="REST minute snapshot + features").set_defaults(
+        func=_cmd_m2_agentic_minute
     )
-    platter_sub.add_parser("features", help="features from latest minute").set_defaults(
-        func=_cmd_platter_features
+    m2_agentic_sub.add_parser("features", help="features from latest minute").set_defaults(
+        func=_cmd_m2_agentic_features
     )
-    agent = platter_sub.add_parser("agent", help="agent + approval file + trade log line")
+    agent = m2_agentic_sub.add_parser("agent", help="agent + approval file + trade log line")
     agent.add_argument("--no-llm", action="store_true")
     agent.add_argument("--llm", action="store_true", dest="use_llm")
-    agent.set_defaults(func=_cmd_platter_agent)
-    platter_sub.add_parser("tick-daemon", help="websocket tick writer").set_defaults(
-        func=_cmd_platter_tick_daemon
+    agent.set_defaults(func=_cmd_m2_agentic_agent)
+    m2_agentic_sub.add_parser("tick-daemon", help="websocket tick writer").set_defaults(
+        func=_cmd_m2_agentic_tick_daemon
     )
-    tele = platter_sub.add_parser("telemetry", help="decision log maintenance")
+    tele = m2_agentic_sub.add_parser("telemetry", help="decision log maintenance")
     tele_sub = tele.add_subparsers(dest="tele_cmd", required=True)
     tele_sub.add_parser("retention", help="drop old log partitions").set_defaults(
-        func=_cmd_platter_telemetry_retention
+        func=_cmd_m2_agentic_telemetry_retention
     )
     tele_sub.add_parser("weekly", help="weekly rollup JSON").set_defaults(
-        func=_cmd_platter_telemetry_weekly
+        func=_cmd_m2_agentic_telemetry_weekly
     )
-    shadow = platter_sub.add_parser("shadow-backtest", help="offline rubric CSV")
+    shadow = m2_agentic_sub.add_parser("shadow-backtest", help="offline rubric CSV")
     shadow.add_argument("--output", default="data/telemetry/shadow_backtest.csv")
-    shadow.set_defaults(func=_cmd_platter_shadow_backtest)
+    shadow.set_defaults(func=_cmd_m2_agentic_shadow_backtest)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

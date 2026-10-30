@@ -1,0 +1,13 @@
+[Unit]
+Description=FNO M2 agentic agent (5m)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+EnvironmentFile=-/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading m2-agentic agent
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
