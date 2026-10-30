@@ -11,6 +11,11 @@ from zoneinfo import ZoneInfo
 
 import polars as pl
 
+from trading.data.features.bar_stats_cache import (
+    load_bar_stats,
+    volume_profile_from_stats,
+    vwap_from_stats,
+)
 from trading.data.features.delta_state import load_delta_state, save_delta_state
 from trading.data.features.quality import QualityFlag
 from trading.data.minute_backbone.models import MinuteBundle, MinuteStatus
@@ -83,26 +88,38 @@ def compute_feature_row(
     imbalance_l5 = "0"
     if denom > 0:
         imbalance_l5 = str(Decimal(bid_sum - ask_sum) / Decimal(denom))
-    bars = _bars_frame(repo_root, session_date)
     poc = vah = val = "0"
     session_vwap = "0"
-    if bars is not None and bars.height > 0:
-        typical = (
-            (pl.col("high").cast(pl.Float64) + pl.col("low").cast(pl.Float64) + pl.col("close").cast(pl.Float64))
-            / 3.0
-        )
-        vol = pl.col("volume").cast(pl.Float64)
-        stats = bars.select(
-            ((typical * vol).sum()).alias("num"),
-            vol.sum().alias("den"),
-        )
-        den = stats["den"][0]
-        num = stats["num"][0]
-        if den is not None and den > 0:
-            session_vwap = str(Decimal(str(num / den)))
-        top = bars.sort("volume", descending=True).head(1)
-        if top.height:
-            poc = str(top[0, "close"])
+    has_bar_data = False
+    stats = load_bar_stats(repo_root, session_date)
+    if stats is not None and stats.bar_count > 0:
+        session_vwap = vwap_from_stats(stats)
+        poc, vah, val = volume_profile_from_stats(stats)
+        has_bar_data = True
+    else:
+        bars = _bars_frame(repo_root, session_date)
+        if bars is not None and bars.height > 0:
+            has_bar_data = True
+            typical = (
+                (
+                    pl.col("high").cast(pl.Float64)
+                    + pl.col("low").cast(pl.Float64)
+                    + pl.col("close").cast(pl.Float64)
+                )
+                / 3.0
+            )
+            vol = pl.col("volume").cast(pl.Float64)
+            frame_stats = bars.select(
+                ((typical * vol).sum()).alias("num"),
+                vol.sum().alias("den"),
+            )
+            den = frame_stats["den"][0]
+            num = frame_stats["num"][0]
+            if den is not None and den > 0:
+                session_vwap = str(Decimal(str(num / den)))
+            top = bars.sort("volume", descending=True).head(1)
+            if top.height:
+                poc = str(top[0, "close"])
     event = _read_event_risk(repo_root)
     blackout = False
     labels: list[str] = []
@@ -176,7 +193,7 @@ def compute_feature_row(
             "poc": poc,
             "vah": vah,
             "val": val,
-            "quality": quality.value if bars is not None else QualityFlag.MISSING.value,
+            "quality": quality.value if has_bar_data else QualityFlag.MISSING.value,
         },
         "vwap": {
             "session": session_vwap,

@@ -11,11 +11,12 @@ from trading.ai.m2_agentic_agent.llm_overlay import decide_agent_direction, reso
 from trading.analytics.m2_agentic_telemetry import append_decision_record
 from trading.data.m2_agentic.assemble import (
     assemble_m2_agentic_decision,
-    latest_feature_row,
     load_minute_bundle_for_mark,
     persist_m2_agentic_decision,
 )
 from trading.data.m2_agentic_pipeline.config import load_m2_agentic_pipeline_config
+from trading.data.m2_agentic_pipeline.readiness import wait_for_minute_pipeline
+from trading.data.m2_agentic_pipeline.session import next_m2_agentic_mark_ist
 from trading.domain.clock import Clock
 from trading.trade.m2_veto import M2VetoVerdict, load_m2_veto_config, write_verdict
 from trading.trade.m2_agentic_gate import map_m2_agentic_gate
@@ -31,20 +32,24 @@ def run_m2_agentic_agent_cycle(
     llm_enabled: bool | None = None,
     llm_client: Any | None = None,
 ) -> Path | None:
-    """Build platter if needed, score agent, write verdict and telemetry."""
+    """Build decision packet, score agent, write verdict and telemetry."""
     config = load_m2_agentic_pipeline_config(repo_root / "config" / "m2_agentic_pipeline.yaml")
     use_llm = resolve_llm_enabled(config, cli_override=llm_enabled)
     veto_config = load_m2_veto_config(repo_root / "config" / "m2_veto.yaml")
     now = clock.now_utc()
-    mark = m2_agentic_mark_ist or now
-    loaded = latest_feature_row(repo_root, mark)
+    mark = m2_agentic_mark_ist or next_m2_agentic_mark_ist(now) or now
+    loaded = wait_for_minute_pipeline(
+        repo_root,
+        mark,
+        max_lag_seconds=config.schedule.agent_lag_seconds_max,
+    )
     if loaded is None:
         gate = map_m2_agentic_gate({}, "NEUTRAL", config=config, missing_decision_packet=True)
         decision_id = str(uuid.uuid4())
         verdict = M2VetoVerdict(
             action=gate.action,
             size_fraction=gate.size_fraction,
-            reasons=("missing platter feature row",),
+            reasons=("minute pipeline not ready before agent lag expired",),
             as_of=now,
             valid_until=now + timedelta(seconds=veto_config.valid_for_seconds),
             source="m2-agentic-agent-v1",
@@ -84,7 +89,7 @@ def run_m2_agentic_agent_cycle(
         now=now,
         minute_bundle=minute_bundle,
     )
-    m2_agentic_decision_path = persist_m2_agentic_decision(repo_root, platter)
+    decision_path = persist_m2_agentic_decision(repo_root, platter)
     decision = decide_agent_direction(
         platter,
         config,
@@ -108,7 +113,7 @@ def run_m2_agentic_agent_cycle(
     append_decision_record(
         repo_root,
         platter=platter,
-        m2_agentic_snapshot_path=str(m2_agentic_decision_path.relative_to(repo_root)),
+        m2_agentic_snapshot_path=str(decision_path.relative_to(repo_root)),
         agent_output=agent_output,
         gate=gate,
         decision_id=decision_id,
@@ -125,4 +130,4 @@ def run_m2_agentic_agent_cycle(
         decision_id=decision_id,
     )
     write_verdict(verdict, veto_config, repo_root=repo_root)
-    return m2_agentic_decision_path
+    return decision_path

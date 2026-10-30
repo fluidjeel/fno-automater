@@ -5,6 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 REPO_ROOT="$(pwd)"
 
+if command -v uv >/dev/null 2>&1; then
+  uv sync --extra data
+elif test -x "${HOME}/.local/bin/uv"; then
+  "${HOME}/.local/bin/uv" sync --extra data
+fi
+
 _install_unit() {
   local src="$1"
   local dest="$2"

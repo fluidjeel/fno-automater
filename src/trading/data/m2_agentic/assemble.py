@@ -14,7 +14,11 @@ from trading.data.features.compute import feature_row_path
 from trading.data.minute_backbone.models import MinuteBundle, minute_bundle_path
 from trading.data.m2_agentic_pipeline.config import M2AgenticPipelineConfig
 from trading.data.m2_agentic_pipeline.io import atomic_json_write
-from trading.data.tick_consumer.store import bars_parquet_path, tick_parquet_path
+from trading.data.tick_consumer.session_paths import (
+    latest_session_shard_mtime,
+    session_bars_root,
+    session_ticks_root,
+)
 from trading.trade.m2_veto import load_m2_veto_config
 
 _IST = ZoneInfo("Asia/Kolkata")
@@ -83,10 +87,16 @@ def _freshness_block(
         if depth_raw:
             depth_age = _quote_age_ms({"as_of_utc": depth_raw}, now=now)
             depth_ok = depth_age <= 120_000
-    tick_path = tick_parquet_path(repo_root, datetime.fromisoformat(session_date).date())
-    bar_path = bars_parquet_path(repo_root, datetime.fromisoformat(session_date).date())
-    tick_age = _file_age_ms(tick_path, now=now)
-    bar_age = _file_age_ms(bar_path, now=now)
+    tick_path = session_ticks_root(repo_root, datetime.fromisoformat(session_date).date())
+    bar_path = session_bars_root(repo_root, datetime.fromisoformat(session_date).date())
+    tick_mtime = latest_session_shard_mtime(tick_path)
+    bar_mtime = latest_session_shard_mtime(bar_path)
+    tick_age = (
+        max(0, int((now.timestamp() - tick_mtime) * 1000)) if tick_mtime is not None else None
+    )
+    bar_age = (
+        max(0, int((now.timestamp() - bar_mtime) * 1000)) if bar_mtime is not None else None
+    )
     tick_ok = tick_age is not None and tick_age <= 120_000
     bar_1m_ok = bar_age is not None and bar_age <= 120_000
     return {
@@ -118,7 +128,7 @@ def assemble_m2_agentic_decision(
 ) -> dict[str, Any]:
     """Merge feature blocks into one DecisionPlatter dict."""
     load_data_pipeline_config(repo_root / "config" / "data_pipeline.yaml")
-    veto = load_m2_veto_config()
+    veto = load_m2_veto_config(repo_root / "config" / "m2_veto.yaml")
     session_date = m2_agentic_mark_ist.astimezone(_IST).date().isoformat()
     freshness = _freshness_block(
         repo_root,

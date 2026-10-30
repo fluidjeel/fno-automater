@@ -9,13 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import polars as pl
-
 from trading.ai.m2_agentic_agent.cycle import run_m2_agentic_agent_cycle
 from trading.analytics.m2_agentic_telemetry import decisions_log_path
 from trading.data.m2_agentic_pipeline.orchestrate import run_minute_and_features
 from trading.data.tick_consumer.models import Bar1m, SignedTick, TickSign
-from trading.data.tick_consumer.store import TickStore, bars_parquet_path
+from trading.data.tick_consumer.store import TickStore
+from trading.data.tick_consumer.session_paths import bars_jsonl_path
 from trading.domain.clock import FrozenClock
 from trading.trade.m2_veto import load_m2_veto_config
 from tests.fixtures.mock_fyers_market_feed import MockFyersMarketFeed
@@ -71,10 +70,9 @@ def _seed_tick_ingestion(repo_root: Path, clock: FrozenClock) -> None:
         store.append_bar(bar, session_date=session)
     store.flush_ticks(session_date=session)
     store.flush_bars(session_date=session)
-    bar_path = bars_parquet_path(repo_root, session)
+    bar_path = bars_jsonl_path(repo_root, session, ts.astimezone(_IST).hour)
     assert bar_path.is_file()
-    frame = pl.read_parquet(bar_path)
-    assert frame.height >= 1
+    assert bar_path.read_text(encoding="utf-8").strip()
 
 
 def test_mock_fyers_pipeline_stages_produce_linked_artifacts(tmp_path: Path) -> None:

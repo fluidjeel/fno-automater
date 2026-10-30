@@ -1,9 +1,9 @@
 [Unit]
 Description=FNO M2 agentic agent timer (5m grid)
 
-# 03:45–10:00 UTC ≈ 09:15–15:30 IST, every five minutes (Mon–Fri).
+# 03:45:30–10:00 UTC ≈ 09:15:30–15:30 IST, every five minutes (Mon–Fri).
 [Timer]
-OnCalendar=Mon..Fri *-*-* 03:45/5:00
+OnCalendar=Mon..Fri *-*-* 03:45:30/5:00
 Persistent=true
 
 [Install]
