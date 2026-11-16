@@ -125,6 +125,11 @@ class FyersSettings(BaseSettings):
         cached = settings.load_cached_token(repo_root)
         if not cached:
             return settings
+        cache_path = settings.token_cache_path(repo_root)
+        env_file = repo_root / ".env"
+        if cache_path.is_file() and env_file.is_file():
+            if cache_path.stat().st_mtime >= env_file.stat().st_mtime:
+                return settings.model_copy(update={"fyers_access_token": cached})
         if not settings.fyers_access_token:
             return settings.model_copy(update={"fyers_access_token": cached})
         cached_exp = _token_expiry(cached)

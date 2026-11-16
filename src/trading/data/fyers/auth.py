@@ -337,14 +337,29 @@ def _token_expiry(token: str) -> datetime | None:
 
 
 def _token_is_fresh(settings: FyersSettings, repo_root: Path) -> bool:
-    """True when the cached access token is still valid well into the session."""
+    """True when the cached access token is valid for API calls this session."""
     cached = settings.load_cached_token(repo_root)
     if not cached:
         return False
     expiry = _token_expiry(cached)
     if expiry is None:
         return False
-    return expiry > WallClock().now_utc() + timedelta(minutes=15)
+    if expiry <= WallClock().now_utc() + timedelta(minutes=15):
+        return False
+    symbols = settings.underlying_symbols or ("NSE:NIFTY50-INDEX",)
+    try:
+        from trading.data.fyers.client import FyersApiError, FyersMarketFeed
+
+        feed = FyersMarketFeed(
+            settings.model_copy(update={"fyers_access_token": cached}),
+            WallClock(),
+        )
+        feed.fetch_quotes([symbols[0]])
+    except FyersApiError:
+        return False
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
 
 
 def _complete_login(settings: FyersSettings, repo_root: Path, code: str) -> int:
