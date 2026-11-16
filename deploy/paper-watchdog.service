@@ -1,0 +1,12 @@
+[Unit]
+Description=FNO automated trading — PAPER runtime health pass
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ubuntu/fno-automated
+Environment=PATH=/home/ubuntu/.local/bin:/usr/bin:/bin
+EnvironmentFile=/home/ubuntu/fno-automated/.env
+ExecStart=/home/ubuntu/.local/bin/uv run trading ops ensure-paper
+User=ubuntu
+Group=ubuntu

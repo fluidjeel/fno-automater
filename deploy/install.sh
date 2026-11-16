@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agentic stack only: tick stream, Fyers refresh, minute/features, five-minute agent, logs.
+# M2 agentic data stack; set INSTALL_PAPER_LIVE=1 for simulated trading units too.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -43,9 +43,26 @@ systemctl enable --now fno-m2-agentic-agent.timer
 systemctl enable --now fno-telemetry-retention.timer
 systemctl enable --now fno-telemetry-weekly.timer
 
-# Simulated intraday session stays off on agentic installs.
-for legacy in fno-paper-session.timer fno-paper-session.service fno-automated.service fno-data-pipeline.timer fno-data-tick.service fno-platter-minute.timer fno-platter-agent.timer; do
-  sudo systemctl disable --now "$legacy" 2>/dev/null || true
+for legacy in fno-data-pipeline.timer fno-data-tick.service fno-platter-minute.timer fno-platter-agent.timer; do
+  systemctl disable --now "$legacy" 2>/dev/null || true
 done
 
-echo "Agentic install complete under ${REPO_ROOT}"
+if test "${INSTALL_PAPER_LIVE:-0}" = "1"; then
+  _install_unit deploy/paper-session.service fno-paper-session.service
+  cp deploy/paper-session.timer /etc/systemd/system/fno-paper-session.timer
+  _install_unit deploy/paper-watchdog.service fno-paper-watchdog.service
+  cp deploy/paper-watchdog.timer /etc/systemd/system/fno-paper-watchdog.timer
+  _install_unit deploy/paper-alert.service fno-paper-alert.service
+  _install_unit deploy/fno-automated.service fno-automated.service
+  systemctl daemon-reload
+  systemctl enable --now fno-paper-watchdog.timer
+  systemctl enable --now fno-automated.service
+  systemctl restart fno-m2-agentic-tick.service
+  systemctl start fno-paper-session.service
+  echo "PAPER live: fno-automated + paper session + m2-agentic tick under ${REPO_ROOT}"
+else
+  for legacy in fno-paper-session.timer fno-paper-session.service fno-automated.service fno-paper-watchdog.timer; do
+    systemctl disable --now "$legacy" 2>/dev/null || true
+  done
+  echo "Agentic-only install complete under ${REPO_ROOT}"
+fi

@@ -99,7 +99,7 @@ def run_tick_multiplex_daemon(
         result = stream.collect(
             symbol,
             max_ticks=10_000_000,
-            duration_seconds=3600,
+            duration_seconds=60,
             tick_max_age_ms=60_000,
             stop=halt,
         )

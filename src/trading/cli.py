@@ -16,6 +16,14 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _resolve_repo_path(relative: str) -> Path:
+    """Resolve a config path relative to the repo root."""
+    path = Path(relative)
+    if path.is_absolute():
+        return path
+    return _repo_root() / path
+
+
 def _cmd_auth_fyers(args: argparse.Namespace) -> int:
     from trading.data.fyers.auth import run_interactive_auth
 
@@ -132,6 +140,85 @@ def _cmd_m2_agentic_shadow_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_paper_session(args: argparse.Namespace) -> int:
+    from trading.runtime.paper_session import run_paper_session
+
+    return run_paper_session(
+        _repo_root(),
+        account_config_path=_resolve_repo_path(args.config),
+        skip_auth=bool(args.skip_auth),
+        once=bool(args.once),
+    )
+
+
+def _cmd_paper_watchdog(_args: argparse.Namespace) -> int:
+    from trading.runtime.paper_session import load_paper_session_config
+    from trading.runtime.watchdog import run_paper_watchdog
+
+    repo = _repo_root()
+    session_cfg = load_paper_session_config(repo / "config" / "paper_session.yaml")
+    return run_paper_watchdog(
+        repo,
+        store_path=repo / session_cfg.store_path,
+    )
+
+
+def _cmd_ops_daemon(args: argparse.Namespace) -> int:
+    from trading.ops.daemon import DaemonPhase, DaemonSupervisor
+    from trading.ops.orchestrator import PaperAutopilotOrchestrator
+
+    repo = _repo_root()
+    orchestrator = PaperAutopilotOrchestrator(
+        repo,
+        dry_run=bool(args.dry_run),
+    )
+
+    def _on_phase_change(previous: DaemonPhase, phase: DaemonPhase) -> None:
+        orchestrator.on_phase(phase, previous=previous)
+
+    def _on_tick(phase: DaemonPhase) -> None:
+        orchestrator.tick(phase)
+
+    supervisor = DaemonSupervisor(
+        heartbeat_path=repo / "data" / "daemon_heartbeat.json",
+        on_phase_change=_on_phase_change,
+        on_tick=_on_tick,
+    )
+    print(f"Starting DaemonSupervisor (interval={args.interval}s)")
+    if int(args.iterations) > 0:
+        for _ in range(int(args.iterations)):
+            supervisor.tick()
+        return 0
+    supervisor.run(poll_interval_seconds=float(args.interval))
+    return 0
+
+
+def _cmd_ops_ensure_paper(_args: argparse.Namespace) -> int:
+    from trading.domain.clock import WallClock
+    from trading.ops.daemon import determine_phase
+    from trading.ops.orchestrator import PaperAutopilotOrchestrator
+
+    repo = _repo_root()
+    orchestrator = PaperAutopilotOrchestrator(repo)
+    phase = determine_phase(WallClock().now_utc())
+    result = orchestrator.tick(phase)
+    inactive = [item for item in result.services if not getattr(item, "active", True)]
+    return 1 if inactive else 0
+
+
+def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
+    from trading.ops.operator_alert import notify_operator
+
+    unit = str(args.unit)
+    notify_operator(
+        _repo_root(),
+        title=f"{unit} failed",
+        detail=f"systemd OnFailure fired for {unit}.",
+        dedupe_key=f"onfailure:{unit}",
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="trading")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -173,6 +260,33 @@ def main(argv: list[str] | None = None) -> int:
     shadow = m2_agentic_sub.add_parser("shadow-backtest", help="offline rubric CSV")
     shadow.add_argument("--output", default="data/telemetry/shadow_backtest.csv")
     shadow.set_defaults(func=_cmd_m2_agentic_shadow_backtest)
+
+    paper = sub.add_parser("paper", help="supervised simulated (PAPER) session")
+    paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)
+    session = paper_sub.add_parser("session", help="run PAPER trading loop")
+    session.add_argument("--config", default="config/paper.yaml")
+    session.add_argument("--skip-auth", action="store_true")
+    session.add_argument("--once", action="store_true")
+    session.set_defaults(func=_cmd_paper_session)
+    paper_sub.add_parser("watchdog", help="protection heartbeat check").set_defaults(
+        func=_cmd_paper_watchdog
+    )
+
+    ops = sub.add_parser("ops", help="unattended PAPER supervisor helpers")
+    ops_sub = ops.add_subparsers(dest="ops_cmd", required=True)
+    daemon = ops_sub.add_parser("daemon", help="IST session supervisor")
+    daemon.add_argument("--interval", type=int, default=60)
+    daemon.add_argument("--iterations", type=int, default=0)
+    daemon.add_argument("--dry-run", action="store_true")
+    daemon.set_defaults(func=_cmd_ops_daemon)
+    ops_sub.add_parser(
+        "ensure-paper", help="start tick + paper session for current phase"
+    ).set_defaults(func=_cmd_ops_ensure_paper)
+    alert_failure = ops_sub.add_parser(
+        "alert-unit-failure", help="Telegram alert for systemd OnFailure"
+    )
+    alert_failure.add_argument("unit")
+    alert_failure.set_defaults(func=_cmd_ops_alert_unit_failure)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

@@ -39,12 +39,7 @@ class DrawdownAlertTracker:
         threshold = drawdown_alert_threshold(discovery)
         alerted: list[ModeId] = []
         day_key = session_date.isoformat()
-        for mode_id in (
-            ModeId.M1_CAS,
-            ModeId.M2_DIRECTIONAL,
-            ModeId.M3_TACTICAL_POSITIONAL,
-            ModeId.M4_STRATEGIC_POSITIONAL,
-        ):
+        for mode_id in mode_book.ledgers:
             dedupe_key = (mode_id.value, day_key)
             if dedupe_key in self._sent:
                 continue

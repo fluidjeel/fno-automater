@@ -1,0 +1,10 @@
+[Unit]
+Description=Poll PAPER service health during the NSE session
+
+[Timer]
+# NSE session ≈ 09:15–15:30 IST → 03:45–10:00 UTC; check every minute.
+OnCalendar=Mon..Fri *-*-* 03..10:*:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
