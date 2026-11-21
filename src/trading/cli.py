@@ -103,11 +103,18 @@ def _cmd_m2_agentic_agent(args: argparse.Namespace) -> int:
 
 
 def _cmd_m2_agentic_tick_daemon(_args: argparse.Namespace) -> int:
+    import signal
     import threading
 
     from trading.data.tick_consumer.ws_multiplex import run_tick_multiplex_daemon
 
     stop = threading.Event()
+
+    def _request_shutdown(_signum: int, _frame: object | None) -> None:
+        stop.set()
+
+    signal.signal(signal.SIGTERM, _request_shutdown)
+    signal.signal(signal.SIGINT, _request_shutdown)
     try:
         run_tick_multiplex_daemon(_repo_root(), symbol="NSE:NIFTY50-INDEX", stop=stop)
     except KeyboardInterrupt:
@@ -137,6 +144,29 @@ def _cmd_m2_agentic_shadow_backtest(args: argparse.Namespace) -> int:
     out = Path(args.output)
     count = run_rubric_backtest(_repo_root(), output_csv=out)
     print(f"shadow replay: {count} marks -> {out}")
+    return 0
+
+
+def _cmd_paper_isolate_check(args: argparse.Namespace) -> int:
+    """Refuse to proceed unless the process config is PAPER."""
+    from pydantic import ValidationError
+
+    from trading.config import load_config
+    from trading.config.schema import Environment
+
+    try:
+        loaded = load_config(_resolve_repo_path(args.config))
+    except (OSError, ValidationError, ValueError) as exc:
+        print(f"paper: {exc}", file=sys.stderr)
+        return 1
+    if loaded.config.environment is not Environment.PAPER:
+        print(
+            f"paper: environment is {loaded.config.environment}; "
+            "isolate-check requires PAPER",
+            file=sys.stderr,
+        )
+        return 1
+    print("paper: Environment.PAPER; live transaction adapters are not constructed")
     return 0
 
 
@@ -206,6 +236,39 @@ def _cmd_ops_ensure_paper(_args: argparse.Namespace) -> int:
     return 1 if inactive else 0
 
 
+def _cmd_data_sanitize_instruments(_args: argparse.Namespace) -> int:
+    from trading.data.config import load_data_pipeline_config
+    from trading.data.storage.instrument_store import InstrumentSpecStore
+
+    root = _repo_root()
+    pipeline = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    store = InstrumentSpecStore(root / pipeline.storage.root / pipeline.reference.instrument_subdir)
+    results = store.sanitize_all()
+    for segment, (kept, dropped) in results.items():
+        print(f"{segment}: kept {kept}, quarantined {dropped}")
+    return 0
+
+
+def _cmd_data_backfill_instruments(_args: argparse.Namespace) -> int:
+    from trading.data.backfill import backfill_instruments
+    from trading.data.config import load_data_pipeline_config
+    from trading.data.storage.parquet_store import JsonlEventStore
+    from trading.domain.clock import WallClock
+
+    root = _repo_root()
+    pipeline_config = load_data_pipeline_config(root / "config" / "data_pipeline.yaml")
+    store = JsonlEventStore(root / pipeline_config.storage.root)
+    results = backfill_instruments(
+        pipeline_config=pipeline_config,
+        repo_root=root,
+        store=store,
+        clock=WallClock(),
+    )
+    for item in results:
+        print(f"{item.segment}: {item.spec_count} instruments (raw {item.raw_ref})")
+    return 0
+
+
 def _cmd_ops_alert_unit_failure(args: argparse.Namespace) -> int:
     from trading.ops.operator_alert import notify_operator
 
@@ -233,6 +296,19 @@ def main(argv: list[str] | None = None) -> int:
     auth_refresh.set_defaults(func=_cmd_auth_refresh)
     auth_telegram = auth_sub.add_parser("telegram", help="login via Telegram paste-back")
     auth_telegram.set_defaults(func=_cmd_auth_telegram)
+
+    data = sub.add_parser("data", help="market data maintenance")
+    data_sub = data.add_subparsers(dest="data_cmd", required=True)
+    instruments = data_sub.add_parser(
+        "backfill", help="download Fyers symbol masters into the instrument catalog"
+    )
+    inst_sub = instruments.add_subparsers(dest="backfill_cmd", required=True)
+    inst_masters = inst_sub.add_parser("instruments", help="refresh NSE/MCX instrument JSONL")
+    inst_masters.set_defaults(func=_cmd_data_backfill_instruments)
+    data_sub.add_parser(
+        "sanitize-instruments",
+        help="quarantine corrupt JSONL rows in the instrument catalog",
+    ).set_defaults(func=_cmd_data_sanitize_instruments)
 
     platter = sub.add_parser("m2-agentic", help="live data pipeline and five-minute agent")
     m2_agentic_sub = platter.add_subparsers(dest="m2_agentic_cmd", required=True)
@@ -263,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
 
     paper = sub.add_parser("paper", help="supervised simulated (PAPER) session")
     paper_sub = paper.add_subparsers(dest="paper_cmd", required=True)
+    isolate = paper_sub.add_parser(
+        "isolate-check",
+        help="verify PAPER environment cannot select a live transaction adapter",
+    )
+    isolate.add_argument("--config", default="config/base.yaml")
+    isolate.set_defaults(func=_cmd_paper_isolate_check)
     session = paper_sub.add_parser("session", help="run PAPER trading loop")
     session.add_argument("--config", default="config/paper.yaml")
     session.add_argument("--skip-auth", action="store_true")

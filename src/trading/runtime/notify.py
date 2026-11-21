@@ -114,7 +114,7 @@ def format_eod_report_for_session(
 
 def format_lifecycle_alert(alert: LifecycleAlert) -> str:
     """Plain recovery notice."""
-    return f"Check open trade {alert.trade_id}: {alert.detail}"
+    return f"PAPER recovery: check open trade {alert.trade_id}: {alert.detail}"
 
 
 def format_review_decision(review: PositionReviewRecord) -> str:

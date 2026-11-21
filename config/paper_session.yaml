@@ -37,5 +37,5 @@ positional_review:
   mcx_slots: []
 protection:
   ws_enabled: false
-  rest_poll_seconds: 3
+  rest_poll_seconds: 12
   watchdog_max_silence_seconds: 180

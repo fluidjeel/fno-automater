@@ -9,6 +9,7 @@ from typing import Any
 
 from trading.data.config import load_data_pipeline_config
 from trading.data.features.delta_state import load_delta_state, save_delta_state
+from trading.data.fyers.auth import ensure_access_token
 from trading.data.fyers.ws import FyersTickStream
 from trading.data.m2_agentic_pipeline.depth_hint import read_depth_hint
 from trading.data.m2_agentic_pipeline.session import ist_session_date
@@ -60,11 +61,11 @@ def run_tick_multiplex_daemon(
 ) -> None:
     """Run websocket tick path with signing, bars, delta, and parquet store."""
     pipeline = load_data_pipeline_config(repo_root / "config" / "data_pipeline.yaml")
-    settings = FyersSettings.from_repo_root_with_cache(repo_root)
     clock = WallClock()
     store_events = JsonlEventStore(repo_root / pipeline.storage.root)
+    initial_settings = FyersSettings.from_repo_root_with_cache(repo_root)
     stream = FyersTickStream(
-        settings,
+        initial_settings,
         clock,
         store_events,
         repo_root=repo_root,
@@ -93,6 +94,9 @@ def run_tick_multiplex_daemon(
         delta.state.delta_5m = persisted.delta_5m
 
     while not halt.is_set():
+        ensure_access_token(repo_root)
+        settings = FyersSettings.from_repo_root_with_cache(repo_root)
+        stream.replace_settings(settings)
         now = clock.now_utc()
         session_date = ist_session_date(now)
         _apply_depth_hint(repo_root, depth_cache)

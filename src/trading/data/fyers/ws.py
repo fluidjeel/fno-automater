@@ -76,6 +76,10 @@ class FyersTickStream:
         self._reconnect_backoff_seconds = reconnect_backoff_seconds
         self._sleep = sleep
 
+    def replace_settings(self, settings: FyersSettings) -> None:
+        """Swap credentials so long-lived daemons pick up a renewed ``.fyers_token``."""
+        self._settings = settings
+
     def collect(
         self,
         symbol: str,
@@ -89,14 +93,20 @@ class FyersTickStream:
         if max_ticks < 1:
             raise ValueError("max_ticks must be at least 1")
         ticks: list[CanonicalMarketEvent] = []
-        halt = stop or threading.Event()
+        external_stop = stop
+        session_halt = threading.Event()
         deadline = (
             None if duration_seconds <= 0 else time.monotonic() + duration_seconds
         )
         reconnects = 0
 
+        def _stopped() -> bool:
+            if external_stop is not None and external_stop.is_set():
+                return True
+            return session_halt.is_set()
+
         def on_message(message: dict[str, Any]) -> None:
-            if halt.is_set():
+            if _stopped():
                 return
             if message.get("symbol") not in {symbol, None} and "ltp" not in message:
                 return
@@ -113,13 +123,13 @@ class FyersTickStream:
             self._store.append_canonical(event)
             ticks.append(event)
             if len(ticks) >= max_ticks:
-                halt.set()
+                session_halt.set()
 
         attempts = 0
         stopped_reason = "duration"
         log_dir = self._repo_root / "data" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
-        while not halt.is_set():
+        while not _stopped():
             socket = self._socket_factory(
                 access_token=self._settings.auth_header,
                 write_to_file=False,
@@ -135,14 +145,14 @@ class FyersTickStream:
                     channel=self._channel,
                 )
                 socket.keep_running()
-                while not halt.is_set():
+                while not _stopped():
                     if deadline is not None and time.monotonic() >= deadline:
                         stopped_reason = "duration"
-                        halt.set()
+                        session_halt.set()
                         break
                     if len(ticks) >= max_ticks:
                         stopped_reason = "max_ticks"
-                        halt.set()
+                        session_halt.set()
                         break
                     self._sleep(0.1)
             except (OSError, RuntimeError):
@@ -155,7 +165,7 @@ class FyersTickStream:
                 continue
             finally:
                 socket.close_connection()
-            if halt.is_set() or deadline is not None:
+            if _stopped() or deadline is not None:
                 break
             if not self._reconnect:
                 break
@@ -166,7 +176,7 @@ class FyersTickStream:
             self._sleep(self._reconnect_backoff_seconds * attempts)
         if len(ticks) >= max_ticks:
             stopped_reason = "max_ticks"
-        if stop is not None and stop.is_set() and stopped_reason == "duration":
+        if external_stop is not None and external_stop.is_set():
             stopped_reason = "signal"
         return TickStreamResult(
             symbol=symbol,

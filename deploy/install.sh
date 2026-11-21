@@ -38,7 +38,12 @@ cp deploy/fno-telemetry-weekly.timer /etc/systemd/system/fno-telemetry-weekly.ti
 systemctl daemon-reload
 systemctl enable --now fno-m2-agentic-tick.service
 systemctl enable --now fno-fyers-refresh.timer
-systemctl enable --now fno-m2-agentic-minute.timer
+if test "${INSTALL_PAPER_LIVE:-0}" = "1"; then
+  systemctl disable --now fno-m2-agentic-minute.timer 2>/dev/null || true
+  echo "PAPER live: disabled fno-m2-agentic-minute.timer (shares Fyers REST with paper session)"
+else
+  systemctl enable --now fno-m2-agentic-minute.timer
+fi
 systemctl enable --now fno-m2-agentic-agent.timer
 systemctl enable --now fno-telemetry-retention.timer
 systemctl enable --now fno-telemetry-weekly.timer

@@ -14,4 +14,7 @@ it.
 File-scoped agent rules live under `.cursor/rules/` (`10-` through `70-`, plus
 `01-planning-context.mdc` and `05-sq.mdc`).
 
+**Live deployment (always):** `.cursor/rules/02-live-deployment.mdc` — local edits
+alone are incomplete; deploy and verify on Oracle (and any other live hosts).
+
 `SQ` in a user prompt: `.cursor/rules/05-sq.mdc`.

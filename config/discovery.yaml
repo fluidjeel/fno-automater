@@ -72,7 +72,7 @@ selection:
   near_strikes_each_side: 5
   following_week_strikes_each_side: 10
 direction:
-  fallback_trend_threshold: "0.30"
+  fallback_trend_threshold: "0.12"
   fallback_min_bars: 14
 exits:
   leg_stop_fraction: "0.35"

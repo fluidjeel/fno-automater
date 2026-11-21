@@ -1,0 +1,39 @@
+---
+description: Every code/config change must be deployed and verified on live environments (Oracle), not only in the local workspace.
+alwaysApply: true
+---
+
+# Live deployment (mandatory)
+
+Local edits alone are **incomplete**. This project runs on **live** hosts (primarily
+**Oracle**: Ubuntu VM under `~/fno-automated`, `deploy/ORACLE.md`, `deploy/deploy_oracle.sh`
+/ `deploy/install.sh`, `INSTALL_PAPER_LIVE=1` when paper is in scope).
+
+## When this applies
+
+Any change that affects **runtime behavior**, **configuration**, **deploy/systemd
+units**, **scripts used in production**, or **dependencies** (`uv sync`, Fyers
+data extra, etc.).
+
+**Exceptions** (local-only is OK): pure docs with no ops impact, local-only tests,
+or the user explicitly says “local only / do not deploy.”
+
+## Required completion steps
+
+1. **Land the change** in this repo (committed or user-approved uncommitted set).
+2. **Deploy to live**: rsync or `deploy/deploy_oracle.sh` (with `--install` when
+   units change); run `deploy/install.sh` or `deploy/install-paper-live.sh` on
+   the VM when systemd/services change; never treat “pushed to GitHub” as deployed.
+3. **Verify on live** with concrete evidence: `systemctl is-active` for affected
+   units, relevant logs (`journalctl`), artifact freshness (e.g. tick/bar/minute
+   paths, `session_heartbeat.json`, veto file), and a minimal smoke command or
+   test run **on the VM** when applicable.
+4. **Report in the task summary**: what was deployed, where, and the verification
+   output. If deployment is blocked (auth, approval, market closed), say so and
+   leave the task **open** — do not claim “done.”
+
+## Drift
+
+Oracle may diverge from `git` via partial rsync. After deploying, confirm the live
+tree contains the intended files (grep, `head`, or checksums). Reconcile branch
+with what actually runs on the VM.

@@ -3,6 +3,13 @@
 All remediation is bounded deterministic code or an explicit operator command.
 AI may summarize evidence but cannot invoke actions.
 
+## Agent change discipline
+
+Agent and developer changes are **not done** until they run on **live** systems.
+Canonical rule: `.cursor/rules/02-live-deployment.mdc` (always on). Deploy to
+Oracle (`deploy/ORACLE.md`) and verify with service status, logs, and artifact
+checks before closing a task.
+
 ## Readiness levels
 
 - `LIVE_SAFE`: every confirmed position is protected and reconcilable.

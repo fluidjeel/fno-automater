@@ -136,6 +136,12 @@ def _is_sebi_refresh_disabled(message: str) -> bool:
     return "sebi" in lowered and "disabled" in lowered
 
 
+def _is_invalid_refresh_token(message: str) -> bool:
+    """True when the stored refresh token is gone, not a malformed HTTP payload."""
+    lowered = message.lower()
+    return "valid refresh token" in lowered or "invalid refresh" in lowered
+
+
 def _notify(settings: FyersSettings, text: str) -> bool:
     """Send a Telegram operator alert using the configured credentials."""
     return send_telegram_message(
@@ -248,6 +254,8 @@ def ensure_access_token(repo_root: Path) -> str:
     try:
         access_token = refresh_access_token(settings, refresh_token=refresh_token)
     except Exception as exc:
+        if _token_is_fresh(settings, repo_root):
+            return "fresh"
         return f"failed: {exc}"
     settings.save_cached_token(repo_root, access_token)
     return "refreshed"
@@ -273,6 +281,9 @@ def run_refresh(repo_root: Path) -> int:
     try:
         access_token = refresh_access_token(settings, refresh_token=refresh_token)
     except Exception as exc:
+        if _token_is_fresh(settings, repo_root):
+            print("Fyers access token on disk is still valid; refresh skipped.")
+            return 0
         print(f"ERROR: {exc}", file=sys.stderr)
         if _is_sebi_refresh_disabled(str(exc)):
             _notify(
@@ -281,6 +292,13 @@ def run_refresh(repo_root: Path) -> int:
                 "This is expected. Reply to the next login link, or run "
                 "`trading auth telegram`, when the access token expires. "
                 "The cached access token was not renewed.",
+            )
+        elif _is_invalid_refresh_token(str(exc)):
+            _notify(
+                settings,
+                "Fyers refresh token on disk is no longer accepted. "
+                "Run `trading auth telegram` and paste the redirect URL when "
+                "the access token expires.",
             )
         else:
             _notify(settings, f"Fyers token refresh FAILED: {exc}")

@@ -227,6 +227,18 @@ class TestTokenFreshness:
         settings = _settings_with_pin(monkeypatch)
         future = int((datetime.now(UTC) + timedelta(days=1)).timestamp())
         settings.save_cached_token(tmp_path, self._jwt(future))
+
+        class _Feed:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                pass
+
+            def fetch_quotes(self, symbols: list[str]) -> None:
+                return None
+
+        monkeypatch.setattr(
+            "trading.data.fyers.client.FyersMarketFeed",
+            _Feed,
+        )
         assert _token_is_fresh(settings, tmp_path) is True
 
     def test_stale_token_means_prompt(

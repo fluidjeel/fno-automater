@@ -561,6 +561,9 @@ class PaperSession:
         for detail in feed_errors:
             if not isinstance(detail, str) or not detail:
                 continue
+            # Near-week chain is enough for M2; a supplemental 429 is degraded only.
+            if detail.startswith("following-week chain fetch failed"):
+                continue
             self._runner.persist_session_feed_errors(
                 as_of=now,
                 detail=detail,

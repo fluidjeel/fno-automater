@@ -12,7 +12,8 @@ from trading.domain.clock import Clock
 
 __all__ = ["FyersRestRateLimiter"]
 
-_FYERS_MAX_PER_SECOND = 10
+# Fyers Standard caps at 5 req/s; in-process budget must stay under that.
+_FYERS_MAX_PER_SECOND = 5
 _FYERS_MAX_PER_MINUTE = 200
 _DEFAULT_MAX_WAIT = timedelta(seconds=15)
 _POLL_INTERVAL = 0.05

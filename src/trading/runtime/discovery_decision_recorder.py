@@ -78,7 +78,7 @@ _HARD_BLOCK_CODES = frozenset(
         ReasonCode.DATA_FEED_ERROR,
     }
 )
-_NEUTRAL_THRESHOLD = Decimal("0.30")
+_NEUTRAL_THRESHOLD = Decimal("0.12")
 
 
 def persist_cycle_decisions(

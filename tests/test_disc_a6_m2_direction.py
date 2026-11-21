@@ -111,6 +111,23 @@ def _option(
     )
 
 
+def test_discovery_direction_fallback_at_lower_threshold() -> None:
+    """Score ~0.15 with aligned returns binds UP under DISCOVERY (threshold 0.12)."""
+    market = _market(
+        return_15m=Decimal("0.0023"),
+        return_60m=Decimal("0.0048"),
+        trend_score=Decimal("0.15"),
+        completed_bar_count=20,
+    )
+    resolved = apply_discovery_direction_fallback(
+        market,
+        direction=DISCOVERY.direction,
+        entry_profile=EntryProfile.DISCOVERY,
+    )
+    assert resolved.trend is TrendState.UP
+    assert ReasonCode.DIRECTION_FALLBACK in resolved.reason_codes
+
+
 def test_discovery_direction_fallback_binds_call_strict_abstains() -> None:
     """MIXED strict trend with aligned returns: DISCOVERY binds, STRICT abstains."""
     strict_market = _market()

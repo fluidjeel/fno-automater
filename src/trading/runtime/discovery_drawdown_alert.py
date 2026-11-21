@@ -39,11 +39,10 @@ class DrawdownAlertTracker:
         threshold = drawdown_alert_threshold(discovery)
         alerted: list[ModeId] = []
         day_key = session_date.isoformat()
-        for mode_id in mode_book.ledgers:
+        for mode_id, ledger in mode_book.ledgers.items():
             dedupe_key = (mode_id.value, day_key)
             if dedupe_key in self._sent:
                 continue
-            ledger = mode_book.get_ledger(mode_id)
             if ledger.equity >= threshold:
                 continue
             text = (

@@ -287,7 +287,11 @@ class FourModeBook:
     ) -> dict[ModeId, ModeLedger]:
         ledgers: dict[ModeId, ModeLedger] = {}
         if discovery_config is not None:
-            mode_ids = tuple(ModeId(key) for key in discovery_config.modes)
+            mode_ids = tuple(
+                ModeId(key)
+                for key in discovery_config.modes
+                if key in modes_config.modes
+            )
         else:
             mode_ids = tuple(modes_config.modes.keys())
         for mode_id in mode_ids:

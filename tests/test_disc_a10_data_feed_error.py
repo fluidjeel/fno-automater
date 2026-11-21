@@ -146,10 +146,7 @@ def test_builder_401_on_cycles_one_two_then_succeeds(
     feed_rows = _feed_error_rows(store)
     assert len(feed_rows) >= 2
     modes = {row.mode_id for row in feed_rows}
-    assert ModeId.M1_CAS in modes
     assert ModeId.M2_DIRECTIONAL in modes
-    assert ModeId.M3_TACTICAL_POSITIONAL in modes
-    assert ModeId.M4_STRATEGIC_POSITIONAL in modes
     for row in feed_rows:
         assert row.stage is DiscoveryStage.DATA
         assert row.decision is DiscoveryDecisionKind.BLOCKED_HARD
@@ -224,13 +221,15 @@ def test_three_failures_send_one_alert_and_recovery_sends_one(
     failure_alerts = [
         msg
         for msg in sink.messages
-        if "token expired" in msg or "consecutive" in msg.lower()
+        if "login expired" in msg.lower() or "consecutive" in msg.lower()
     ]
     assert len(failure_alerts) == 1
-    assert "Fyers token expired — refresh token" in failure_alerts[0]
+    assert "Fyers login expired" in failure_alerts[0]
 
     assert session.tick() is not None
-    recovery_alerts = [msg for msg in sink.messages if "recovered" in msg.lower()]
+    recovery_alerts = [
+        msg for msg in sink.messages if "flowing again" in msg.lower()
+    ]
     assert len(recovery_alerts) == 1
 
 

@@ -3,9 +3,8 @@
 set -euo pipefail
 REPO="${1:-$HOME/fno-automated}"
 LOG="$REPO/data/paper/session_monitor.log"
-END_UTC=$(TZ=UTC date -d "$(TZ=Asia/Kolkata date -d 'today 15:35' --iso-seconds)" --iso-seconds 2>/dev/null || echo "")
 while true; do
-  TS="$(TZ=Asia/Kolkata date --iso-seconds)"
+  TS="$(TZ=Asia/Kolkata date '+%Y-%m-%dT%H:%M:%S%z')"
   HB="missing"
   if test -f "$REPO/data/paper/session_heartbeat.json"; then
     HB="$(python3 -c "import json; d=json.load(open('$REPO/data/paper/session_heartbeat.json')); print(d.get('cycle_count'), d.get('open_positions'), d.get('had_requests'))" 2>/dev/null || echo bad)"

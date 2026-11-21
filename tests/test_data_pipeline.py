@@ -792,6 +792,28 @@ class TestPipelineAndReplay:
         assert set(CAS_FEATURE_KEYS) <= set(second.snapshot.features)
         assert second.snapshot.feature_set_version == CAS_FEATURE_SET_VERSION
 
+    def test_instrument_catalog_sanitize_quarantines_corrupt_lines(
+        self, tmp_path: Path
+    ) -> None:
+        catalog = InstrumentSpecStore(tmp_path)
+        spec = InstrumentSpec.model_validate_json(
+            """{"trading_symbol":"NSE:GOOD","exchange":"NSE","segment":"NSE_FO","""
+            """"underlying":"NIFTY","instrument_kind":"OPTION","provider_token":"1","""
+            """"exchange_token":1,"lot_size":65,"tick_size":"0.05","price_precision":2,"""
+            """"expiry":"2026-10-01","strike":"24000","option_type":"CALL","""
+            """"trading_session":"0915-1530","source":"test","verified_at":"2026-09-11"}"""
+        )
+        path = catalog.path_for("NSE_FO")
+        path.write_text(
+            spec.model_dump_json() + "\n" + '{"trading_symbol":"NSE:BROKEN"\n',
+            encoding="utf-8",
+        )
+        kept, dropped = catalog.sanitize_segment("NSE_FO")
+        assert kept == 1
+        assert dropped == 1
+        assert catalog.load("NSE_FO") == (spec,)
+        assert list(path.parent.glob("NSE_FO.jsonl.corrupt-*"))
+
     def test_instrument_spec_supplies_tick_and_lot_size(self, tmp_path: Path) -> None:
         now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
         pipeline_config = load_data_pipeline_config(PIPELINE_CONFIG)
@@ -1386,3 +1408,54 @@ class TestWebSocketTicks:
         )
         assert result.reconnects == 1
         assert len(result.ticks) == 1
+
+    def test_collect_duration_does_not_set_external_stop(
+        self, tmp_path: Path
+    ) -> None:
+        """Bounded collect must not signal a long-lived daemon shutdown event."""
+        import threading
+
+        now = datetime(2024, 9, 13, 6, 0, tzinfo=UTC)
+        store = JsonlEventStore(tmp_path / "data")
+        daemon_stop = threading.Event()
+
+        class FakeSocket:
+            def connect(self) -> None:
+                return None
+
+            def subscribe(
+                self,
+                symbols: list[str],
+                data_type: str = "SymbolUpdate",
+                channel: int = 11,
+            ) -> None:
+                return None
+
+            def keep_running(self) -> None:
+                return None
+
+            def close_connection(self) -> None:
+                return None
+
+        settings = FyersSettings.model_construct(
+            fyers_app_id="app",
+            fyers_secret_key="test-secret",
+            fyers_access_token="test-token",
+        )
+        stream = FyersTickStream(
+            settings,
+            FrozenClock(now),
+            store,
+            repo_root=tmp_path,
+            normalization_version="1",
+            socket_factory=lambda **kwargs: FakeSocket(),
+            sleep=lambda _: None,
+        )
+        result = stream.collect(
+            "NSE:NIFTY50-INDEX",
+            max_ticks=10,
+            duration_seconds=1,
+            stop=daemon_stop,
+        )
+        assert result.stopped_reason == "duration"
+        assert not daemon_stop.is_set()
